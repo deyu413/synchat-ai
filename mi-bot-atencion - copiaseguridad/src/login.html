@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acceso Clientes - SynChat AI</title>
+    <style> /* Estilos muy básicos */
+        body { font-family: sans-serif; padding: 20px; }
+        .auth-container, .dashboard { margin-bottom: 20px; padding: 15px; border: 1px solid #ccc; }
+        label, input, button { display: block; margin-bottom: 10px; }
+        .hidden { display: none; }
+        #userInfo { font-weight: bold; color: green; }
+        #errorMessage { color: red; margin-top: 10px;}
+    </style>
+</head>
+<body>
+
+    <h1>Acceso Clientes - SynChat AI</h1>
+
+    <div id="authForms" class="auth-container">
+        <h2>Iniciar Sesión / Registrarse</h2>
+
+        <form id="loginForm">
+            <h3>Iniciar Sesión</h3>
+            <label for="loginEmail">Email:</label>
+            <input type="email" id="loginEmail" required>
+            <label for="loginPassword">Contraseña:</label>
+            <input type="password" id="loginPassword" required>
+            <button type="submit">Entrar</button>
+        </form>
+        <hr>
+        <form id="signUpForm">
+            <h3>Registrarse</h3>
+            <label for="signUpEmail">Email:</label>
+            <input type="email" id="signUpEmail" required>
+            <label for="signUpPassword">Contraseña:</label>
+            <input type="password" id="signUpPassword" required>
+            <button type="submit">Registrarme</button>
+        </form>
+        <hr>
+        <button id="googleLoginBtn">Iniciar Sesión con Google</button>
+
+        <div id="authMessage"></div> </div>
+
+    <div id="dashboard" class="dashboard hidden">
+        <h2>Panel de Cliente</h2>
+        <p>Bienvenido, <span id="userInfo"></span>!</p>
+        {/* Aquí añadirás el formulario de configuración y el snippet del widget más tarde */}
+        <p>Próximamente: Configuración del bot y código del widget.</p>
+        <button id="logoutBtn">Cerrar Sesión</button>
+    </div>
+
+    <div id="errorMessage"></div>
+
+    <script type="module" src="auth.js"></script>
+
+</body>
+</html>
