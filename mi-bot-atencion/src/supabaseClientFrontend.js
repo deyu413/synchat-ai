@@ -16,7 +16,7 @@ if (!supabaseUrl || !supabaseAnonKey || supabaseUrl === 'TU_SUPABASE_URL') {
 }
 
 // Crear el cliente usando la función importada correctamente
-export const supabase = createSupabaseClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 console.log("Supabase Client Frontend inicializado (o intentado).");
 
