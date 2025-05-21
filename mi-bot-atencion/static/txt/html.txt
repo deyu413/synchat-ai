@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="es-ES">
+
+<head>
+    <meta charSet="utf-8" />
+    <title>Tu Página Web Inspirada: Plataforma Increíble</title>
+    <meta name="viewport" content="initial-scale=1, width=device-width" />
+    <meta name="title" content="Tu Página Web Inspirada: Plataforma Increíble" />
+    <meta name="description" content="Descripción de tu increíble plataforma, servicios y características únicas." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://www.tu-dominio.com/" />
+    <meta property="og:title" content="Tu Página Web Inspirada: Plataforma Increíble" />
+    <meta property="og:description" content="Descripción de tu increíble plataforma, servicios y características únicas." />
+    <meta property="og:image" content="https://www.tu-dominio.com/images/og-image.png" />
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content="https://www.tu-dominio.com/" />
+    <meta property="twitter:title" content="Tu Página Web Inspirada: Plataforma Increíble" />
+    <meta property="twitter:description" content="Descripción de tu increíble plataforma, servicios y características únicas." />
+    <meta property="twitter:image" content="https://www.tu-dominio.com/images/twitter-image.png" />
+
+    <link rel="canonical" href="https://www.tu-dominio.com/" />
+
+    <link rel="icon" type="image/png" sizes="48x48" href="/images/favicon.png" /> [source: 4]
+
+    <link rel="preload" href="/fonts/tu-fuente-regular.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+    <link rel="preload" href="/fonts/tu-fuente-bold.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+
+    <link rel="stylesheet" href="/css/main.css" />
+    <link rel="stylesheet" href="/css/header.css" />
+    <link rel="stylesheet" href="/css/hero.css" />
+    <link rel="stylesheet" href="/css/sections.css" />
+    <link rel="stylesheet" href="/css/footer.css" />
+
+    [source: 5, 9]
+
+</head>
+
+<body>
+    <div id="__next">
+        <header role="banner" class="site-header">
+            <nav class="main-navigation">
+                <div class="nav-container">
+                    <div class="logo-area">
+                        <a href="/" aria-label="Ir a la página principal">
+                            <svg width="32" height="32" viewBox="0 0 230 230" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+                                <path d="M115,0 C178.5,0 230,51.5 230,115 C230,178.5 178.5,230 115,230 C51.5,230 0,178.5 0,115 C0,51.5 51.5,0 115,0 Z M115,30 C70.8,30 30,70.8 30,115 C30,159.2 70.8,200 115,200 C159.2,200 200,159.2 200,115 C200,70.8 159.2,30 115,30 Z"/>
+                            </svg> [source: 12-15]
+                        </a>
+                    </div>
+
+                    <button class="hamburger-menu-button" aria-label="Abrir menú">
+                        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg"> <path d="M6 10C6 9.44772 6.44772 9 7 9H24.5C25.0523 9 25.5 9.44772 25.5 10C25.5 10.5523 25.0523 11 24.5 11H7C6.44772 11 6 10.5523 6 10Z" fill="#17100E"></path> <path d="M5 16C5 15.4477 5.44772 15 6 15H26C26.5523 15 27 15.4477 27 16C27 16.5523 26.5523 17 26 17H6C5.44772 17 5 16.5523 5 16Z" fill="#17100E"></path> <path d="M6 22C6 21.4477 6.44772 21 7 21H24.5C25.0523 21 25.5 21.4477 25.5 22C25.5 22.5523 25.0523 23 24.5 23H7C6.44772 23 6 22.5523 6 22Z" fill="#17100E"></path> </svg> [source: 16]
+                    </button>
+
+                    <div class="navigation-menu"> <ul class="nav-list">
+                            <li class="nav-item dropdown"> <button class="nav-item-button">Producto </button>
+                                <div class="nav-submenu product-submenu">
+                                     <div class="submenu-section">
+                                         <a href="/producto/clientes">Para Clientes</a> [source: 22]
+                                         </div>
+                                     <div class="submenu-section">
+                                        <a href="/producto/agentes">Para Agentes</a> [source: 24]
+                                        </div>
+                                     <div class="submenu-section">
+                                        <a href="/producto/lideres">Para Líderes</a> [source: 27]
+                                     </div>
+                                </div>
+                            </li>
+                            <li class="nav-item dropdown">
+                                <button class="nav-item-button">Recursos </button>
+                                <div class="nav-submenu resources-submenu">
+                                    <div class="submenu-section-featured">
+                                        <a href="/recurso-destacado-1">Recurso Destacado 1</a> [source: 30]
+                                        <a href="/recurso-destacado-2">Recurso Destacado 2</a> [source: 31]
+                                    </div>
+                                    <div class="submenu-section-links">
+                                        <a href="/por-que-nosotros">¿Por qué nosotros?</a> [source: 32]
+                                        <a href="/clientes">Clientes</a>
+                                        <a href="/blog">Blog</a> [source: 34]
+                                        </div>
+                                </div>
+                            </li>
+                            <li class="nav-item">
+                                <a href="/precios" class="nav-item-button">Precios</a> [source: 35]
+                            </li>
+                            <li class="nav-item">
+                                <a href="/demo" class="nav-item-button">Demo</a>
+                            </li>
+                        </ul>
+                         <div class="mobile-menu-ctas">
+                             <a href="/contacto-ventas" class="button secondary">Contactar Ventas</a>
+                             <a href="https://app.tu-dominio.com/acceder" class="button secondary">Iniciar Sesión</a> [source: 35]
+                        </div>
+                    </div>
+
+                    <div class="header-ctas">
+                        <a href="/contacto-ventas" class="button secondary">Contactar Ventas</a>
+                        <a href="https://app.tu-dominio.com/registrarse" class="button primary">Empezar Prueba Gratis</a> [source: 35]
+                    </div>
+                </div>
+            </nav>
+            </header>
+
+        <main class="main-content">
+
+            <article class="hero-section">
+                <div class="hero-media-background">
+                    <img src="/images/hero-background-desktop.webp" alt="Paisaje futurista inspirador" class="hero-bg-desktop"/> [source: 36]
+                    <img src="/images/hero-background-mobile.webp" alt="Paisaje futurista inspirador" class="hero-bg-mobile"/> [source: 36]
+                    <div class="hero-overlay"></div>
+                </div>
+
+                <section class="hero-intro-content">
+                    <h1 class="hero-heading">La Mejor Plataforma para [Tu Propósito]</h1> [source: 37]
+                    <p class="hero-subheading">Descubre cómo nuestra solución [verbo] tu [sustantivo]. Únete a miles de usuarios satisfechos.</p> [source: 37]
+                    <div class="hero-ctas">
+                        <a href="/demo" class="button secondary large">Ver Demo</a>
+                        <a href="https://app.tu-dominio.com/registrarse" class="button primary large">Empezar Prueba Gratis</a>
+                    </div>
+                </section>
+
+                 <div class="hero-cards-container">
+                     <a href="/caracteristica-1" class="hero-card">
+                         <div class="card-content">
+                            <span class="card-label">Característica Clave 1</span>
+                             <h2 class="card-title">Título Impactante de Característica 1</h2>
+                             <span class="card-learn-more">Saber más -></span>
+                         </div>
+                         <div class="card-asset">
+                             <img src="/images/feature1-visual.webp" alt="Visual Característica 1"/> [source: 40]
+                         </div>
+                     </a>
+                     <a href="/caracteristica-2" class="hero-card">
+                        <div class="card-content">
+                           <span class="card-label">Característica Clave 2</span>
+                            <h2 class="card-title">Título Impactante de Característica 2</h2>
+                            <span class="card-learn-more">Saber más -></span> [source: 41]
+                        </div>
+                        <div class="card-asset">
+                            <img src="/images/feature2-visual.webp" alt="Visual Característica 2"/> [source: 42]
+                        </div>
+                    </a>
+                </div>
+
+            </article>
+
+            <article class="open-letter-section">
+                <div class="letter-content">
+                    <h3 class="letter-heading">Bienvenido a la nueva era de [Tu Dominio]</h3> [source: 43]
+                    <p>En [Tu Industria], todos compartimos la meta de ofrecer <span class="highlight">experiencias excepcionales</span>.</p> [source: 43]
+                    <p>Nuestra plataforma está diseñada para transformar...</p> [source: 44]
+                    <p>Esto es lo que nos convierte en <span class="highlight">la solución completa</span> que necesitas.</p> [source: 45]
+                    <div class="signature">
+                        <img src="/images/signature-placeholder.svg" alt="Firma CEO" width="200" height="28"/> [source: 46]
+                        <p>Tu Nombre <br/> CEO y Co-fundador</p>
+                    </div>
+                    <a href="/nuestros-valores" class="values-link">Lee sobre nuestros valores</a> [source: 48]
+                </div>
+                <div class="letter-illustration">
+                     <img src="/images/letter-illustration.webp" alt="Ilustración abstracta"/>
+                </div>
+            </article>
+
+            <section class="product-feature-section">
+                 <h2 class="section-heading">Descubre Nuestras Funcionalidades</h2>
+                 <div class="product-cards-grid">
+                     <article class="product-card">
+                         <div class="card-header">
+                             <span class="badge orange">Para Usuarios</span> [source: 55]
+                             <h3>Experiencias Fluidas e Instantáneas</h3>
+                         </div>
+                         <div class="card-body">
+                             <div class="tabs-or-accordion">
+                                 <button class="tab active">Característica A</button>
+                                 <div class="tab-panel active">
+                                     Descripción Característica A...
+                                     <img src="/images/feature-a-visual.webp" alt="Visual A"/> [source: 56]
+                                 </div>
+                                 <button class="tab">Característica B</button>
+                                 <div class="tab-panel">
+                                     Descripción Característica B...
+                                     <img src="/images/feature-b-visual.webp" alt="Visual B"/> [source: 57]
+                                 </div>
+                             </div>
+                         </div>
+                         <div class="card-footer">
+                             <a href="/usuarios" class="button primary">Saber más</a>
+                         </div>
+                     </article>
+                     [source: 59, 61]
+                 </div>
+            </section>
+
+            <section class="testimonials-section">
+                <h2 class="section-heading">Lo que dicen nuestros clientes</h2>
+                <div class="testimonials-grid"> <blockquote class="testimonial-card">
+                        <p>"Esta plataforma ha revolucionado nuestra forma de trabajar. ¡Increíble!"</p> [source: 66]
+                        <footer>
+                            <span class="author">Nombre Cliente</span>, <span class="company">Empresa Ejemplo</span>
+                        </footer>
+                    </blockquote>
+                    <blockquote class="testimonial-card">
+                        <p>"Soporte al cliente de primer nivel y funcionalidades potentes."</p> [source: 69]
+                        <footer>
+                            <span class="author">Otro Cliente</span>, <span class="company">Otra Empresa</span>
+                        </footer>
+                    </blockquote>
+                    </div>
+                 <a href="/clientes" class="button secondary">Más historias de clientes</a>
+            </section>
+
+            <article class="comparison-section g2-style">
+                 <div class="g2-content">
+                    <h3>Líderes en [Tu Categoría], según G2</h3> [source: 73]
+                     <p>Descubre por qué los usuarios nos califican como la opción #1.</p>
+                     <a href="#" class="button primary">Leer Reporte G2</a> [source: 73]
+                 </div>
+                 <div class="g2-chart">
+                     <div class="bar-row"><span>Tu Plataforma</span><div class="bar" style="width: 90%;">90</div></div> [source: 74]
+                     <div class="bar-row"><span>Competidor A</span><div class="bar" style="width: 60%;">60</div></div>
+                     <div class="bar-row"><span>Competidor B</span><div class="bar" style="width: 55%;">55</div></div>
+                 </div>
+             </article>
+
+
+            <article class="final-cta-banner">
+                <div class="banner-background">
+                    <img src="/images/cta-banner-background.webp" alt="Fondo abstracto CTA"/> [source: 87]
+                </div>
+                <div class="banner-content">
+                    <h2>¿Listo para empezar?</h2> [source: 87]
+                    <p>Únete a la revolución de [Tu Industria] hoy mismo.</p>
+                    <a href="https://app.tu-dominio.com/registrarse" class="button primary large inverted">Empezar Prueba Gratis</a> [source: 87]
+                </div>
+            </article>
+
+        </main>
+
+        <footer role="contentinfo" class="site-footer">
+            <div class="footer-container">
+                <div class="footer-links-section">
+                    <div class="footer-column">
+                        <h4>Casos de Uso</h4> [source: 88]
+                        <ul>
+                            <li><a href="/casos-uso/tipo-1">Para Equipos Pequeños</a></li>
+                            <li><a href="/casos-uso/tipo-2">Para Grandes Empresas</a></li>
+                            <li><a href="/casos-uso/tipo-3">Industria X</a></li> [source: 89]
+                        </ul>
+                    </div>
+                    <div class="footer-column">
+                        <h4>Características</h4> [source: 90]
+                        <ul>
+                            <li><a href="/caracteristicas/core">Core Features</a></li>
+                            <li><a href="/caracteristicas/avanzadas">Avanzadas</a></li>
+                            <li><a href="/caracteristicas/integraciones">Integraciones</a></li> [source: 90]
+                        </ul>
+                    </div>
+                    <div class="footer-column">
+                        <h4>Empresa</h4> [source: 92]
+                        <ul>
+                            <li><a href="/nosotros">Sobre Nosotros</a></li>
+                            <li><a href="/carreras">Carreras</a></li>
+                            <li><a href="/prensa">Prensa</a></li>
+                            <li><a href="/contacto">Contacto</a></li> [source: 92]
+                        </ul>
+                    </div>
+                    <div class="footer-column">
+                        <h4>Recursos</h4> [source: 93]
+                        <ul>
+                            <li><a href="/blog">Blog</a></li>
+                            <li><a href="/documentacion">Documentación</a></li>
+                            <li><a href="/comunidad">Comunidad</a></li> [source: 92]
+                            <li><a href="/soporte">Soporte</a></li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="footer-bottom">
+                    <div class="legal-links">
+                        <a href="/terminos">Términos</a>
+                        <a href="/privacidad">Privacidad</a> [source: 94]
+                        <a href="/seguridad">Seguridad</a>
+                        <button id="privacy-settings-btn">Preferencias de Privacidad</button> [source: 94]
+                    </div>
+                    <div class="social-links">
+                        <a href="#" aria-label="Twitter"><svg></svg></a>
+                        <a href="#" aria-label="LinkedIn"><svg></svg></a>
+                        <a href="#" aria-label="Facebook"><svg></svg></a>
+                    </div>
+                    <div class="copyright">
+                        &copy; 2025 Tu Empresa Inc. Todos los derechos reservados.
+                    </div>
+                </div>
+            </div>
+        </footer>
+
+        [source: 96]
+
+    </div>
+</body>
+</html>
