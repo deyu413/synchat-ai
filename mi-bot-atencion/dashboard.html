@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Cliente - SynChat AI</title>
+    <!-- <link rel="stylesheet" href="styles.css"> Link to existing styles if any -->
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; color: #333; }
+        header { background-color: #3B4018; color: white; padding: 1em; text-align: center; }
+        nav { background-color: #2F3314; padding: 0.5em; }
+        nav ul { list-style-type: none; padding: 0; margin: 0; text-align: center; }
+        nav ul li { display: inline; margin-right: 20px; }
+        nav ul li a { color: white; text-decoration: none; }
+        nav ul li button { background-color: #B8860B; color: #FFFFFF; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-family: sans-serif; font-size: 0.9em; }
+        nav ul li button:hover { background-color: #A0740A; }
+        .container { padding: 20px; max-width: 1200px; margin: 20px auto; background-color: white; box-shadow: 0 0 10px rgba(0,0,0,0.1); border-radius: 8px; }
+        .hidden { display: none; }
+        #loadingMessage { text-align: center; padding: 20px; font-size: 1.2em; }
+        h2, h3 { color: #3B4018; }
+        hr { border: 0; height: 1px; background-color: #eee; margin: 20px 0; }
+        form label { display: block; margin-bottom: 8px; font-weight: bold; }
+        form input[type="text"], form textarea { width: calc(100% - 22px); padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        form textarea { min-height: 80px; resize: vertical; }
+        form button[type="submit"] { background-color: #3B4018; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 1em; }
+        form button[type="submit"]:hover { background-color: #2F3314; }
+        #configMessage, #errorMessageDashboard { padding: 10px; margin-top: 10px; border-radius: 4px; text-align: center; }
+        #configMessage.success { background-color: #e6ffed; color: #22863a; }
+        #configMessage.error, #errorMessageDashboard { background-color: #ffebe9; color: #d73a49; }
+
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Dashboard Cliente SynChat AI</h1>
+    </header>
+    <nav>
+        <ul>
+            <li><a href="#config">Configuración</a></li>
+            <li><a href="#ingest">Ingesta</a></li>
+            <li><a href="#widget">Widget</a></li>
+            <li><a href="#usage">Uso</a></li>
+            <li><button id="logoutBtnDashboard">Cerrar Sesión</button></li>
+        </ul>
+    </nav>
+
+    <div id="loadingMessage">Cargando datos del dashboard...</div>
+    <div id="dashboardContent" class="container hidden">
+        <h2>Bienvenido al Dashboard</h2>
+        <p>Email: <span id="userEmail"></span></p>
+        
+        <section id="config">
+            <h3>Configuración del Bot y Conocimiento</h3>
+            <form id="configForm">
+                <label for="botName">Nombre del Bot (para el widget):</label>
+                <input type="text" id="botName" name="botName"><br><br>
+                
+                <label for="welcomeMessage">Mensaje de Bienvenida (para el widget):</label>
+                <textarea id="welcomeMessage" name="welcomeMessage"></textarea><br><br>
+                
+                <label for="knowledgeUrl">URL para Ingesta de Conocimiento (ej. sitemap.xml, documento, etc.):</label>
+                <input type="text" id="knowledgeUrl" name="knowledgeUrl" style="width: 100%;"><br><br>
+                
+                <button type="submit">Guardar Configuración</button>
+            </form>
+            <div id="configMessage"></div>
+        </section>
+        <hr>
+        <!-- Other sections will be added here -->
+    </div>
+    <div id="errorMessageDashboard" style="color: red; padding: 10px; text-align: center;"></div>
+
+    <script type="module" src="src/dashboard.js"></script>
+</body>
+</html>
