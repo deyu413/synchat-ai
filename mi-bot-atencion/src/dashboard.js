@@ -20,6 +20,13 @@ const lastIngestStatusDisplay = document.getElementById('lastIngestStatusDisplay
 const lastIngestAtDisplay = document.getElementById('lastIngestAtDisplay');
 const ingestMessage = document.getElementById('ingestMessage');
 
+// Usage Section Elements
+const aiResolutionsCount = document.getElementById('aiResolutionsCount');
+const totalQueriesCount = document.getElementById('totalQueriesCount');
+const statsLastUpdated = document.getElementById('statsLastUpdated');
+const usageMessage = document.getElementById('usageMessage');
+const refreshUsageBtn = document.getElementById('refreshUsageBtn');
+
 let currentClientId = null; // Store client_id from session
 
 async function checkAuthAndLoadDashboard() {
@@ -36,6 +43,7 @@ async function checkAuthAndLoadDashboard() {
     if (userEmailSpan) userEmailSpan.textContent = session.user.email;
     
     await loadClientConfig(session.access_token);
+    await displayClientUsage(); // Load usage stats
     
     if (loadingMessage) loadingMessage.classList.add('hidden');
     if (dashboardContent) dashboardContent.classList.remove('hidden');
@@ -218,6 +226,70 @@ async function requestKnowledgeIngest() {
 
 if (startIngestBtn) {
     startIngestBtn.addEventListener('click', requestKnowledgeIngest);
+}
+
+async function displayClientUsage() {
+    if (!currentClientId) {
+        if (usageMessage) {
+            usageMessage.textContent = 'Error: Client ID no encontrado.';
+            usageMessage.className = 'error';
+        }
+        return;
+    }
+
+    if (usageMessage) {
+        usageMessage.textContent = 'Cargando estadísticas de uso...';
+        usageMessage.className = 'info';
+    }
+    if (aiResolutionsCount) aiResolutionsCount.textContent = 'Cargando...';
+    if (totalQueriesCount) totalQueriesCount.textContent = 'Cargando...';
+
+    try {
+        const token = (await supabase.auth.getSession())?.data.session?.access_token;
+        if (!token) {
+            throw new Error('Sesión no válida. Por favor, vuelve a iniciar sesión.');
+        }
+
+        // This endpoint is defined in clientDashboardRoutes.js
+        const response = await fetch('/api/client/me/usage/resolutions', {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || errorData.error || `Error ${response.status}`);
+        }
+
+        const usageData = await response.json(); // Expects { ai_resolutions_current_month: X, total_queries_current_month: Y } for example
+
+        if (aiResolutionsCount) aiResolutionsCount.textContent = usageData.ai_resolutions_current_month !== undefined ? usageData.ai_resolutions_current_month : 'No disponible';
+        if (totalQueriesCount) totalQueriesCount.textContent = usageData.total_queries_current_month !== undefined ? usageData.total_queries_current_month : 'No disponible';
+        
+        if (statsLastUpdated) statsLastUpdated.textContent = new Date().toLocaleString();
+        if (usageMessage) {
+            usageMessage.textContent = 'Estadísticas cargadas correctamente.';
+            usageMessage.className = 'success';
+            setTimeout(() => { if (usageMessage) usageMessage.textContent = ''; }, 3000);
+        }
+
+    } catch (error) {
+        console.error('Error cargando estadísticas de uso:', error);
+        if (usageMessage) {
+            usageMessage.textContent = `Error cargando estadísticas: ${error.message}`;
+            usageMessage.className = 'error';
+        }
+        if (aiResolutionsCount) aiResolutionsCount.textContent = 'Error';
+        if (totalQueriesCount) totalQueriesCount.textContent = 'Error';
+        if (statsLastUpdated) statsLastUpdated.textContent = 'Error al cargar';
+    }
+}
+
+if (refreshUsageBtn) {
+    refreshUsageBtn.addEventListener('click', displayClientUsage);
 }
 
 // Cargar al iniciar

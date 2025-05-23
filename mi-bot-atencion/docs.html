@@ -3,21 +3,24 @@
 
 <head>
     <meta charSet="utf-8" />
-    <title>Documentación - SynChat AI</title>
+    <title>Documentación Técnica - SynChat AI | Guías y API</title>
     <meta name="viewport" content="initial-scale=1, width=device-width" />
-    <meta name="title" content="Documentación Técnica - SynChat AI" />
-    <meta name="description" content="Encuentra guías, tutoriales y referencias de API para integrar y personalizar el chatbot IA Zoe de SynChat AI en tu sitio web." />
+    <meta name="title" content="Documentación Técnica - SynChat AI | Guías y API" />
+    <meta name="description" content="Encuentra guías de inicio rápido, tutoriales de configuración y referencias de API para integrar y personalizar el chatbot Zoe de SynChat AI." />
+    <meta name="keywords" content="documentacion synchat ai, api chatbot, guias chatbot, manual synchat ai, zoe ia, integracion chatbot" />
 
-    <meta property="og:url" content="https://www.tudominio-synchatai.com/docs.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://www.synchatai.com/docs.html" />
     <meta property="og:title" content="Documentación Técnica - SynChat AI" />
-    <meta property="og:description" content="Guías y referencias para SynChat AI." />
-    <meta property="og:image" content="https://www.tudominio-synchatai.com/images/og-docs-synchat-ai.png" />
-    <meta property="twitter:url" content="https://www.tudominio-synchatai.com/docs.html" />
+    <meta property="og:description" content="Guías, tutoriales y referencia API para SynChat AI." />
+    <meta property="og:image" content="https://www.synchatai.com/images/og-docs-synchat-ai.png" />
+    <meta property="twitter:card" content="summary_large_image" />
+    <meta property="twitter:url" content="https://www.synchatai.com/docs.html" />
     <meta property="twitter:title" content="Documentación Técnica - SynChat AI" />
-    <meta property="twitter:description" content="Guías y referencias para SynChat AI." />
-    <meta property="twitter:image" content="https://www.tudominio-synchatai.com/images/twitter-docs-synchat-ai.png" />
+    <meta property="twitter:description" content="Guías, tutoriales y referencia API para SynChat AI." />
+    <meta property="twitter:image" content="https://www.synchatai.com/images/twitter-docs-synchat-ai.png" />
 
-    <link rel="canonical" href="https://www.tudominio-synchatai.com/docs.html" />
+    <link rel="canonical" href="https://www.synchatai.com/docs.html" />
     <link rel="icon" type="image/png" sizes="48x48" href="/images/favicon-synchat.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -42,18 +45,37 @@
                     <div class="docs-content" style="max-width: 900px; margin: 0 auto;">
                         <h2 style="font-family: var(--font-primary); font-size: 1.8rem; margin-bottom: 1.5rem;">Guías Principales</h2>
                         <ul>
-                            <li style="margin-bottom: 1rem;"><a href="#" style="font-weight: 600; text-decoration: underline;">Guía de Inicio Rápido: Instalación del Widget</a></li>
-                            <li style="margin-bottom: 1rem;"><a href="#" style="font-weight: 600; text-decoration: underline;">Cómo Entrenar a Zoe con tu Contenido</a></li>
-                            <li style="margin-bottom: 1rem;"><a href="#" style="font-weight: 600; text-decoration: underline;">Personalización Básica del Chatbot</a></li>
-                            
+                            <li style="margin-bottom: 1.5rem;">
+                                <a href="#" style="font-weight: 600; text-decoration: underline;">Guía de Inicio Rápido: Instalación del Widget</a>
+                                <p style="margin-top: 0.5rem; color: var(--color-text-muted);">Aprende a instalar y configurar el widget de SynChat AI en tu sitio web en menos de 5 minutos. Cubre la obtención de tu ID de cliente y la inserción del script.</p>
+                            </li>
+                            <li style="margin-bottom: 1.5rem;">
+                                <a href="#" style="font-weight: 600; text-decoration: underline;">Cómo Entrenar a Zoe con tu Contenido</a>
+                                <p style="margin-top: 0.5rem; color: var(--color-text-muted);">Descubre las mejores prácticas para proporcionar a Zoe la base de conocimientos adecuada, incluyendo FAQs, URLs de tu sitio web, y documentos.</p>
+                            </li>
+                            <li style="margin-bottom: 1.5rem;">
+                                <a href="#" style="font-weight: 600; text-decoration: underline;">Personalización Básica del Chatbot</a>
+                                <p style="margin-top: 0.5rem; color: var(--color-text-muted);">Personaliza la apariencia, el nombre y los mensajes de bienvenida de Zoe para que se alineen con la identidad de tu marca.</p>
+                            </li>
                         </ul>
-
+                        <hr style="margin: 2rem 0;">
                         <h2 style="font-family: var(--font-primary); font-size: 1.8rem; margin-top: 3rem; margin-bottom: 1.5rem;">Referencia API (Próximamente)</h2>
-                        <p style="color: var(--color-text-muted);">[ Detalles sobre cómo interactuar programáticamente con SynChat AI estarán disponibles aquí. ]</p>
+                        <p>Nuestra API RESTful te permitirá integrar SynChat AI con tus sistemas existentes y extender su funcionalidad. A continuación, un avance de lo que podrás hacer:</p>
+                        <h3>Endpoints Principales</h3>
+                        <p>Próximamente detallaremos los endpoints para gestionar conversaciones, obtener datos de clientes, iniciar ingestas de conocimiento y más.</p>
+                        <h4>Ejemplo: Iniciar Conversación</h4>
+                        <p>Este endpoint te permitirá iniciar una nueva sesión de chat mediante programación.</p>
+                        <pre style="background-color: #f0f0f0; padding: 15px; border-radius: var(--synchat-border-radius); font-size: 0.85rem; overflow-x: auto;"><code>POST /api/chat/start
+Authorization: Bearer {YOUR_API_KEY}
+Content-Type: application/json
 
-                        
+{
+  "clientId": "tu_client_id_aqui",
+  "initialMessage": "Hola, necesito ayuda con mi pedido.",
+  "userId": "opcional_id_usuario_externo"
+}</code></pre>
+                        <p style="font-size: 0.9rem; color: var(--color-text-muted);">(Nota: La estructura exacta y los métodos de autenticación de la API están sujetos a cambios y se detallarán completamente en el lanzamiento oficial de la API).</p>
                     </div>
-
                 </div>
             </section>
         </main>
