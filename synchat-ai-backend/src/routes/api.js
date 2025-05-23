@@ -1,22 +1,18 @@
 // src/routes/api.js
 import express from 'express';
-import chatController from '../controllers/chatController.js'; // Añadir .js
+import chatController from '../controllers/chatController.js';
+import { protectRoute } from '../middleware/authMiddleware.js'; // Import protectRoute
 
 const router = express.Router();
 
 console.log('>>> api.js: Cargando el router de API');
 
-// --- Definición de Rutas ---
+// POST /api/chat/start - Iniciar una nueva conversación (Protected)
+router.post('/start', protectRoute, chatController.startConversation);
 
-// POST /api/chat/start - Iniciar una nueva conversación
-router.post('/start', chatController.startConversation);
+// POST /api/chat/message - Enviar un mensaje (Protected)
+router.post('/message', protectRoute, chatController.handleChatMessage);
 
-// POST /api/chat/message - Enviar un mensaje
-router.post('/message', chatController.handleChatMessage);
+console.log('>>> api.js: Rutas definidas y protegidas');
 
-// GET /api/chat/history?conversationId=... (Opcional, si se necesita)
-// router.get('/history', chatController.getHistory);
-
-console.log('>>> api.js: Rutas definidas');
-
-export default router; // Usar export default
+export default router;

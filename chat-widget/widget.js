@@ -9,15 +9,28 @@
         console.warn("SynChat AI Widget: 'data-client-id' attribute not found on script tag or is set to default. Ensure the script tag includes this attribute with your Client ID.");
     }
 
+    // Placeholder for token retrieval - this needs a proper mechanism
+    const getApiToken = () => {
+        // In a real scenario, this token would come from the parent page
+        // after the user logs into the main application, or via a secure
+        // mechanism if the widget is for unauthenticated end-users (e.g. dedicated widget token).
+        // For MVP testing, it might be manually set in the console or by the dashboard.
+        if (window.synchatApiToken) {
+            return window.synchatApiToken;
+        }
+        console.warn('SynChat AI Widget: API token not found. Widget calls may fail.');
+        return null; // Or a default test token if applicable but not for protected routes
+    };
+
     // --- Configuración Inicial ---
     const WIDGET_CONFIG = {
         clientId: dynamicClientId, // Dynamically set from script tag's data-client-id attribute
-        backendUrl: "https://synchat-ai-backend.vercel.app/",
+        backendUrl: "/api/chat", // Adjusted to relative path
         botName: "Zoe",
         welcomeMessage: "¡Hola! Soy Zoe. ¿En qué puedo ayudarte hoy?",
         inputPlaceholder: "Escribe tu mensaje...",
-        triggerLogoUrl: "https://via.placeholder.com/64", // CAMBIAR a ruta real o URL completa
-     avatarUrl: "https://via.placeholder.com/64" // CAMBIAR a ruta real o URL completa
+        triggerLogoUrl: "zoe.png", // Use local logo
+        avatarUrl: "zoe.png" // Use local logo
     };
 
     // --- Variables de Estado ---
@@ -133,9 +146,17 @@
         if(messagesContainer) messagesContainer.innerHTML = '';
         conversationId = null;
         sessionStorage.removeItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`);
+        
+        const token = getApiToken();
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
         try {
             const response = await fetch(`${WIDGET_CONFIG.backendUrl}/start`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                method: 'POST', 
+                headers: headers,
                 body: JSON.stringify({ clientId: WIDGET_CONFIG.clientId })
             });
             if (!response.ok) throw new Error(`Error del servidor al iniciar: ${response.status}`);
@@ -164,10 +185,18 @@
         addMessageToChat("user", text);
         const input = document.getElementById('synchat-input');
         if(input) { input.value = ''; input.style.height = 'auto'; }
+        
+        const token = getApiToken();
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
         // Opcional: Añadir indicador 'escribiendo...'
         try {
             const response = await fetch(`${WIDGET_CONFIG.backendUrl}/message`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                method: 'POST', 
+                headers: headers,
                 body: JSON.stringify({ message: text, conversationId: conversationId, clientId: WIDGET_CONFIG.clientId })
             });
             // Opcional: quitar indicador 'escribiendo...'

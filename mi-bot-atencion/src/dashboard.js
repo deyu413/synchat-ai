@@ -13,6 +13,13 @@ const welcomeMessageInput = document.getElementById('welcomeMessage');
 const knowledgeUrlInput = document.getElementById('knowledgeUrl');
 const configMessage = document.getElementById('configMessage');
 
+// Ingest Section Elements
+const currentIngestUrlDisplay = document.getElementById('currentIngestUrlDisplay');
+const startIngestBtn = document.getElementById('startIngestBtn');
+const lastIngestStatusDisplay = document.getElementById('lastIngestStatusDisplay');
+const lastIngestAtDisplay = document.getElementById('lastIngestAtDisplay');
+const ingestMessage = document.getElementById('ingestMessage');
+
 let currentClientId = null; // Store client_id from session
 
 async function checkAuthAndLoadDashboard() {
@@ -56,6 +63,13 @@ async function loadClientConfig(token) {
             if (welcomeMessageInput) welcomeMessageInput.value = config.widget_config.welcomeMessage || '';
         }
         if (knowledgeUrlInput) knowledgeUrlInput.value = config.knowledge_source_url || '';
+
+        if (currentIngestUrlDisplay) {
+            currentIngestUrlDisplay.textContent = config.knowledge_source_url || 'No configurada';
+        }
+        // For MVP, we'll assume ingestion status is not yet available from this endpoint
+        if (lastIngestStatusDisplay) lastIngestStatusDisplay.textContent = config.last_ingest_status || 'N/A';
+        if (lastIngestAtDisplay) lastIngestAtDisplay.textContent = config.last_ingest_at ? new Date(config.last_ingest_at).toLocaleString() : 'N/A';
 
     } catch (error) {
         console.error('Error cargando configuración del cliente:', error);
@@ -129,6 +143,81 @@ if (logoutBtnDashboard) {
 
 if (configForm) {
     configForm.addEventListener('submit', handleUpdateConfig);
+}
+
+async function requestKnowledgeIngest() {
+    if (!currentClientId) {
+        if (ingestMessage) {
+            ingestMessage.textContent = 'Error: Client ID no encontrado. Intenta recargar la página.';
+            ingestMessage.className = 'error'; // Asegúrate de tener estilos para .error
+        }
+        return;
+    }
+
+    const knowledgeUrl = knowledgeUrlInput.value; // Get the URL from the input field
+    if (!knowledgeUrl) {
+        if (ingestMessage) {
+            ingestMessage.textContent = 'Por favor, introduce una URL para la ingesta en el campo de configuración y guarda.';
+            ingestMessage.className = 'error';
+        }
+        return;
+    }
+
+    if (ingestMessage) {
+        ingestMessage.textContent = 'Iniciando ingesta... Esto puede tardar varios minutos.';
+        ingestMessage.className = 'info'; // Asegúrate de tener estilos para .info
+    }
+    if (startIngestBtn) startIngestBtn.disabled = true;
+
+    try {
+        const token = (await supabase.auth.getSession())?.data.session?.access_token;
+        if (!token) {
+            throw new Error('Sesión no válida. Por favor, vuelve a iniciar sesión.');
+        }
+
+        // Make sure this endpoint '/api/client/me/ingest' matches what you'll create in the backend
+        const response = await fetch('/api/client/me/ingest', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                clientId: currentClientId, // Though backend can get this from token, sending it is fine
+                url: knowledgeUrl
+            })
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(result.message || result.error || `Error ${response.status}`);
+        }
+
+        if (ingestMessage) {
+            ingestMessage.textContent = result.message || '¡Ingesta completada!';
+            ingestMessage.className = 'success'; // Asegúrate de tener estilos para .success
+        }
+        if (lastIngestStatusDisplay) lastIngestStatusDisplay.textContent = 'Completada'; // Or use a status from result if available
+        if (lastIngestAtDisplay) lastIngestAtDisplay.textContent = new Date().toLocaleString();
+         // Optionally, reload config to get updated status from backend if the backend updates it
+        // await loadClientConfig(token);
+
+
+    } catch (error) {
+        console.error('Error durante la ingesta:', error);
+        if (ingestMessage) {
+            ingestMessage.textContent = `Error durante la ingesta: ${error.message}`;
+            ingestMessage.className = 'error';
+        }
+        if (lastIngestStatusDisplay) lastIngestStatusDisplay.textContent = 'Fallida';
+    } finally {
+        if (startIngestBtn) startIngestBtn.disabled = false;
+    }
+}
+
+if (startIngestBtn) {
+    startIngestBtn.addEventListener('click', requestKnowledgeIngest);
 }
 
 // Cargar al iniciar

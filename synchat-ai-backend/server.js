@@ -2,7 +2,8 @@
 import 'dotenv/config'; // Carga .env al inicio usando la importación
 import express from 'express';
 import cors from 'cors';
-import apiRoutes from './src/routes/api.js'; // Asegúrate de añadir .js
+import apiRoutes from './src/routes/api.js'; // Chat routes
+import clientDashboardRoutes from './src/routes/clientDashboardRoutes.js'; // Client dashboard routes
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -35,6 +36,11 @@ app.get('/', (req, res) => {
 console.log('>>> server.js: Montando rutas /api/chat');
 app.use('/api/chat', apiRoutes);
 console.log('>>> server.js: Rutas /api/chat montadas');
+
+console.log('>>> server.js: Montando rutas /api/client');
+app.use('/api/client', clientDashboardRoutes);
+console.log('>>> server.js: Rutas /api/client montadas');
+
 
 // --- Manejo de Errores (Al final) ---
 
