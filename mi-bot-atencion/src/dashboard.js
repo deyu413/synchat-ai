@@ -27,6 +27,10 @@ const statsLastUpdated = document.getElementById('statsLastUpdated');
 const usageMessage = document.getElementById('usageMessage');
 const refreshUsageBtn = document.getElementById('refreshUsageBtn');
 
+// Onboarding Section Elements
+const onboardingMessageSection = document.getElementById('onboardingMessageSection');
+const dismissOnboardingBtn = document.getElementById('dismissOnboardingBtn');
+
 let currentClientId = null; // Store client_id from session
 
 async function checkAuthAndLoadDashboard() {
@@ -41,6 +45,19 @@ async function checkAuthAndLoadDashboard() {
     console.log('Sesión activa:', session);
     currentClientId = session.user.id; // Assuming client_id is user.id from Supabase Auth
     if (userEmailSpan) userEmailSpan.textContent = session.user.email;
+
+    // Onboarding message logic
+    if (onboardingMessageSection && dismissOnboardingBtn) {
+        const onboardingDismissed = localStorage.getItem('synchat_onboarding_dismissed_' + currentClientId);
+        if (!onboardingDismissed) {
+            onboardingMessageSection.style.display = 'block';
+        }
+
+        dismissOnboardingBtn.addEventListener('click', () => {
+            onboardingMessageSection.style.display = 'none';
+            localStorage.setItem('synchat_onboarding_dismissed_' + currentClientId, 'true');
+        });
+    }
     
     await loadClientConfig(session.access_token);
     await displayClientUsage(); // Load usage stats
@@ -81,7 +98,7 @@ async function loadClientConfig(token) {
 
     } catch (error) {
         console.error('Error cargando configuración del cliente:', error);
-        if (errorMessageDashboard) errorMessageDashboard.textContent = `Error cargando configuración: ${error.message}`;
+        if (errorMessageDashboard) errorMessageDashboard.textContent = `No se pudo cargar la configuración del cliente: ${error.message}. Intenta recargar la página.`;
     }
 }
 
@@ -127,11 +144,11 @@ async function handleUpdateConfig(event) {
 
     } catch (error) {
         console.error('Error actualizando configuración:', error);
-        if(errorMessageDashboard) {
-            errorMessageDashboard.textContent = `Error guardando configuración: ${error.message}`;
-        }
+        // if(errorMessageDashboard) {
+        //     errorMessageDashboard.textContent = `Error guardando configuración: ${error.message}`;
+        // }
          if(configMessage) { // Also ensure configMessage is cleared or shows error
-            configMessage.textContent = `Error guardando configuración: ${error.message}`;
+            configMessage.textContent = `Error al guardar la configuración: ${error.message}. Por favor, verifica los datos e inténtalo de nuevo.`;
             configMessage.className = 'error';
         }
     }
@@ -214,9 +231,16 @@ async function requestKnowledgeIngest() {
 
     } catch (error) {
         console.error('Error durante la ingesta:', error);
-        if (ingestMessage) {
-            ingestMessage.textContent = `Error durante la ingesta: ${error.message}`;
-            ingestMessage.className = 'error';
+        if (error.message.toLowerCase().includes('sesión no válida') || error.message.toLowerCase().includes('session expired')) {
+            if (ingestMessage) {
+                ingestMessage.textContent = 'Tu sesión ha expirado. Por favor, inicia sesión de nuevo para realizar esta acción.';
+                ingestMessage.className = 'error';
+            }
+        } else {
+            if (ingestMessage) {
+                ingestMessage.textContent = `Falló la ingesta de conocimiento: ${error.message}. Revisa la URL y tu conexión, luego intenta de nuevo.`;
+                ingestMessage.className = 'error';
+            }
         }
         if (lastIngestStatusDisplay) lastIngestStatusDisplay.textContent = 'Fallida';
     } finally {
@@ -231,7 +255,7 @@ if (startIngestBtn) {
 async function displayClientUsage() {
     if (!currentClientId) {
         if (usageMessage) {
-            usageMessage.textContent = 'Error: Client ID no encontrado.';
+            usageMessage.textContent = 'Error: Client ID no encontrado. Intenta recargar la página.';
             usageMessage.className = 'error';
         }
         return;
@@ -278,9 +302,16 @@ async function displayClientUsage() {
 
     } catch (error) {
         console.error('Error cargando estadísticas de uso:', error);
-        if (usageMessage) {
-            usageMessage.textContent = `Error cargando estadísticas: ${error.message}`;
-            usageMessage.className = 'error';
+        if (error.message.toLowerCase().includes('sesión no válida') || error.message.toLowerCase().includes('session expired')) {
+            if (usageMessage) {
+                usageMessage.textContent = 'Tu sesión ha expirado. Por favor, inicia sesión de nuevo para ver las estadísticas.';
+                usageMessage.className = 'error';
+            }
+        } else {
+            if (usageMessage) {
+                usageMessage.textContent = `No se pudieron cargar las estadísticas de uso: ${error.message}. Inténtalo de nuevo más tarde.`;
+                usageMessage.className = 'error';
+            }
         }
         if (aiResolutionsCount) aiResolutionsCount.textContent = 'Error';
         if (totalQueriesCount) totalQueriesCount.textContent = 'Error';

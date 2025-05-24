@@ -4,6 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import apiRoutes from './src/routes/api.js'; // Chat routes
 import clientDashboardRoutes from './src/routes/clientDashboardRoutes.js'; // Client dashboard routes
+import paymentRoutes from './src/routes/paymentRoutes.js'; // Payment routes
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -15,7 +16,28 @@ app.use(cors({
     origin: process.env.FRONTEND_URL || 'https://www.synchatai.com' // Usar variable de entorno es mejor
 }));
 
+// Stripe webhook specific middleware (BEFORE global express.json)
+// This ensures that for the '/api/payments/webhook' route, we get the raw body.
+app.post('/api/payments/webhook', express.raw({type: 'application/json'}), (req, res, next) => {
+    // Attach rawBody to req object for the actual handler in paymentRoutes
+    // The paymentRoutes router will be configured to handle /api/payments path,
+    // so its /webhook sub-route will match this.
+    // We call next() to pass control to the paymentRoutes handler.
+    // Note: This approach of globally applying raw middleware to a specific path
+    // before other routers might be too broad if other POSTs to this path exist
+    // and expect express.json(). However, for a dedicated webhook URL, it's common.
+    // A more encapsulated way is to apply this middleware directly in the paymentRoutes file
+    // or when defining the specific webhook route if express router allows per-route middleware easily.
+    // For this setup, we ensure paymentRoutes's webhook handler can access req.rawBody.
+    // The actual /api/payments/webhook handler is in paymentRoutes.
+    // This middleware just ensures the body is raw for that specific path.
+    next();
+});
+
+
 // Middlewares esenciales de Express
+// express.json() should come AFTER the specific raw middleware for webhook if paths overlap,
+// or if we want to ensure raw body for webhooks and parsed JSON for other routes.
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -40,6 +62,10 @@ console.log('>>> server.js: Rutas /api/chat montadas');
 console.log('>>> server.js: Montando rutas /api/client');
 app.use('/api/client', clientDashboardRoutes);
 console.log('>>> server.js: Rutas /api/client montadas');
+
+console.log('>>> server.js: Montando rutas /api/payments');
+app.use('/api/payments', paymentRoutes);
+console.log('>>> server.js: Rutas /api/payments montadas');
 
 
 // --- Manejo de Errores (Al final) ---
