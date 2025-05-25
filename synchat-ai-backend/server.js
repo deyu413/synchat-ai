@@ -9,12 +9,60 @@ import paymentRoutes from './src/routes/paymentRoutes.js'; // Payment routes
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Allowed origins for the widget, from environment variable
+// Example WIDGET_ALLOWED_ORIGINS: "https://widget-test.com,http://localhost:8080" or "*"
+const widgetAllowedOriginsEnv = process.env.WIDGET_ALLOWED_ORIGINS || ''; 
+let allowedWidgetOrigins;
+
+if (widgetAllowedOriginsEnv === '*') {
+    allowedWidgetOrigins = true; // Allows all origins
+} else if (widgetAllowedOriginsEnv) {
+    allowedWidgetOrigins = widgetAllowedOriginsEnv.split(',').map(origin => origin.trim()).filter(Boolean);
+} else {
+    allowedWidgetOrigins = []; // Default to no specific widget origins if not set and not '*'
+}
+
+const frontendDashboardURL = process.env.FRONTEND_URL || 'https://www.synchatai.com';
+
+const corsOptionsDelegate = function (req, callback) {
+    let corsOptions = { origin: false }; // Default to disallow
+    const origin = req.header('Origin');
+    const isWidgetRoute = req.path.startsWith('/api/chat'); // Assuming /api/chat are widget endpoints
+
+    if (isWidgetRoute) {
+        if (allowedWidgetOrigins === true) { // '*' configuration
+            corsOptions.origin = true; // Allow any origin for widget routes
+        } else if (allowedWidgetOrigins.includes(origin)) {
+            corsOptions.origin = true; // Allow if origin is in the widget list
+        }
+    } else { // For non-widget routes (e.g., dashboard /api/client, /api/payments)
+        if (origin === frontendDashboardURL) {
+            corsOptions.origin = true; // Allow dashboard origin
+        }
+        // Optional: Add localhost for development if FRONTEND_URL is remote
+        else if (process.env.NODE_ENV === 'development' && origin && (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'))) {
+            corsOptions.origin = true;
+        }
+    }
+    
+    // For OPTIONS requests (preflight), always allow them to proceed for CORS checks.
+    // Some setups might require specific headers to be allowed here as well (Access-Control-Allow-Headers).
+    // However, the `cors` package usually handles standard preflight responses correctly
+    // once the origin is approved.
+    if (req.method === 'OPTIONS') {
+        // If you need to explicitly handle OPTIONS and ensure it passes through for the `cors` middleware to send correct preflight headers:
+        // You could set corsOptions.origin = true here for all OPTIONS, or rely on the `cors` package's default handling.
+        // For simplicity with the `cors` package, often just ensuring the origin check is correct for other methods is enough.
+        // The `cors` middleware itself will respond to OPTIONS requests with appropriate headers if origin is allowed.
+    }
+
+    callback(null, corsOptions); // Callback expects two params: error and options
+};
+
 // --- Middlewares ---
 
 // Configurar CORS
-app.use(cors({
-    origin: process.env.FRONTEND_URL || 'https://www.synchatai.com' // Usar variable de entorno es mejor
-}));
+app.use(cors(corsOptionsDelegate));
 
 // Stripe webhook specific middleware (BEFORE global express.json)
 // This ensures that for the '/api/payments/webhook' route, we get the raw body.
