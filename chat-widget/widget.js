@@ -10,21 +10,20 @@
         return; // Stop execution
     }
 
+    const VERCEL_BACKEND_BASE_URL = 'https://synchat-ai-backend.vercel.app'; // Added base URL
+
     // Placeholder for token retrieval - this needs a proper mechanism
     const getApiToken = () => {
-        // In a real scenario, this token would come from the parent page
-        // after the user logs into the main application, or via a secure
-        // mechanism if the widget is for unauthenticated end-users (e.g. dedicated widget token).
-        // For MVP testing, it might be manually set in the console or by the dashboard.
         if (window.synchatApiToken) {
             return window.synchatApiToken;
         }
         console.warn('SynChat AI Widget: API token not found. Widget calls may fail.');
-        return null; // Or a default test token if applicable but not for protected routes
+        return null; 
     };
 
     async function fetchWidgetConfiguration(clientId) {
         try {
+            // WIDGET_CONFIG will be defined before this function is called, so its properties can be accessed.
             const response = await fetch(`${WIDGET_CONFIG.publicConfigUrl}?clientId=${clientId}`);
             if (!response.ok) {
                 console.error(`SynChat AI Widget: Error fetching config. Status: ${response.status}. Using default config.`);
@@ -44,23 +43,24 @@
     }
 
     // --- Configuración Inicial ---
-    let WIDGET_CONFIG = { // Changed to let for modification
+    let WIDGET_CONFIG = { 
         clientId: dynamicClientId,
-        backendUrl: "/api/public-chat", // UPDATED Backend for chat messages
-        publicConfigUrl: "/api/public-chat/widget-config", // Backend for public config
-        botName: "SynChat Bot", // Default bot name
-        welcomeMessage: "Hello! How can I help you today?", // Default welcome message
+        backendUrl: `${VERCEL_BACKEND_BASE_URL}/api/public-chat`, // MODIFIED URL
+        publicConfigUrl: `${VERCEL_BACKEND_BASE_URL}/api/public-chat/widget-config`, // MODIFIED URL
+        botName: "SynChat Bot", 
+        welcomeMessage: "Hello! How can I help you today?", 
         inputPlaceholder: "Escribe tu mensaje...",
-        triggerLogoUrl: "zoe.png", // Default local logo
-        avatarUrl: "zoe.png" // Default local avatar
+        triggerLogoUrl: "zoe.png", 
+        avatarUrl: "zoe.png" 
     };
 
+    // fetchWidgetConfiguration is called after WIDGET_CONFIG is initialized
     const dynamicData = await fetchWidgetConfiguration(dynamicClientId);
     if (dynamicData) {
         WIDGET_CONFIG.botName = dynamicData.botName || WIDGET_CONFIG.botName;
         WIDGET_CONFIG.welcomeMessage = dynamicData.welcomeMessage || WIDGET_CONFIG.welcomeMessage;
-        // If other dynamic properties like themeColor or avatarUrl are expected from backend, assign them here too
-        // e.g., WIDGET_CONFIG.avatarUrl = dynamicData.avatarUrl || WIDGET_CONFIG.avatarUrl;
+        // WIDGET_CONFIG.avatarUrl = dynamicData.avatarUrl || WIDGET_CONFIG.avatarUrl; // Example if avatar comes from config
+        // WIDGET_CONFIG.triggerLogoUrl = dynamicData.triggerLogoUrl || WIDGET_CONFIG.triggerLogoUrl; // Example
     }
 
     // --- Variables de Estado ---
@@ -94,18 +94,16 @@
 
         .synchat-window {
             position: fixed; bottom: 100px; right: 25px;
-            width: 400px; /* Mantenemos tamaño grande */
+            width: 400px; 
             max-width: calc(100vw - 30px);
-            max-height: 75vh; /* Mantenemos tamaño grande */
+            max-height: 75vh; 
             background-color: var(--synchat-background-light);
             border-radius: var(--synchat-border-radius);
             box-shadow: var(--synchat-shadow);
             z-index: 10000; display: none; flex-direction: column;
-            overflow: hidden; /* Mantenemos hidden para contener bien */
-            /* --- resize ELIMINADO --- */
-            resize: none; /* <-- CAMBIO AQUÍ: Desactivar redimensionamiento */
-            /* --- fin resize --- */
-            min-width: 320px; /* Aún útil para evitar colapso por CSS externo */
+            overflow: hidden; 
+            resize: none; 
+            min-width: 320px; 
             min-height: 400px;
             opacity: 0; transform: translateY(10px);
             transition: opacity 0.3s ease, transform 0.3s ease;
@@ -177,14 +175,12 @@
         conversationId = null;
         sessionStorage.removeItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`);
         
-        // Token and Authorization header removed for public endpoint
         const headers = { 'Content-Type': 'application/json' };
 
         try {
             const response = await fetch(`${WIDGET_CONFIG.backendUrl}/start`, {
                 method: 'POST', 
                 headers: headers,
-                // Body already correctly includes clientId
                 body: JSON.stringify({ clientId: WIDGET_CONFIG.clientId })
             });
             if (!response.ok) throw new Error(`Error del servidor al iniciar: ${response.status}`);
@@ -214,18 +210,14 @@
         const input = document.getElementById('synchat-input');
         if(input) { input.value = ''; input.style.height = 'auto'; }
         
-        // Token and Authorization header removed for public endpoint
         const headers = { 'Content-Type': 'application/json' };
 
-        // Opcional: Añadir indicador 'escribiendo...'
         try {
             const response = await fetch(`${WIDGET_CONFIG.backendUrl}/message`, {
                 method: 'POST', 
                 headers: headers,
-                // Body already correctly includes clientId
                 body: JSON.stringify({ message: text, conversationId: conversationId, clientId: WIDGET_CONFIG.clientId })
             });
-            // Opcional: quitar indicador 'escribiendo...'
             if (!response.ok) {
                  const errorData = await response.json().catch(() => ({}));
                  throw new Error(`Error del servidor: ${response.status} - ${errorData.error || 'Error desconocido'}`);
@@ -249,7 +241,7 @@
         trigger.id = 'synchat-trigger'; trigger.classList.add('synchat-trigger');
         trigger.setAttribute('role', 'button'); trigger.setAttribute('tabindex', '0');
         trigger.setAttribute('aria-label', 'Abrir chat de ayuda');
-        trigger.innerHTML = `<img src="${WIDGET_CONFIG.triggerLogoUrl}" alt="Abrir Chat SynChat AI">`;
+        trigger.innerHTML = `<img src="${WIDGET_CONFIG.triggerLogoUrl}" alt="Abrir Chat SynChat AI">`; // Assuming triggerLogoUrl is relative to where widget.js is or an absolute path
         trigger.addEventListener('click', toggleChatWindow);
         trigger.addEventListener('keydown', (e) => { if(e.key === 'Enter' || e.key === ' ') toggleChatWindow(); });
         document.body.appendChild(trigger);
@@ -274,10 +266,8 @@
     }
 
     // --- Inicialización del Widget ---
-    if (document.readyState === 'complete' || (document.readyState !== 'loading' && !document.documentElement.doScroll)) {
-        createWidget(); // Correr si ya está cargado
-    } else {
-        document.addEventListener('DOMContentLoaded', createWidget); // Esperar si no lo está
-    }
+    // Ensure WIDGET_CONFIG is fully populated (especially after fetchWidgetConfiguration) before creating the widget.
+    // The async IIFE structure handles this naturally.
+    createWidget();
 
 })();

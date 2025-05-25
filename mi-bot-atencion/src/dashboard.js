@@ -1,5 +1,7 @@
 import { supabase } from './supabaseClientFrontend.js';
 
+const VERCEL_BACKEND_URL = 'https://synchat-ai-backend.vercel.app'; // Added base URL
+
 const loadingMessage = document.getElementById('loadingMessage');
 const dashboardContent = document.getElementById('dashboardContent');
 const userEmailSpan = document.getElementById('userEmail');
@@ -38,21 +40,19 @@ async function checkAuthAndLoadDashboard() {
 
     if (sessionError || !session) {
         console.error('Error de sesión o no autenticado:', sessionError?.message);
-        window.location.href = 'login.html';
+        window.location.href = 'login.html'; // Assuming login.html is at the root or accessible path
         return;
     }
 
     console.log('Sesión activa:', session);
-    currentClientId = session.user.id; // Assuming client_id is user.id from Supabase Auth
+    currentClientId = session.user.id; 
     if (userEmailSpan) userEmailSpan.textContent = session.user.email;
 
-    // Onboarding message logic
     if (onboardingMessageSection && dismissOnboardingBtn) {
         const onboardingDismissed = localStorage.getItem('synchat_onboarding_dismissed_' + currentClientId);
         if (!onboardingDismissed) {
             onboardingMessageSection.style.display = 'block';
         }
-
         dismissOnboardingBtn.addEventListener('click', () => {
             onboardingMessageSection.style.display = 'none';
             localStorage.setItem('synchat_onboarding_dismissed_' + currentClientId, 'true');
@@ -60,7 +60,7 @@ async function checkAuthAndLoadDashboard() {
     }
     
     await loadClientConfig(session.access_token);
-    await displayClientUsage(); // Load usage stats
+    await displayClientUsage(); 
     
     if (loadingMessage) loadingMessage.classList.add('hidden');
     if (dashboardContent) dashboardContent.classList.remove('hidden');
@@ -69,7 +69,7 @@ async function checkAuthAndLoadDashboard() {
 async function loadClientConfig(token) {
     if(errorMessageDashboard) errorMessageDashboard.textContent = '';
     try {
-        const response = await fetch('/api/client/me/config', {
+        const response = await fetch(`${VERCEL_BACKEND_URL}/api/client/me/config`, { // MODIFIED URL
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -92,7 +92,6 @@ async function loadClientConfig(token) {
         if (currentIngestUrlDisplay) {
             currentIngestUrlDisplay.textContent = config.knowledge_source_url || 'No configurada';
         }
-        // For MVP, we'll assume ingestion status is not yet available from this endpoint
         if (lastIngestStatusDisplay) lastIngestStatusDisplay.textContent = config.last_ingest_status || 'N/A';
         if (lastIngestAtDisplay) lastIngestAtDisplay.textContent = config.last_ingest_at ? new Date(config.last_ingest_at).toLocaleString() : 'N/A';
 
@@ -121,7 +120,7 @@ async function handleUpdateConfig(event) {
     };
 
     try {
-        const response = await fetch('/api/client/me/config', {
+        const response = await fetch(`${VERCEL_BACKEND_URL}/api/client/me/config`, { // MODIFIED URL
             method: 'PUT',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -138,16 +137,13 @@ async function handleUpdateConfig(event) {
         console.log('Configuración actualizada:', result);
         if(configMessage) {
             configMessage.textContent = '¡Configuración guardada con éxito!';
-            configMessage.className = 'success'; // Ensure it has success styling
+            configMessage.className = 'success';
         }
         setTimeout(() => { if(configMessage) configMessage.textContent = ''; }, 3000);
 
     } catch (error) {
         console.error('Error actualizando configuración:', error);
-        // if(errorMessageDashboard) {
-        //     errorMessageDashboard.textContent = `Error guardando configuración: ${error.message}`;
-        // }
-         if(configMessage) { // Also ensure configMessage is cleared or shows error
+         if(configMessage) { 
             configMessage.textContent = `Error al guardar la configuración: ${error.message}. Por favor, verifica los datos e inténtalo de nuevo.`;
             configMessage.className = 'error';
         }
@@ -161,7 +157,7 @@ if (logoutBtnDashboard) {
             console.error('Error al cerrar sesión:', error);
             if(errorMessageDashboard) errorMessageDashboard.textContent = `Error al cerrar sesión: ${error.message}`;
         } else {
-            window.location.href = 'login.html';
+            window.location.href = 'login.html'; // Assuming login.html is at the root or accessible path
         }
     });
 }
@@ -174,12 +170,12 @@ async function requestKnowledgeIngest() {
     if (!currentClientId) {
         if (ingestMessage) {
             ingestMessage.textContent = 'Error: Client ID no encontrado. Intenta recargar la página.';
-            ingestMessage.className = 'error'; // Asegúrate de tener estilos para .error
+            ingestMessage.className = 'error';
         }
         return;
     }
 
-    const knowledgeUrl = knowledgeUrlInput.value; // Get the URL from the input field
+    const knowledgeUrl = knowledgeUrlInput.value; 
     if (!knowledgeUrl) {
         if (ingestMessage) {
             ingestMessage.textContent = 'Por favor, introduce una URL para la ingesta en el campo de configuración y guarda.';
@@ -190,7 +186,7 @@ async function requestKnowledgeIngest() {
 
     if (ingestMessage) {
         ingestMessage.textContent = 'Iniciando ingesta... Esto puede tardar varios minutos.';
-        ingestMessage.className = 'info'; // Asegúrate de tener estilos para .info
+        ingestMessage.className = 'info'; 
     }
     if (startIngestBtn) startIngestBtn.disabled = true;
 
@@ -200,15 +196,14 @@ async function requestKnowledgeIngest() {
             throw new Error('Sesión no válida. Por favor, vuelve a iniciar sesión.');
         }
 
-        // Make sure this endpoint '/api/client/me/ingest' matches what you'll create in the backend
-        const response = await fetch('/api/client/me/ingest', {
+        const response = await fetch(`${VERCEL_BACKEND_URL}/api/client/me/ingest`, { // MODIFIED URL
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                clientId: currentClientId, // Though backend can get this from token, sending it is fine
+                clientId: currentClientId, 
                 url: knowledgeUrl
             })
         });
@@ -221,13 +216,10 @@ async function requestKnowledgeIngest() {
 
         if (ingestMessage) {
             ingestMessage.textContent = result.message || '¡Ingesta completada!';
-            ingestMessage.className = 'success'; // Asegúrate de tener estilos para .success
+            ingestMessage.className = 'success'; 
         }
-        if (lastIngestStatusDisplay) lastIngestStatusDisplay.textContent = 'Pendiente'; // Or use a status from result if available
+        if (lastIngestStatusDisplay) lastIngestStatusDisplay.textContent = 'Pendiente'; 
         if (lastIngestAtDisplay) lastIngestAtDisplay.textContent = new Date().toLocaleString();
-         // Optionally, reload config to get updated status from backend if the backend updates it
-        // await loadClientConfig(token);
-
 
     } catch (error) {
         console.error('Error durante la ingesta:', error);
@@ -274,8 +266,7 @@ async function displayClientUsage() {
             throw new Error('Sesión no válida. Por favor, vuelve a iniciar sesión.');
         }
 
-        // This endpoint is defined in clientDashboardRoutes.js
-        const response = await fetch('/api/client/me/usage/resolutions', {
+        const response = await fetch(`${VERCEL_BACKEND_URL}/api/client/me/usage/resolutions`, { // MODIFIED URL
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -288,7 +279,7 @@ async function displayClientUsage() {
             throw new Error(errorData.message || errorData.error || `Error ${response.status}`);
         }
 
-        const usageData = await response.json(); // Expects { ai_resolutions_current_month: X, total_queries_current_month: Y } for example
+        const usageData = await response.json(); 
 
         if (aiResolutionsCount) aiResolutionsCount.textContent = usageData.ai_resolutions_current_month !== undefined ? usageData.ai_resolutions_current_month : 'No disponible';
         if (totalQueriesCount) totalQueriesCount.textContent = usageData.total_queries_current_month !== undefined ? usageData.total_queries_current_month : 'No disponible';
@@ -323,5 +314,4 @@ if (refreshUsageBtn) {
     refreshUsageBtn.addEventListener('click', displayClientUsage);
 }
 
-// Cargar al iniciar
 document.addEventListener('DOMContentLoaded', checkAuthAndLoadDashboard);
