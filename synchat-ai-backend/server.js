@@ -5,6 +5,7 @@ import cors from 'cors';
 import apiRoutes from './src/routes/api.js'; // Chat routes
 import clientDashboardRoutes from './src/routes/clientDashboardRoutes.js'; // Client dashboard routes
 import paymentRoutes from './src/routes/paymentRoutes.js'; // Payment routes
+import publicChatRoutes from './src/routes/publicChatRoutes.js'; // Public chat routes
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -114,6 +115,10 @@ console.log('>>> server.js: Rutas /api/client montadas');
 console.log('>>> server.js: Montando rutas /api/payments');
 app.use('/api/payments', paymentRoutes);
 console.log('>>> server.js: Rutas /api/payments montadas');
+
+console.log('>>> server.js: Montando rutas /api/public-chat');
+app.use('/api/public-chat', publicChatRoutes);
+console.log('>>> server.js: Rutas /api/public-chat montadas');
 
 
 // --- Manejo de Errores (Al final) ---

@@ -1,12 +1,13 @@
 // widget.js
 
-(function() {
+(async function() {
     // --- Dynamic Client ID Retrieval ---
     const currentScript = document.currentScript;
-    // Fallback to a default or null if attribute not found or currentScript is null
-    const dynamicClientId = currentScript ? currentScript.getAttribute('data-client-id') : 'default-client-id'; 
-    if (!dynamicClientId || dynamicClientId === 'default-client-id') {
-        console.warn("SynChat AI Widget: 'data-client-id' attribute not found on script tag or is set to default. Ensure the script tag includes this attribute with your Client ID.");
+    const dynamicClientId = currentScript ? currentScript.getAttribute('data-client-id') : null;
+    
+    if (!dynamicClientId) {
+        console.error("SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize.");
+        return; // Stop execution
     }
 
     // Placeholder for token retrieval - this needs a proper mechanism
@@ -22,16 +23,45 @@
         return null; // Or a default test token if applicable but not for protected routes
     };
 
+    async function fetchWidgetConfiguration(clientId) {
+        try {
+            const response = await fetch(`${WIDGET_CONFIG.publicConfigUrl}?clientId=${clientId}`);
+            if (!response.ok) {
+                console.error(`SynChat AI Widget: Error fetching config. Status: ${response.status}. Using default config.`);
+                return null; 
+            }
+            const fetchedConfig = await response.json();
+            if (fetchedConfig.error) {
+                console.error(`SynChat AI Widget: Error in fetched config: ${fetchedConfig.error}. Using default config.`);
+                return null;
+            }
+            console.log('SynChat AI Widget: Configuration loaded:', fetchedConfig);
+            return fetchedConfig;
+        } catch (error) {
+            console.error('SynChat AI Widget: Exception fetching config:', error, '. Using default config.');
+            return null;
+        }
+    }
+
     // --- Configuración Inicial ---
-    const WIDGET_CONFIG = {
-        clientId: dynamicClientId, // Dynamically set from script tag's data-client-id attribute
-        backendUrl: "/api/chat", // Adjusted to relative path
-        botName: "Zoe",
-        welcomeMessage: "¡Hola! Soy Zoe. ¿En qué puedo ayudarte hoy?",
+    let WIDGET_CONFIG = { // Changed to let for modification
+        clientId: dynamicClientId,
+        backendUrl: "/api/chat", // Backend for chat messages
+        publicConfigUrl: "/api/public-chat/widget-config", // Backend for public config
+        botName: "SynChat Bot", // Default bot name
+        welcomeMessage: "Hello! How can I help you today?", // Default welcome message
         inputPlaceholder: "Escribe tu mensaje...",
-        triggerLogoUrl: "zoe.png", // Use local logo
-        avatarUrl: "zoe.png" // Use local logo
+        triggerLogoUrl: "zoe.png", // Default local logo
+        avatarUrl: "zoe.png" // Default local avatar
     };
+
+    const dynamicData = await fetchWidgetConfiguration(dynamicClientId);
+    if (dynamicData) {
+        WIDGET_CONFIG.botName = dynamicData.botName || WIDGET_CONFIG.botName;
+        WIDGET_CONFIG.welcomeMessage = dynamicData.welcomeMessage || WIDGET_CONFIG.welcomeMessage;
+        // If other dynamic properties like themeColor or avatarUrl are expected from backend, assign them here too
+        // e.g., WIDGET_CONFIG.avatarUrl = dynamicData.avatarUrl || WIDGET_CONFIG.avatarUrl;
+    }
 
     // --- Variables de Estado ---
     let conversationId = sessionStorage.getItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`);
