@@ -53,27 +53,70 @@ export const updateClientConfig = async (req, res) => {
         return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' });
     }
 
-    const { widget_config, knowledge_source_url } = req.body;
+    const { widget_config: newWidgetConfigData, knowledge_source_url } = req.body;
 
     // Basic validation: Check if at least one updatable field is provided
-    if (widget_config === undefined && knowledge_source_url === undefined) {
+    if (newWidgetConfigData === undefined && knowledge_source_url === undefined) {
         return res.status(400).json({ message: 'No valid fields provided for update. Provide widget_config or knowledge_source_url.' });
     }
 
-    const updateData = {};
-    if (widget_config !== undefined) {
-        updateData.widget_config = widget_config;
-    }
-    if (knowledge_source_url !== undefined) {
-        updateData.knowledge_source_url = knowledge_source_url;
-    }
-    // updated_at is handled by the database trigger
+    const updateFields = {};
 
     try {
+        // Handle widget_config update (if newWidgetConfigData is provided and is an object)
+        if (newWidgetConfigData !== undefined) {
+            if (typeof newWidgetConfigData !== 'object' || newWidgetConfigData === null) {
+                return res.status(400).json({ message: 'Invalid widget_config format. It must be an object.' });
+            }
+
+            let currentWidgetConfig = {};
+            const { data: clientRecord, error: fetchError } = await supabase
+                .from('synchat_clients')
+                .select('widget_config')
+                .eq('client_id', clientId)
+                .single();
+
+            if (fetchError) {
+                console.error('Error fetching current widget_config:', fetchError.message);
+                // PGRST116: "The result contains 0 rows" - this is not an error if client exists but has no widget_config yet
+                if (fetchError.code !== 'PGRST116') { 
+                     return res.status(500).json({ message: 'Error fetching current configuration for update.', error: fetchError.message });
+                }
+            }
+            currentWidgetConfig = clientRecord?.widget_config || {};
+            
+            const mergedWidgetConfig = { ...currentWidgetConfig, ...newWidgetConfigData };
+            updateFields.widget_config = mergedWidgetConfig;
+        }
+
+        // Handle knowledge_source_url update
+        if (knowledge_source_url !== undefined) {
+            // Basic URL validation (optional, but good practice)
+            try {
+                if (knowledge_source_url !== '') { // Allow empty string to clear the URL
+                    new URL(knowledge_source_url);
+                }
+            } catch (urlError) {
+                return res.status(400).json({ message: 'Invalid knowledge_source_url format.' });
+            }
+            updateFields.knowledge_source_url = knowledge_source_url;
+        }
+
+        // If no fields were actually prepared for update (e.g., only undefined values were passed for updatable fields)
+        if (Object.keys(updateFields).length === 0) {
+            // Optionally, fetch and return current data if no update is made, or just a message.
+            // For this task, we'll return a message indicating no update was performed.
+            // However, the initial check for both being undefined should catch most of this.
+            // This check is more for if widget_config was passed as undefined and knowledge_source_url was also undefined.
+            return res.status(200).json({ message: 'No new data provided to update.' });
+        }
+        
+        // updated_at is handled by the database trigger
+
         const { data, error } = await supabase
             .from('synchat_clients')
-            .update(updateData)
-            .eq('client_id', clientId) // Assuming 'client_id' in this table is the Supabase user ID
+            .update(updateFields)
+            .eq('client_id', clientId)
             .select('client_id, widget_config, knowledge_source_url, updated_at') // Return updated fields
             .single();
 
@@ -83,12 +126,14 @@ export const updateClientConfig = async (req, res) => {
         }
         
         if (!data) {
-            return res.status(404).json({ message: 'Client not found or update failed.' });
+            // This case might happen if the clientId is valid but somehow the update affects 0 rows.
+            // Or if RLS prevents the select after update.
+            return res.status(404).json({ message: 'Client not found or update failed to return data.' });
         }
 
         res.status(200).json({ message: 'Client configuration updated successfully.', data });
     } catch (err) {
-        console.error('Unexpected error in updateClientConfig:', err.message);
+        console.error('Unexpected error in updateClientConfig:', err.message, err.stack);
         res.status(500).json({ message: 'An unexpected error occurred.', error: err.message });
     }
 };
