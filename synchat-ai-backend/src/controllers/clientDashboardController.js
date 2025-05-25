@@ -2,6 +2,7 @@
 // Controller for handling client dashboard related API requests.
 
 import { supabase } from '../../services/supabaseClient.js'; // Adjusted path
+import { ingestWebsite } from '../../services/ingestionService.js';
 
 // Placeholder for database service or Supabase client if needed later
 // e.g., const db = require('../services/dbService'); // Or your Supabase client
@@ -122,7 +123,23 @@ export const requestKnowledgeIngest = async (req, res) => {
 
         const knowledge_source_url = clientData.knowledge_source_url;
 
+        // Call ingestWebsite in a non-blocking way
+        ingestWebsite(clientId, knowledge_source_url)
+            .then(result => {
+                if (result.success) {
+                    console.log(`Ingestion completed successfully for client ${clientId}. Details:`, result.data);
+                    // For this task, only logging. Actual status update ('completed'/'failed')
+                    // would ideally be handled by the service or a robust job queue.
+                } else {
+                    console.error(`Ingestion failed for client ${clientId}. Error:`, result.error);
+                }
+            })
+            .catch(error => {
+                console.error(`Critical error during background ingestion for client ${clientId}:`, error);
+            });
+
         // 2. Update last_ingest_status to 'pending' and last_ingest_at
+        // This indicates the request has been accepted and is being processed (by the background task)
         const { error: updateError } = await supabase
             .from('synchat_clients')
             .update({ 
