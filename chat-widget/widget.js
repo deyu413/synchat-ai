@@ -46,7 +46,7 @@
     // --- Configuración Inicial ---
     let WIDGET_CONFIG = { // Changed to let for modification
         clientId: dynamicClientId,
-        backendUrl: "/api/chat", // Backend for chat messages
+        backendUrl: "/api/public-chat", // UPDATED Backend for chat messages
         publicConfigUrl: "/api/public-chat/widget-config", // Backend for public config
         botName: "SynChat Bot", // Default bot name
         welcomeMessage: "Hello! How can I help you today?", // Default welcome message
@@ -177,16 +177,14 @@
         conversationId = null;
         sessionStorage.removeItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`);
         
-        const token = getApiToken();
+        // Token and Authorization header removed for public endpoint
         const headers = { 'Content-Type': 'application/json' };
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
 
         try {
             const response = await fetch(`${WIDGET_CONFIG.backendUrl}/start`, {
                 method: 'POST', 
                 headers: headers,
+                // Body already correctly includes clientId
                 body: JSON.stringify({ clientId: WIDGET_CONFIG.clientId })
             });
             if (!response.ok) throw new Error(`Error del servidor al iniciar: ${response.status}`);
@@ -216,17 +214,15 @@
         const input = document.getElementById('synchat-input');
         if(input) { input.value = ''; input.style.height = 'auto'; }
         
-        const token = getApiToken();
+        // Token and Authorization header removed for public endpoint
         const headers = { 'Content-Type': 'application/json' };
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
 
         // Opcional: Añadir indicador 'escribiendo...'
         try {
             const response = await fetch(`${WIDGET_CONFIG.backendUrl}/message`, {
                 method: 'POST', 
                 headers: headers,
+                // Body already correctly includes clientId
                 body: JSON.stringify({ message: text, conversationId: conversationId, clientId: WIDGET_CONFIG.clientId })
             });
             // Opcional: quitar indicador 'escribiendo...'
