@@ -30,6 +30,26 @@ if (!supabaseUrl || !supabaseKey || !openaiApiKey) {
 const supabase = createClient(supabaseUrl, supabaseKey);
 const openai = new OpenAI({ apiKey: openaiApiKey });
 
+// Helper function to update client ingestion status
+async function updateClientIngestStatus(clientId, status, errorMessage = null) {
+    const updateData = {
+        last_ingest_status: status,
+        last_ingest_at: new Date().toISOString(),
+        last_ingest_error: errorMessage ? errorMessage.substring(0, 500) : null
+    };
+    try {
+        const { error } = await supabase
+            .from('synchat_clients')
+            .update(updateData)
+            .eq('client_id', clientId);
+        if (error) {
+            console.error(`(Ingestion Service) Failed to update client ${clientId} status to '${status}':`, error.message);
+        }
+    } catch (dbUpdateError) {
+        console.error(`(Ingestion Service) Exception while updating client ${clientId} status to '${status}':`, dbUpdateError.message);
+    }
+}
+
 // --- Funciones de Ayuda ---
 
 /**
@@ -266,8 +286,10 @@ export async function ingestWebsite(clientId, urlToIngest) {
         // 3. Generar Embeddings
         const embeddingResult = await generateEmbeddings(chunks);
         if (!embeddingResult.success || !embeddingResult.data || embeddingResult.data.length === 0) {
-            console.warn("No se pudieron generar embeddings o todos los lotes fallaron. Finalizando ingesta.");
-            return { success: false, error: embeddingResult.error || "Failed to generate embeddings.", data: { chunksStored: 0, tokensUsed: embeddingResult.totalTokens } };
+            const errMsg = embeddingResult.error || "Failed to generate embeddings or no embeddings produced.";
+            console.warn(`(Ingestion Service) ${errMsg} Finalizando ingesta para client ${clientId}.`);
+            await updateClientIngestStatus(clientId, 'failed', errMsg);
+            return { success: false, error: errMsg, data: { chunksStored: 0, tokensUsed: embeddingResult.totalTokens } };
         }
         
         const chunksWithEmbeddings = embeddingResult.data;
@@ -281,10 +303,14 @@ export async function ingestWebsite(clientId, urlToIngest) {
         const storeResult = await storeChunks(clientId, chunksWithEmbeddings);
 
         if (!storeResult.success) {
-             return { success: false, error: `Failed to store chunks: ${storeResult.error}`, data: { chunksStored: 0, tokensUsed: embeddingResult.totalTokens } };
+            const errMsg = `Failed to store chunks: ${storeResult.error}`;
+            console.warn(`(Ingestion Service) ${errMsg} for client ${clientId}.`);
+            await updateClientIngestStatus(clientId, 'failed', errMsg);
+            return { success: false, error: errMsg, data: { chunksStored: storeResult.count || 0, tokensUsed: embeddingResult.totalTokens } };
         }
         
         console.log(`--- Ingesta Finalizada para ${urlToIngest} ---`);
+        await updateClientIngestStatus(clientId, 'completed'); // Update status to 'completed'
         return { 
             success: true, 
             message: "Ingestion complete.", 
@@ -308,6 +334,8 @@ export async function ingestWebsite(clientId, urlToIngest) {
             errorMessage = `General error during ingestion of ${urlToIngest}: ${error.message}`;
         }
         console.error(errorMessage, error.stack ? error.stack.substring(0,500) : '');
+        // Update client status to 'failed' in the main catch block
+        await updateClientIngestStatus(clientId, 'failed', errorMessage);
         return { success: false, error: errorMessage };
     }
 }

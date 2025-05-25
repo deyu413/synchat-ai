@@ -223,7 +223,7 @@ async function requestKnowledgeIngest() {
             ingestMessage.textContent = result.message || '¡Ingesta completada!';
             ingestMessage.className = 'success'; // Asegúrate de tener estilos para .success
         }
-        if (lastIngestStatusDisplay) lastIngestStatusDisplay.textContent = 'Completada'; // Or use a status from result if available
+        if (lastIngestStatusDisplay) lastIngestStatusDisplay.textContent = 'Pendiente'; // Or use a status from result if available
         if (lastIngestAtDisplay) lastIngestAtDisplay.textContent = new Date().toLocaleString();
          // Optionally, reload config to get updated status from backend if the backend updates it
         // await loadClientConfig(token);
