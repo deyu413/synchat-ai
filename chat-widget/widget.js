@@ -1,15 +1,23 @@
 // widget.js
 
 (function() {
+    // --- Dynamic Client ID Retrieval ---
+    const currentScript = document.currentScript;
+    // Fallback to a default or null if attribute not found or currentScript is null
+    const dynamicClientId = currentScript ? currentScript.getAttribute('data-client-id') : 'default-client-id'; 
+    if (!dynamicClientId || dynamicClientId === 'default-client-id') {
+        console.warn("SynChat AI Widget: 'data-client-id' attribute not found on script tag or is set to default. Ensure the script tag includes this attribute with your Client ID.");
+    }
+
     // --- Configuración Inicial ---
     const WIDGET_CONFIG = {
-        clientId: "c85115c6-6ca6-486d-ac33-0fab0661b27a", // <-- REEMPLAZA CON TU CLIENT ID DE PRUEBA REAL
+        clientId: dynamicClientId, // Dynamically set from script tag's data-client-id attribute
         backendUrl: "https://synchat-ai-backend.vercel.app/",
         botName: "Zoe",
         welcomeMessage: "¡Hola! Soy Zoe. ¿En qué puedo ayudarte hoy?",
         inputPlaceholder: "Escribe tu mensaje...",
-        triggerLogoUrl: "C:/Users/nerod/OneDrive/Desktop/chat-widget/logo synchatai.png", // CAMBIAR a ruta real o URL completa
-     avatarUrl: "C:/Users/nerod/OneDrive/Desktop/chat-widget/zoe.png" // CAMBIAR a ruta real o URL completa
+        triggerLogoUrl: "https://via.placeholder.com/64", // CAMBIAR a ruta real o URL completa
+     avatarUrl: "https://via.placeholder.com/64" // CAMBIAR a ruta real o URL completa
     };
 
     // --- Variables de Estado ---

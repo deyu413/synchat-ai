@@ -1,18 +1,11 @@
 // src/services/openaiService.js
-import OpenAI from 'openai';
-import 'dotenv/config';
+import openai from '../config/openaiClient.js'; // Use the shared client
 
-const apiKey = process.env.OPENAI_API_KEY;
-
-if (!apiKey) {
-    console.error("¡Error Fatal! La variable de entorno OPENAI_API_KEY no está definida.");
-    // Lanzar error para detener la aplicación si falta la clave
-    throw new Error("OPENAI_API_KEY no definida.");
+if (!process.env.OPENAI_API_KEY) {
+    throw new Error("Fatal Error: OPENAI_API_KEY must be defined in the environment variables.");
 }
 
-const openai = new OpenAI({ apiKey });
-
-console.log("(OpenAI Service) Cliente OpenAI inicializado.");
+// console.log("(OpenAI Service) Using shared OpenAI client."); // Original log from shared client is in openaiClient.js
 
 /**
  * Obtiene una respuesta del modelo de chat de OpenAI.
@@ -28,7 +21,7 @@ export const getChatCompletion = async (messages, modelName = "gpt-3.5-turbo", t
             model: modelName,
             messages: messages,
             temperature: temperature,
-            // max_tokens: 500, // Considera añadir si necesitas limitar longitud
+            max_tokens: 500, // Considera añadir si necesitas limitar longitud
         });
 
         // Loguear el uso de tokens (útil para control de costes)

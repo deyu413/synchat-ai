@@ -6,9 +6,7 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 
 if (!supabaseUrl || !supabaseKey) {
-    console.error("¡Error Fatal! Las variables de entorno SUPABASE_URL o SUPABASE_KEY no están definidas.");
-    // En un entorno real, podrías querer lanzar un error o manejar esto de forma diferente.
-    // process.exit(1);
+    throw new Error("Fatal Error: SUPABASE_URL and SUPABASE_KEY must be defined in the environment variables.");
 }
 
 // Crear y exportar una única instancia del cliente Supabase

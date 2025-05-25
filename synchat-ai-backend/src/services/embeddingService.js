@@ -1,17 +1,11 @@
 // src/services/embeddingService.js
-import OpenAI from 'openai';
-import 'dotenv/config';
+import openai from '../config/openaiClient.js'; // Use the shared client
 
-const apiKey = process.env.OPENAI_API_KEY;
-
-if (!apiKey) {
-    console.error("¡Error Fatal! OPENAI_API_KEY no definida para Embedding Service.");
-    throw new Error("OPENAI_API_KEY no definida.");
+if (!process.env.OPENAI_API_KEY) {
+    throw new Error("Fatal Error: OPENAI_API_KEY must be defined in the environment variables.");
 }
 
-const openai = new OpenAI({ apiKey });
-
-console.log("(Embedding Service) Cliente OpenAI inicializado para embeddings.");
+// console.log("(Embedding Service) Using shared OpenAI client."); // Original log from shared client is in openaiClient.js
 
 // Configuración de Embedding
 const EMBEDDING_MODEL = "text-embedding-3-small";
