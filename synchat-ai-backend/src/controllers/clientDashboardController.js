@@ -1,7 +1,7 @@
 // synchat-ai-backend/src/controllers/clientDashboardController.js
 // Controller for handling client dashboard related API requests.
 
-const supabase = require('../../services/supabaseClient'); // Adjusted path
+import { supabase } from '../../services/supabaseClient.js'; // Adjusted path
 
 // Placeholder for database service or Supabase client if needed later
 // e.g., const db = require('../services/dbService'); // Or your Supabase client
@@ -9,7 +9,7 @@ const supabase = require('../../services/supabaseClient'); // Adjusted path
 /**
  * Retrieves the client's current configuration.
  */
-const getClientConfig = async (req, res) => {
+export const getClientConfig = async (req, res) => {
     console.log('clientDashboardController.getClientConfig called');
     const clientId = req.user?.id; // Consistent with authMiddleware (Supabase user ID)
 
@@ -44,7 +44,7 @@ const getClientConfig = async (req, res) => {
 /**
  * Updates the client's configuration for widget_config and knowledge_source_url.
  */
-const updateClientConfig = async (req, res) => {
+export const updateClientConfig = async (req, res) => {
     console.log('clientDashboardController.updateClientConfig called');
     const clientId = req.user?.id; // Consistent with authMiddleware
 
@@ -95,7 +95,7 @@ const updateClientConfig = async (req, res) => {
 /**
  * Initiates a request to ingest knowledge from the client's configured source URL.
  */
-const requestKnowledgeIngest = async (req, res) => {
+export const requestKnowledgeIngest = async (req, res) => {
     console.log('clientDashboardController.requestKnowledgeIngest called');
     const clientId = req.user?.id; // Consistent with authMiddleware
 
@@ -152,7 +152,7 @@ const requestKnowledgeIngest = async (req, res) => {
  * Retrieves client usage data, specifically AI resolution counts.
  * Defaults to the current month's statistics if no `billing_cycle_id` is provided.
  */
-const getClientUsageResolutions = async (req, res) => {
+export const getClientUsageResolutions = async (req, res) => {
     console.log('clientDashboardController.getClientUsageResolutions called');
     const clientId = req.user?.id; // Changed from req.user?.client_id to req.user.id based on authMiddleware
 
@@ -198,12 +198,4 @@ const getClientUsageResolutions = async (req, res) => {
         console.error('Unexpected error in getClientUsageResolutions:', err.message);
         res.status(500).json({ message: 'An unexpected error occurred.', error: err.message });
     }
-};
-
-
-module.exports = {
-    getClientConfig,
-    updateClientConfig,
-    requestKnowledgeIngest,
-    getClientUsageResolutions,
 };

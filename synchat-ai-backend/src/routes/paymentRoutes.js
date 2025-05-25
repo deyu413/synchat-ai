@@ -1,13 +1,13 @@
 // synchat-ai-backend/src/routes/paymentRoutes.js
 
-const express = require('express');
+import express from 'express';
 const router = express.Router();
 
 // Import controller functions
-const {
+import {
     createCheckoutSession,
     handleStripeWebhook,
-} = require('../controllers/paymentsController.js');
+} from '../controllers/paymentsController.js';
 
 // Placeholder authMiddleware (copied from clientDashboardRoutes.js for now)
 // In a real application, this would involve token verification (e.g., JWT, Supabase session)
@@ -42,7 +42,7 @@ router.post('/create-checkout-session', authMiddleware, createCheckoutSession);
 // Stripe requires the raw body for signature verification, hence express.raw
 router.post('/stripe-webhooks', express.raw({type: 'application/json'}), handleStripeWebhook);
 
-module.exports = router;
+export default router;
 
 /*
 Note on Main App Integration:
