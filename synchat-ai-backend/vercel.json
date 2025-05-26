@@ -8,7 +8,7 @@
   ],
   "routes": [
     {
-      "src": "/(.*)",  // Cambiado para capturar TODAS las rutas
+      "src": "/(.*)",  
       "dest": "server.js"
     }
   ]
