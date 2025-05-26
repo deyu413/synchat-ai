@@ -10,21 +10,33 @@
         return; // Stop execution
     }
 
-    const VERCEL_BACKEND_BASE_URL = 'https://synchat-ai-s8cf.vercel.app/'; // Added base URL
+    // --- Configuración del Backend ---
+    // Asegúrate de que esta URL NO tenga una barra al final.
+    const VERCEL_BACKEND_BASE_URL = 'https://synchat-ai-s8cf.vercel.app'; 
 
-    // Placeholder for token retrieval - this needs a proper mechanism
-    const getApiToken = () => {
-        if (window.synchatApiToken) {
-            return window.synchatApiToken;
-        }
-        console.warn('SynChat AI Widget: API token not found. Widget calls may fail.');
-        return null; 
+    // --- Configuración Inicial del Widget (con valores por defecto) ---
+    // Las rutas de los endpoints DEBEN empezar con / si VERCEL_BACKEND_BASE_URL no tiene una al final.
+    // Las rutas de las imágenes son absolutas desde la raíz del sitio donde se sirve este widget.js.
+    let WIDGET_CONFIG = { 
+        clientId: dynamicClientId,
+        backendUrl: `${VERCEL_BACKEND_BASE_URL}/api/public-chat`, 
+        publicConfigUrl: `${VERCEL_BACKEND_BASE_URL}/api/public-chat/widget-config`, 
+        botName: "SynChat Bot", 
+        welcomeMessage: "Hello! How can I help you today?", 
+        inputPlaceholder: "Escribe tu mensaje...",
+        triggerLogoUrl: "/images/zoe.png", // Ruta absoluta desde la raíz del sitio frontend
+        avatarUrl: "/images/zoe.png"       // Ruta absoluta desde la raíz del sitio frontend
     };
 
+    // --- Función para Cargar Configuración Dinámica del Widget ---
     async function fetchWidgetConfiguration(clientId) {
+        // La URL para obtener la configuración se construye con WIDGET_CONFIG.publicConfigUrl
+        // Ejemplo: https://synchat-ai-s8cf.vercel.app/api/public-chat/widget-config?clientId=TU_CLIENT_ID
+        const configUrl = `${WIDGET_CONFIG.publicConfigUrl}?clientId=${clientId}`;
+        console.log('SynChat AI Widget: Fetching config from:', configUrl);
+
         try {
-            // WIDGET_CONFIG will be defined before this function is called, so its properties can be accessed.
-            const response = await fetch(`${WIDGET_CONFIG.publicConfigUrl}?clientId=${clientId}`);
+            const response = await fetch(configUrl); // No se añade VERCEL_BACKEND_BASE_URL aquí porque ya está en WIDGET_CONFIG.publicConfigUrl
             if (!response.ok) {
                 console.error(`SynChat AI Widget: Error fetching config. Status: ${response.status}. Using default config.`);
                 return null; 
@@ -42,25 +54,14 @@
         }
     }
 
-    // --- Configuración Inicial ---
-    let WIDGET_CONFIG = { 
-        clientId: dynamicClientId,
-        backendUrl: `${VERCEL_BACKEND_BASE_URL}/api/public-chat`, // MODIFIED URL
-        publicConfigUrl: `${VERCEL_BACKEND_BASE_URL}/api/public-chat/widget-config`, // MODIFIED URL
-        botName: "SynChat Bot", 
-        welcomeMessage: "Hello! How can I help you today?", 
-        inputPlaceholder: "Escribe tu mensaje...",
-        triggerLogoUrl: "zoe.png", 
-        avatarUrl: "zoe.png" 
-    };
-
-    // fetchWidgetConfiguration is called after WIDGET_CONFIG is initialized
+    // Sobrescribir configuración por defecto con la obtenida del backend
     const dynamicData = await fetchWidgetConfiguration(dynamicClientId);
     if (dynamicData) {
         WIDGET_CONFIG.botName = dynamicData.botName || WIDGET_CONFIG.botName;
         WIDGET_CONFIG.welcomeMessage = dynamicData.welcomeMessage || WIDGET_CONFIG.welcomeMessage;
-        // WIDGET_CONFIG.avatarUrl = dynamicData.avatarUrl || WIDGET_CONFIG.avatarUrl; // Example if avatar comes from config
-        // WIDGET_CONFIG.triggerLogoUrl = dynamicData.triggerLogoUrl || WIDGET_CONFIG.triggerLogoUrl; // Example
+        // Puedes añadir más campos aquí si tu endpoint de config los devuelve (ej. avatarUrl, color primario, etc.)
+        // WIDGET_CONFIG.avatarUrl = dynamicData.avatarUrl || WIDGET_CONFIG.avatarUrl;
+        // WIDGET_CONFIG.triggerLogoUrl = dynamicData.triggerLogoUrl || WIDGET_CONFIG.triggerLogoUrl; 
     }
 
     // --- Variables de Estado ---
@@ -115,7 +116,7 @@
         .header-title { flex-grow: 1; line-height: 1.3; }
         .zoe-name { display: block; font-size: 1.1rem; font-weight: 600; }
         .powered-by { display: flex; align-items: center; font-size: 0.7rem; opacity: 0.8; margin-top: 2px; }
-        .synchat-logo-header { width: 12px; height: auto; margin: 0 4px; }
+        .synchat-logo-header { width: 12px; height: auto; margin: 0 4px; } /* Esta imagen también se carga desde WIDGET_CONFIG.triggerLogoUrl */
         .synchat-close-btn { background: none; border: none; color: var(--synchat-text-light); font-size: 2rem; font-weight: 300; cursor: pointer; padding: 0 5px; opacity: 0.7; transition: opacity 0.2s ease; line-height: 1; }
         .synchat-close-btn:hover { opacity: 1; }
 
@@ -171,19 +172,23 @@
     async function startNewConversation() {
         console.log("Iniciando nueva conversación...");
         const messagesContainer = document.getElementById('synchat-messages');
-        if(messagesContainer) messagesContainer.innerHTML = '';
-        conversationId = null;
-        sessionStorage.removeItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`);
+        if(messagesContainer) messagesContainer.innerHTML = ''; // Limpiar mensajes anteriores
+        conversationId = null; // Resetear conversationId
+        sessionStorage.removeItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`); // Limpiar de sessionStorage
         
         const headers = { 'Content-Type': 'application/json' };
+        // La URL completa se construye con WIDGET_CONFIG.backendUrl
+        // Ejemplo: https://synchat-ai-s8cf.vercel.app/api/public-chat/start
+        const startUrl = `${WIDGET_CONFIG.backendUrl}/start`;
+        console.log('SynChat AI Widget: Calling start conversation endpoint:', startUrl);
 
         try {
-            const response = await fetch(`${WIDGET_CONFIG.backendUrl}/start`, {
+            const response = await fetch(startUrl, {
                 method: 'POST', 
                 headers: headers,
                 body: JSON.stringify({ clientId: WIDGET_CONFIG.clientId })
             });
-            if (!response.ok) throw new Error(`Error del servidor al iniciar: ${response.status}`);
+            if (!response.ok) throw new Error(`Error del servidor al iniciar: ${response.status} - ${await response.text()}`);
             const data = await response.json();
             if (data.conversationId) {
                 conversationId = data.conversationId;
@@ -203,24 +208,42 @@
         if (!text.trim()) return;
         if (!conversationId) {
             console.error("Error: No hay conversationId. Intentando iniciar nueva conversación...");
-            await startNewConversation();
-            if (!conversationId) { addMessageToChat("bot", "Error crítico: No se pudo establecer una sesión de chat."); return; }
+            await startNewConversation(); // Esto ahora limpia mensajes y resetea conversationId
+            if (!conversationId) { 
+                addMessageToChat("bot", "Error crítico: No se pudo establecer una sesión de chat."); 
+                return; 
+            }
+            // No enviar el mensaje original inmediatamente después de un reinicio forzado,
+            // esperar a que el usuario lo reenvíe si es necesario.
+            // O, si se quiere, guardar 'text' y reenviarlo si startNewConversation tiene éxito.
+            // Por simplicidad ahora, no lo reenvía automáticamente.
         }
         addMessageToChat("user", text);
         const input = document.getElementById('synchat-input');
         if(input) { input.value = ''; input.style.height = 'auto'; }
         
         const headers = { 'Content-Type': 'application/json' };
+        // La URL completa se construye con WIDGET_CONFIG.backendUrl
+        // Ejemplo: https://synchat-ai-s8cf.vercel.app/api/public-chat/message
+        const messageUrl = `${WIDGET_CONFIG.backendUrl}/message`;
+        console.log('SynChat AI Widget: Calling message endpoint:', messageUrl);
 
         try {
-            const response = await fetch(`${WIDGET_CONFIG.backendUrl}/message`, {
+            const response = await fetch(messageUrl, {
                 method: 'POST', 
                 headers: headers,
                 body: JSON.stringify({ message: text, conversationId: conversationId, clientId: WIDGET_CONFIG.clientId })
             });
             if (!response.ok) {
-                 const errorData = await response.json().catch(() => ({}));
-                 throw new Error(`Error del servidor: ${response.status} - ${errorData.error || 'Error desconocido'}`);
+                 const errorDataText = await response.text();
+                 let errorDetail = 'Error desconocido';
+                 try {
+                    const errorDataJson = JSON.parse(errorDataText);
+                    errorDetail = errorDataJson.error || errorDataJson.message || errorDataText;
+                 } catch(e) {
+                    errorDetail = errorDataText;
+                 }
+                 throw new Error(`Error del servidor: ${response.status} - ${errorDetail}`);
             }
             const data = await response.json();
             if (data.reply) { addMessageToChat("bot", data.reply); }
@@ -233,41 +256,90 @@
 
     // --- Creación del Widget en el DOM ---
     function createWidget() {
-        if (document.getElementById('synchat-trigger')) return;
+        if (document.getElementById('synchat-trigger')) return; // Evitar duplicados
+
+        // Inyectar estilos CSS
         const styleTag = document.createElement('style');
-        styleTag.id = 'synchat-styles'; styleTag.textContent = widgetCSS;
+        styleTag.id = 'synchat-styles'; 
+        styleTag.textContent = widgetCSS;
         document.head.appendChild(styleTag);
+
+        // Crear botón de inicio (trigger)
         const trigger = document.createElement('div');
-        trigger.id = 'synchat-trigger'; trigger.classList.add('synchat-trigger');
-        trigger.setAttribute('role', 'button'); trigger.setAttribute('tabindex', '0');
+        trigger.id = 'synchat-trigger'; 
+        trigger.classList.add('synchat-trigger');
+        trigger.setAttribute('role', 'button'); 
+        trigger.setAttribute('tabindex', '0');
         trigger.setAttribute('aria-label', 'Abrir chat de ayuda');
-        trigger.innerHTML = `<img src="${WIDGET_CONFIG.triggerLogoUrl}" alt="Abrir Chat SynChat AI">`; // Assuming triggerLogoUrl is relative to where widget.js is or an absolute path
+        // Las URLs de las imágenes ahora se toman de WIDGET_CONFIG
+        trigger.innerHTML = `<img src="${WIDGET_CONFIG.triggerLogoUrl}" alt="Abrir Chat SynChat AI">`;
         trigger.addEventListener('click', toggleChatWindow);
-        trigger.addEventListener('keydown', (e) => { if(e.key === 'Enter' || e.key === ' ') toggleChatWindow(); });
+        trigger.addEventListener('keydown', (e) => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleChatWindow(); } });
         document.body.appendChild(trigger);
+
+        // Crear ventana de chat
         const windowEl = document.createElement('div');
-        windowEl.id = 'synchat-window'; windowEl.classList.add('synchat-window');
+        windowEl.id = 'synchat-window'; 
+        windowEl.classList.add('synchat-window');
         windowEl.innerHTML = `
-            <div class="synchat-header"> <img src="${WIDGET_CONFIG.avatarUrl}" alt="Avatar de ${WIDGET_CONFIG.botName}" class="zoe-avatar"> <div class="header-title"> <span class="zoe-name">${WIDGET_CONFIG.botName}</span> <span class="powered-by"> Potenciado por <img src="${WIDGET_CONFIG.triggerLogoUrl}" alt="SynChat AI" class="synchat-logo-header"> SynChat AI </span> </div> <button id="synchat-close-btn" class="synchat-close-btn" aria-label="Cerrar Chat">&times;</button> </div>
+            <div class="synchat-header"> 
+                <img src="${WIDGET_CONFIG.avatarUrl}" alt="Avatar de ${WIDGET_CONFIG.botName}" class="zoe-avatar"> 
+                <div class="header-title"> 
+                    <span class="zoe-name">${WIDGET_CONFIG.botName}</span> 
+                    <span class="powered-by"> Potenciado por <img src="${WIDGET_CONFIG.triggerLogoUrl}" alt="SynChat AI" class="synchat-logo-header"> SynChat AI </span> 
+                </div> 
+                <button id="synchat-close-btn" class="synchat-close-btn" aria-label="Cerrar Chat">&times;</button> 
+            </div>
             <div id="synchat-messages" class="synchat-messages" aria-live="polite"></div>
-            <div class="synchat-input-area"> <textarea id="synchat-input" placeholder="${WIDGET_CONFIG.inputPlaceholder}" rows="1" aria-label="Escribe tu mensaje"></textarea> <button id="synchat-send-btn" class="synchat-send-btn" aria-label="Enviar Mensaje"> <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg> </button> </div>
+            <div class="synchat-input-area"> 
+                <textarea id="synchat-input" placeholder="${WIDGET_CONFIG.inputPlaceholder}" rows="1" aria-label="Escribe tu mensaje"></textarea> 
+                <button id="synchat-send-btn" class="synchat-send-btn" aria-label="Enviar Mensaje"> 
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg> 
+                </button> 
+            </div>
         `;
         document.body.appendChild(windowEl);
+
+        // Añadir event listeners a los elementos creados
         const closeButton = document.getElementById('synchat-close-btn');
         const sendButton = document.getElementById('synchat-send-btn');
         const inputField = document.getElementById('synchat-input');
-        if(closeButton) closeButton.addEventListener('click', toggleChatWindow);
-        function handleSend() { if(inputField && inputField.value) { sendMessage(inputField.value); } }
-        if(sendButton) sendButton.addEventListener('click', handleSend);
+
+        if(closeButton) {
+          closeButton.addEventListener('click', toggleChatWindow);
+          closeButton.addEventListener('keydown', (e) => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleChatWindow(); } });
+        }
+        
+        function handleSend() { 
+            if(inputField && inputField.value) { 
+                sendMessage(inputField.value); 
+            } 
+        }
+
+        if(sendButton) {
+          sendButton.addEventListener('click', handleSend);
+          sendButton.addEventListener('keydown', (e) => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSend(); } });
+        }
+        
         if(inputField) {
-             inputField.addEventListener('keypress', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } });
-             inputField.addEventListener('input', () => { inputField.style.height = 'auto'; const maxHeight = 100; const scrollHeight = inputField.scrollHeight; inputField.style.height = Math.min(scrollHeight, maxHeight) + 'px'; });
+             inputField.addEventListener('keypress', (e) => { 
+                 if (e.key === 'Enter' && !e.shiftKey) { 
+                     e.preventDefault(); 
+                     handleSend(); 
+                 } 
+             });
+             inputField.addEventListener('input', () => { 
+                 inputField.style.height = 'auto'; 
+                 const maxHeight = 100; 
+                 const scrollHeight = inputField.scrollHeight; 
+                 inputField.style.height = Math.min(scrollHeight, maxHeight) + 'px'; 
+             });
         }
     }
 
     // --- Inicialización del Widget ---
-    // Ensure WIDGET_CONFIG is fully populated (especially after fetchWidgetConfiguration) before creating the widget.
-    // The async IIFE structure handles this naturally.
+    // La función createWidget se llama después de que WIDGET_CONFIG se haya poblado,
+    // incluyendo los datos dinámicos si se obtuvieron correctamente.
     createWidget();
 
 })();
