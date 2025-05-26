@@ -3,9 +3,9 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'
 
 // *** ASEGÚRATE DE TENER TUS VALORES REALES AQUÍ ***
-const supabaseUrl = process.env.REACT_APP_SUPABASE_URL || 'https://lyrsyxrjhtkqywqlclue.supabase.co';
+const supabaseUrl = process.env.REACT_APP_SUPABASE_URL || 'https://wooiypqmhpgqepdyrjif.supabase.co';
 
-const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx5cnN5eHJqaHRrcXl3cWxjbHVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ5MDg0MDUsImV4cCI6MjA2MDQ4NDQwNX0.iJZHFfNL6TEgUshbcxBn_1I1xHj0Z7Fy6yATIYQofds';
+const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indvb2l5cHFtaHBncWVwZHlyamlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgyMjM0MjQsImV4cCI6MjA2Mzc5OTQyNH0.LecPhEk2tqisCGrvrjUDZc3Ncx4MfrrUsez6bYx0rHE';
 // *******************************************
 
 if (!supabaseUrl || !supabaseAnonKey || supabaseUrl === 'TU_SUPABASE_URL') {
