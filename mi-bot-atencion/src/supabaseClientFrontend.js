@@ -1,6 +1,6 @@
 // src/supabaseClientFrontend.js
 // Importar usando el nombre correcto exportado por el módulo CDN
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
 // *** ASEGÚRATE DE TENER TUS VALORES REALES AQUÍ ***
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL || 'https://wooiypqmhpgqepdyrjif.supabase.co';
