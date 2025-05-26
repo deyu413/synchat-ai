@@ -119,4 +119,18 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // --- 5. PREFERENCIAS COOKIES (Placeholder) ---
+    const privacySettingsBtn = document.getElementById('privacy-settings-btn');
+
+    if (privacySettingsBtn) {
+        privacySettingsBtn.addEventListener('click', (event) => {
+            event.preventDefault(); // Prevenir cualquier acción por defecto si es un link o button type submit
+            // Placeholder para la funcionalidad de gestión de cookies
+            alert('Gestión de Preferencias de Cookies (Próximamente).\n\nAquí podrás configurar tus preferencias sobre el uso de cookies en este sitio.');
+            // En una implementación real, aquí se mostraría un modal o panel de configuración.
+        });
+    } else {
+        console.warn("Botón de preferencias de cookies ('privacy-settings-btn') no encontrado.");
+    }
+
 }); // Fin de DOMContentLoaded

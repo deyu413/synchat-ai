@@ -27,6 +27,28 @@
         #configMessage, #errorMessageDashboard { padding: 10px; margin-top: 10px; border-radius: 4px; text-align: center; }
         #configMessage.success { background-color: #e6ffed; color: #22863a; }
         #configMessage.error, #errorMessageDashboard { background-color: #ffebe9; color: #d73a49; }
+        #ingestMessage.success { background-color: #e6ffed; color: #22863a; padding: 10px; margin-top: 10px; border-radius: 4px; }
+        #ingestMessage.error { background-color: #ffebe9; color: #d73a49; padding: 10px; margin-top: 10px; border-radius: 4px; }
+        #ingestMessage.info { background-color: #eef6fc; color: #0969da; padding: 10px; margin-top: 10px; border-radius: 4px; }
+        .onboarding-section {
+            background-color: #eef6fc; color: #0969da; 
+            padding: 15px; 
+            border-radius: var(--synchat-border-radius, 8px); 
+            margin-bottom: 20px; 
+            border: 1px solid #cfe2f3;
+        }
+        .onboarding-section h3 {
+            margin-top:0; color: #0969da;
+        }
+        .onboarding-section ol {
+            margin-left: 20px; padding-left: 10px;
+        }
+        .onboarding-section button {
+            background-color: #0969da; color: white; 
+            border: none; padding: 8px 15px; 
+            border-radius: 4px; cursor: pointer; 
+            font-size: 0.9em; margin-top:10px;
+        }
 
     </style>
 </head>
@@ -46,6 +68,16 @@
 
     <div id="loadingMessage">Cargando datos del dashboard...</div>
     <div id="dashboardContent" class="container hidden">
+        <div id="onboardingMessageSection" class="onboarding-section" style="display: none;">
+            <h3 style="margin-top:0; color: #0969da;">¡Bienvenido a SynChat AI!</h3>
+            <p>Estamos encantados de tenerte a bordo. Aquí tienes unos pasos rápidos para empezar:</p>
+            <ol style="margin-left: 20px; padding-left: 10px;">
+                <li><strong>Configura tu Bot:</strong> Ve a la sección "Configuración" y personaliza el nombre de tu bot y el mensaje de bienvenida.</li>
+                <li><strong>Ingesta tu Conocimiento:</strong> Añade la URL de tu sitio web o sitemap en "Configuración" y luego inicia la ingesta en la sección "Ingesta".</li>
+                <li><strong>Prueba tu Widget:</strong> Una vez completada la ingesta, el widget (disponible en la sección "Widget") estará listo para responder preguntas basado en tu contenido.</li>
+            </ol>
+            <button id="dismissOnboardingBtn">Entendido, no mostrar más</button>
+        </div>
         <h2>Bienvenido al Dashboard</h2>
         <p>Email: <span id="userEmail"></span></p>
         
@@ -68,111 +100,23 @@
         <hr>
         <section id="ingest">
             <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual: <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta</button>
+            <p>URL para ingesta actual (guardada en configuración): <strong id="currentIngestUrlDisplay">No configurada</strong></p>
+            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta con URL Configurada</button>
             <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
             <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
             <div id="ingestMessage" style="margin-top: 10px;"></div>
         </section>
         <hr>
-        <section id="ingest">
-            <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual: <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta</button>
-            <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-            <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-            <div id="ingestMessage" style="margin-top: 10px;"></div>
+        <section id="usage">
+            <h3>Uso y Estadísticas</h3>
+            <p>Resoluciones de IA procesadas este mes: <strong id="aiResolutionsCount">Cargando...</strong></p>
+            <p>Consultas totales recibidas este mes: <strong id="totalQueriesCount">Cargando...</strong></p>
+            <p>Última actualización de estadísticas: <strong id="statsLastUpdated">N/A</strong></p>
+            <div id="usageMessage" style="margin-top: 10px;"></div>
+            <!-- Add a button to manually refresh stats -->
+            <button id="refreshUsageBtn" style="margin-top: 10px;">Actualizar Estadísticas</button>
         </section>
-        <hr>
-        <section id="ingest">
-            <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual: <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta</button>
-            <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-            <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-            <div id="ingestMessage" style="margin-top: 10px;"></div>
-        </section>
-        <hr>
-        <section id="ingest">
-            <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual: <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta</button>
-            <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-            <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-            <div id="ingestMessage" style="margin-top: 10px;"></div>
-        </section>
-        <hr>
-        <section id="ingest">
-            <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual: <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta</button>
-            <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-            <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-            <div id="ingestMessage" style="margin-top: 10px;"></div>
-        </section>
-        <hr>
-        <section id="ingest">
-            <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual: <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta</button>
-            <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-            <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-            <div id="ingestMessage" style="margin-top: 10px;"></div>
-        </section>
-        <hr>
-        <section id="ingest">
-            <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual: <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta</button>
-            <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-            <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-            <div id="ingestMessage" style="margin-top: 10px;"></div>
-        </section>
-        <hr>
-        <section id="ingest">
-            <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual: <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta</button>
-            <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-            <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-            <div id="ingestMessage" style="margin-top: 10px;"></div>
-        </section>
-        <hr>
-        <section id="ingest">
-            <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual: <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta</button>
-            <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-            <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-            <div id="ingestMessage" style="margin-top: 10px;"></div>
-        </section>
-        <hr>
-        <section id="ingest">
-            <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual: <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta</button>
-            <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-            <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-            <div id="ingestMessage" style="margin-top: 10px;"></div>
-        </section>
-        <hr>
-        <section id="ingest">
-            <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual: <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta</button>
-            <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-            <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-            <div id="ingestMessage" style="margin-top: 10px;"></div>
-        </section>
-        <hr>
-    <section id="ingest">
-        <h3>Ingesta de Conocimiento</h3>
-        <p>URL para ingesta actual (guardada en configuración): <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-        <button id="startIngestBtn">Iniciar/Reiniciar Ingesta con URL Configurada</button>
-        <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-        <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-        <div id="ingestMessage" style="margin-top: 10px;"></div>
-    </section>
+        <hr> 
         <!-- Other sections will be added here -->
     </div>
     <div id="errorMessageDashboard" style="color: red; padding: 10px; text-align: center;"></div>

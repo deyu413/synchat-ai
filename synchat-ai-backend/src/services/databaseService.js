@@ -246,4 +246,30 @@ export const hybridSearch = async (clientId, query) => {
     }
 };
 
+/**
+ * Logs an AI resolution event.
+ */
+export const logAiResolution = async (clientId, conversationId, billingCycleId) => {
+    console.log(`(DB Service) Logging AI resolution for Client: ${clientId}, Conv: ${conversationId}, Cycle: ${billingCycleId}`);
+    try {
+        const { error } = await supabase
+            .from('ia_resolutions_log')
+            .insert({
+                client_id: clientId,
+                conversation_id: conversationId,
+                billing_cycle_id: billingCycleId
+                // timestamp is expected to be handled by DB default
+            });
+
+        if (error) {
+            console.error(`(DB Service) Error logging AI resolution:`, error.message);
+            // For this task, just log it. Caller handles its own flow.
+        } else {
+            console.log(`(DB Service) AI resolution logged successfully for Client: ${clientId}, Conv: ${conversationId}.`);
+        }
+    } catch (err) {
+        console.error(`(DB Service) Unexpected error in logAiResolution for Client: ${clientId}:`, err.message);
+    }
+};
+
 // NO exportamos saveKnowledgeChunk desde aquí, se maneja en el script de ingesta.
