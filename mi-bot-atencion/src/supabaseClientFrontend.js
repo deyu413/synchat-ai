@@ -1,24 +1,21 @@
 // src/supabaseClientFrontend.js
-// Importar usando el nombre correcto exportado por el módulo CDN
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+// Importar usando la URL explícita para módulos ES desde jsDelivr
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm'; // O la que te funcionó antes
 
-// *** ASEGÚRATE DE TENER TUS VALORES REALES AQUÍ ***
-const supabaseUrl = process.env.REACT_APP_SUPABASE_URL || 'https://wooiypqmhpgqepdyrjif.supabase.co';
+// *** REEMPLAZA ESTOS VALORES CON TUS CREDENCIALES REALES DEL NUEVO PROYECTO SUPABASE ***
+const supabaseUrl = 'https://wooiypqmhpgqepdyrjif.supabase.co';       // Ejemplo: 'https://xyzabc.supabase.co'
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indvb2l5cHFtaHBncWVwZHlyamlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgyMjM0MjQsImV4cCI6MjA2Mzc5OTQyNH0.LecPhEk2tqisCGrvrjUDZc3Ncx4MfrrUsez6bYx0rHE'; // Ejemplo: 'eyJhbGciOiJIUzI1NiIsIn...'
+// *************************************************************************************
 
-const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indvb2l5cHFtaHBncWVwZHlyamlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgyMjM0MjQsImV4cCI6MjA2Mzc5OTQyNH0.LecPhEk2tqisCGrvrjUDZc3Ncx4MfrrUsez6bYx0rHE';
-// *******************************************
-
-if (!supabaseUrl || !supabaseAnonKey || supabaseUrl === 'TU_SUPABASE_URL') {
-    console.error("Error: Configura tu URL y Anon Key de Supabase en supabaseClientFrontend.js");
-    alert("Error: Configuración de Supabase incompleta en el frontend.");
-    // Considera lanzar un error o deshabilitar la funcionalidad si las claves no están presentes
-    // throw new Error("Supabase config missing");
+// Validación simple para asegurar que las variables no estén vacías o con placeholders
+if (!supabaseUrl || supabaseUrl === 'URL_DE_TU_NUEVO_PROYECTO_SUPABASE' || supabaseUrl.includes('lyrsyxrjhtkqywqlclue')) { // Incluida la de ejemplo para evitar olvidos
+    const errorMsg = "Error Crítico: Las variables supabaseUrl o supabaseAnonKey no están configuradas correctamente en supabaseClientFrontend.js. Por favor, edita el archivo con tus credenciales reales de Supabase.";
+    console.error(errorMsg);
+    // Podrías incluso lanzar un error para detener la ejecución si prefieres:
+    // throw new Error(errorMsg); 
+    // O mostrar un mensaje al usuario, aunque console.error es un buen primer paso.
 }
 
-// Crear el cliente usando la función importada correctamente
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-console.log("Supabase Client Frontend inicializado (o intentado).");
-
-// Si necesitas exportar algo más de Supabase (raro desde aquí),
-// tendrías que ver qué otros nombres exporta el módulo CDN o importarlos por separado si es necesario.
+console.log("Supabase Client Frontend inicializado.");
