@@ -10,7 +10,7 @@
         return; // Stop execution
     }
 
-    const VERCEL_BACKEND_BASE_URL = 'https://synchat-ai-backend.vercel.app'; // Added base URL
+    const VERCEL_BACKEND_BASE_URL = 'https://synchat-ai-s8cf.vercel.app/'; // Added base URL
 
     // Placeholder for token retrieval - this needs a proper mechanism
     const getApiToken = () => {
