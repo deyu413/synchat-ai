@@ -1,8 +1,9 @@
 // synchat-ai-backend/src/controllers/clientDashboardController.js
 // Controller for handling client dashboard related API requests.
 
-import { supabase } from '../../services/supabaseClient.js'; // Adjusted path
-import { ingestWebsite } from '../../services/ingestionService.js';
+// Corrected import paths from ../../services/ to ../services/
+import { supabase } from '../services/supabaseClient.js';
+import { ingestWebsite } from '../services/ingestionService.js';
 
 // Placeholder for database service or Supabase client if needed later
 // e.g., const db = require('../services/dbService'); // Or your Supabase client
@@ -195,20 +196,24 @@ export const requestKnowledgeIngest = async (req, res) => {
 
         if (updateError) {
             console.error('Error updating client ingest status:', updateError.message);
-            return res.status(500).json({ message: 'Error updating client ingest status.', error: updateError.message });
+            // Note: If this update fails, the ingestion is still triggered in the background.
+            // Consider how to handle this inconsistency if critical. For MVP, logging is okay.
+            // The ingestWebsite service itself will attempt to update to 'completed' or 'failed'.
         }
 
         // 3. (Conceptually) Trigger the actual ingestion process
-        console.log(`Ingestion process would be started here for client ${clientId} with URL ${knowledge_source_url}`);
-        // Actual call to ingestionService would happen here, likely asynchronously
+        // The actual call to ingestionService (ingestWebsite) is done above and runs asynchronously.
+        console.log(`Ingestion process initiated for client ${clientId} with URL ${knowledge_source_url}`);
+        
 
         res.status(202).json({ message: 'Knowledge ingestion request received and is being processed. Status set to pending.' });
 
     } catch (err) {
-        console.error('Unexpected error in requestKnowledgeIngest:', err.message);
+        console.error('Unexpected error in requestKnowledgeIngest:', err.message, err.stack);
         res.status(500).json({ message: 'An unexpected error occurred.', error: err.message });
     }
 };
+
 
 /**
  * Retrieves client usage data, specifically AI resolution counts.
@@ -236,9 +241,9 @@ export const getClientUsageResolutions = async (req, res) => {
     try {
         let query = supabase
             .from('ia_resolutions_log')
-            .select('*', { count: 'exact', head: true })
-            .eq('client_id', clientId) // Assuming 'client_id' in this table is the Supabase user ID
-            .eq('billing_cycle_id', billing_cycle_id); // Always filter by a billing_cycle_id
+            .select('*', { count: 'exact', head: true }) // Using head:true for count only
+            .eq('client_id', clientId) 
+            .eq('billing_cycle_id', billing_cycle_id); 
 
         const { count, error } = await query;
 
@@ -252,12 +257,12 @@ export const getClientUsageResolutions = async (req, res) => {
         res.status(200).json({
             client_id: clientId,
             billing_cycle_id: billing_cycle_id,
-            ai_resolutions_current_month: resolutionCount, // Key expected by frontend
+            ai_resolutions_current_month: resolutionCount, 
             total_queries_current_month: 'N/A' // Placeholder as per plan
         });
 
     } catch (err) {
-        console.error('Unexpected error in getClientUsageResolutions:', err.message);
+        console.error('Unexpected error in getClientUsageResolutions:', err.message, err.stack);
         res.status(500).json({ message: 'An unexpected error occurred.', error: err.message });
     }
 };
