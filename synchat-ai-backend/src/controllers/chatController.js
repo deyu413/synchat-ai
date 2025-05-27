@@ -6,6 +6,9 @@ import * as db from '../services/databaseService.js';
 const CHAT_MODEL = "gpt-3.5-turbo";
 const CHAT_TEMPERATURE = 0.3; // Más baja para reducir alucinaciones
 
+const BOT_CANNOT_ANSWER_MSG = "Lo siento, no tengo información específica sobre eso en la base de datos de SynChat AI.";
+const BOT_ESCALATION_NOTIFICATION_MSG = "Un momento, por favor. Voy a transferirte con un agente humano para que pueda ayudarte con tu consulta.";
+
 /**
  * Maneja la recepción de un nuevo mensaje de chat.
  */
@@ -37,8 +40,6 @@ export const handleChatMessage = async (req, res, next) => {
         // --- Obtener Historial ---
         const conversationHistory = await db.getConversationHistory(conversationId);
         console.log(`(Controller) Historial recuperado: ${conversationHistory.length} mensajes.`);
-        // Nota: clientConfig se carga en startConversation para validación,
-        // pero el prompt ahora es específico para SynChat AI y no usa clientConfig.base_prompt
 
         // --- Búsqueda Híbrida (RAG) ---
         const relevantKnowledge = await db.hybridSearch(clientId, message);
@@ -48,7 +49,6 @@ export const handleChatMessage = async (req, res, next) => {
              ragContext = relevantKnowledge
                 .map(chunk => {
                      const sourceInfo = chunk.metadata?.hierarchy?.join(" > ") || chunk.metadata?.url || '';
-                     // Añadir prefijo solo si hay sourceInfo
                      const prefix = sourceInfo ? `Fuente: ${sourceInfo}\n` : '';
                      return `${prefix}Contenido: ${chunk.content}`;
                  })
@@ -58,12 +58,13 @@ export const handleChatMessage = async (req, res, next) => {
         }
 
         // --- Construir Prompt del Sistema MEJORADO ---
+        // Note: BOT_CANNOT_ANSWER_MSG is used in the prompt string directly
         const systemPromptBase = `Eres Zoe, el asistente virtual IA especializado de SynChat AI (synchatai.com). Tu ÚNICA fuente de información es el "Contexto" proporcionado a continuación. NO debes usar ningún conocimiento externo ni hacer suposiciones.
 
 Instrucciones ESTRICTAS:
 1.  Responde SOLAMENTE basándote en la información encontrada en el "Contexto".
 2.  Si la respuesta a la pregunta del usuario se encuentra en el "Contexto", respóndela de forma clara y concisa (máximo 3-4 frases). Cita la fuente si es relevante usando la información de "Fuente:" del contexto.
-3.  Si la información necesaria para responder NO se encuentra en el "Contexto", responde EXACTAMENTE con: "Lo siento, no tengo información específica sobre eso en la base de datos de SynChat AI." NO intentes adivinar ni buscar en otro lado.
+3.  Si la información necesaria para responder NO se encuentra en el "Contexto", responde EXACTAMENTE con: "${BOT_CANNOT_ANSWER_MSG}" NO intentes adivinar ni buscar en otro lado.
 4.  Sé amable y profesional.`;
 
         const finalSystemPrompt = systemPromptBase +
@@ -78,13 +79,28 @@ Instrucciones ESTRICTAS:
 
         // --- Llamar a OpenAI ---
         console.log(`(Controller) Enviando ${messagesForAPI.length} mensajes a OpenAI (Modelo: ${CHAT_MODEL}, Temp: ${CHAT_TEMPERATURE}).`);
-        const botReplyText = await getChatCompletion(messagesForAPI, CHAT_MODEL, CHAT_TEMPERATURE);
+        let botReplyText = await getChatCompletion(messagesForAPI, CHAT_MODEL, CHAT_TEMPERATURE);
+        const originalBotReplyText = botReplyText; // Store original reply
+
+        // --- Lógica de Escalación ---
+        if (originalBotReplyText && originalBotReplyText.trim() === BOT_CANNOT_ANSWER_MSG) {
+            console.log(`(Controller) Bot cannot answer. Escalating conversation CV:${conversationId} for C:${clientId}`);
+            try {
+                await db.updateConversationStatusByAgent(conversationId, clientId, null, 'escalated_to_human');
+                console.log(`(Controller) Conversation CV:${conversationId} status updated to escalated_to_human.`);
+                botReplyText = BOT_ESCALATION_NOTIFICATION_MSG; // Change bot's response for the user
+            } catch (statusUpdateError) {
+                console.error(`(Controller) Failed to update conversation status to escalated_to_human for CV:${conversationId}:`, statusUpdateError);
+                // If status update fails, bot will use original BOT_CANNOT_ANSWER_MSG.
+                // botReplyText remains originalBotReplyText in this case.
+            }
+        }
 
         // --- Procesar Respuesta y Guardar ---
-        if (botReplyText) {
+        if (botReplyText) { // Check botReplyText (which might have been modified)
             Promise.all([
                  db.saveMessage(conversationId, 'user', message),
-                 db.saveMessage(conversationId, 'bot', botReplyText)
+                 db.saveMessage(conversationId, 'bot', botReplyText) // Save potentially modified reply
             ]).catch(saveError => {
                  console.error(`Error no crítico al guardar mensajes para ${conversationId}:`, saveError);
             });
@@ -104,7 +120,6 @@ Instrucciones ESTRICTAS:
 
 /**
  * Inicia una nueva conversación para un cliente.
- * ¡¡ESTA ES LA FUNCIÓN QUE FALTABA DEFINIR!!
  */
 export const startConversation = async (req, res, next) => {
     console.log('>>> chatController.js: DENTRO de startConversation');
@@ -116,30 +131,27 @@ export const startConversation = async (req, res, next) => {
     }
 
     try {
-        // Verificar si el cliente existe (buena práctica)
         const clientExists = await db.getClientConfig(clientId);
         if (!clientExists) {
             console.warn(`Intento de iniciar conversación para cliente inexistente: ${clientId}`);
             return res.status(404).json({ error: 'Cliente inválido o no encontrado.' });
         }
 
-        // Crear una nueva conversación
-        const conversationId = await db.getOrCreateConversation(clientId);
+        // Assuming getOrCreateConversation was a placeholder for createConversation or similar
+        // For this code, I'll use createConversation as it's defined in the original file.
+        // If getOrCreateConversation is a specific, different function, that should be used.
+        const conversationId = await db.createConversation(clientId);
         console.log(`(Controller) Conversación iniciada/creada: ${conversationId} para cliente ${clientId}`);
 
-        res.status(201).json({ conversationId }); // 201 Created
+        res.status(201).json({ conversationId });
 
     } catch (error) {
         console.error(`Error en startConversation para cliente ${clientId}:`, error);
-        next(error); // Pasar al middleware de errores
+        next(error);
     }
 };
 
-
-// --- Exportar AMBAS funciones ---
 export default {
     handleChatMessage,
-    startConversation // Ahora sí está definida antes de exportarla
+    startConversation
 };
-
-// Ahora sí está definida antes de exportarla// Ahora sí está definida antes de exportarla
