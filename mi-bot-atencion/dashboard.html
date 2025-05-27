@@ -98,6 +98,7 @@
             <div id="configMessage"></div>
         </section>
         <hr>
+        <!-- 
         <section id="ingest">
             <h3>Ingesta de Conocimiento</h3>
             <p>URL para ingesta actual (guardada en configuración): <strong id="currentIngestUrlDisplay">No configurada</strong></p>
@@ -105,6 +106,27 @@
             <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
             <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
             <div id="ingestMessage" style="margin-top: 10px;"></div>
+        </section>
+        <hr>
+        -->
+        <section id="knowledgeManagement">
+            <h3>Gestionar Fuentes de Conocimiento</h3>
+            
+            <div id="uploadFileSection" style="margin-bottom: 20px;">
+                <h4>Subir Nueva Fuente de Conocimiento (PDF o TXT)</h4>
+                <input type="file" id="knowledgeFileUpload" accept=".pdf,.txt" style="margin-bottom: 10px;">
+                <button id="uploadFileBtn">Subir Archivo Seleccionado</button>
+                <div id="uploadStatusMessage" style="margin-top: 10px;"></div>
+            </div>
+
+            <h4>Fuentes de Conocimiento Actuales</h4>
+            <div id="knowledgeSourcesListContainer" style="border: 1px solid #eee; padding: 10px; min-height: 50px; background-color: #f9f9f9;">
+                <p id="loadingSourcesMsg">Cargando fuentes...</p>
+                <ul id="knowledgeSourcesList" style="list-style-type: none; padding: 0;">
+                    <!-- Las fuentes se listarán aquí dinámicamente -->
+                </ul>
+            </div>
+             <div id="knowledgeManagementMessage" style="margin-top: 10px;"></div>
         </section>
         <hr>
         <section id="usage">

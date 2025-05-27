@@ -4,6 +4,7 @@ import express from 'express';
 import cors from 'cors';
 import apiRoutes from './src/routes/api.js'; // Chat routes (potentially legacy or for other purposes)
 import clientDashboardRoutes from './src/routes/clientDashboardRoutes.js'; // Client dashboard routes
+import knowledgeManagementRoutes from './src/routes/knowledgeManagementRoutes.js'; // Knowledge management routes
 import paymentRoutes from './src/routes/paymentRoutes.js'; // Payment routes
 import publicChatRoutes from './src/routes/publicChatRoutes.js'; // Public chat routes for the widget
 
@@ -96,6 +97,10 @@ console.log('>>> server.js: Rutas /api/chat montadas');
 console.log('>>> server.js: Montando rutas /api/client');
 app.use('/api/client', clientDashboardRoutes);
 console.log('>>> server.js: Rutas /api/client montadas');
+
+console.log('>>> server.js: Montando rutas /api/client/me/knowledge');
+app.use('/api/client/me/knowledge', knowledgeManagementRoutes);
+console.log('>>> server.js: Rutas /api/client/me/knowledge montadas');
 
 console.log('>>> server.js: Montando rutas /api/payments');
 app.use('/api/payments', paymentRoutes);
