@@ -1,7 +1,7 @@
-const supabase = require('../services/supabaseClient');
-const multer = require('multer');
-const path = require('path');
-const ingestionService = require('../services/ingestionService'); // Import the service
+import { supabase } from '../services/supabaseClient.js';
+import multer from 'multer';
+import path from 'path';
+import * as ingestionService from '../services/ingestionService.js'; // Import the service
 
 // Configure Multer for file uploads
 const storage = multer.memoryStorage();
@@ -19,7 +19,7 @@ const uploadStrategy = multer({ storage, fileFilter });
 // --- Controller Functions ---
 
 // 1. Upload File
-const uploadFile = [
+export const uploadFile = [
   uploadStrategy.single('file'),
   async (req, res) => {
     if (!req.file) {
@@ -86,7 +86,7 @@ const uploadFile = [
 ];
 
 // 2. Get All Sources for a Client
-const getSources = async (req, res) => {
+export const getSources = async (req, res) => {
   const client_id = req.user.id;
 
   try {
@@ -145,7 +145,7 @@ const getSources = async (req, res) => {
 };
 
 // 3. Ingest Source
-const ingestSource = async (req, res) => {
+export const ingestSource = async (req, res) => {
   const { source_id } = req.params;
   const client_id = req.user.id;
 
@@ -219,7 +219,7 @@ const ingestSource = async (req, res) => {
 };
 
 // 4. Delete Source
-const deleteSource = async (req, res) => {
+export const deleteSource = async (req, res) => {
   const { source_id } = req.params;
   const client_id = req.user.id;
 
@@ -310,9 +310,3 @@ const deleteSource = async (req, res) => {
   }
 };
 
-module.exports = {
-  uploadFile,
-  getSources,
-  ingestSource,
-  deleteSource,
-};

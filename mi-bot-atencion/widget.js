@@ -11,7 +11,7 @@
     }
 
     // --- Configuración del Backend ---
-    const VERCEL_BACKEND_BASE_URL = 'https://synchat-ai-s8cf.vercel.app'; 
+    const VERCEL_BACKEND_BASE_URL = window.SYNCHAT_CONFIG.API_BASE_URL; 
 
     // --- Configuración Inicial del Widget (con valores por defecto) ---
     let WIDGET_CONFIG = { 
@@ -21,8 +21,8 @@
         botName: "SynChat Bot", 
         welcomeMessage: "Hello! How can I help you today?", 
         inputPlaceholder: "Escribe tu mensaje...",
-        triggerLogoUrl: "/zoe.png", 
-        avatarUrl: "/zoe.png"
+        triggerLogoUrl: "https://www.synchatai.com/zoe.png", 
+        avatarUrl: "https://www.synchatai.com/zoe.png"
     };
 
     // --- Función para Cargar Configuración Dinámica del Widget ---

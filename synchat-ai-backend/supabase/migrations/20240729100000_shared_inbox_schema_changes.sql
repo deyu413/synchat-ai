@@ -20,7 +20,26 @@ CREATE TYPE public.conversation_status_type AS ENUM (
 -- This requires knowing the constraint name. If unknown, it might need to be looked up manually or handled by Supabase UI/diffing.
 -- For this script, we assume direct alteration is possible or the constraint name is unknown/variable.
 -- A common pattern for constraint names is table_column_check.
-ALTER TABLE public.conversations DROP CONSTRAINT IF EXISTS conversations_status_check; -- Example name
+-- Dynamically drop any CHECK constraint on public.conversations.status
+DO $$
+DECLARE
+    constraint_name_var TEXT;
+BEGIN
+    SELECT con.conname INTO constraint_name_var
+    FROM pg_constraint con
+    JOIN pg_attribute att ON att.attnum = ANY(con.conkey) AND att.attrelid = con.conrelid
+    WHERE con.conrelid = 'public.conversations'::regclass
+      AND con.contype = 'c' -- Check constraint
+      AND att.attname = 'status' -- Specifically for the 'status' column
+    LIMIT 1;
+
+    IF constraint_name_var IS NOT NULL THEN
+        EXECUTE 'ALTER TABLE public.conversations DROP CONSTRAINT ' || quote_ident(constraint_name_var);
+        RAISE NOTICE 'Dynamically dropped CHECK constraint: % on public.conversations.status', constraint_name_var;
+    ELSE
+        RAISE NOTICE 'CHECK constraint on public.conversations.status not found or already removed.';
+    END IF;
+END $$;
 
 ALTER TABLE public.conversations
     ALTER COLUMN status TYPE public.conversation_status_type
@@ -70,6 +89,19 @@ END $$;
 ALTER TABLE public.messages
     ALTER COLUMN sender TYPE public.message_sender_type
     USING sender::text::public.message_sender_type;
+
+-- Add agent_user_id column to messages table
+ALTER TABLE public.messages
+    ADD COLUMN agent_user_id UUID NULL;
+
+COMMENT ON COLUMN public.messages.agent_user_id IS 'Identifier of the agent who sent this message, if sender is ''agent''. Foreign key to auth.users.id.';
+
+-- Optional but recommended: Add Foreign Key to auth.users
+ALTER TABLE public.messages
+    ADD CONSTRAINT fk_messages_agent_user_id
+    FOREIGN KEY (agent_user_id)
+    REFERENCES auth.users(id)
+    ON DELETE SET NULL;
 
 -- Add comments for new columns and types for clarity
 COMMENT ON TYPE public.conversation_status_type IS 'Defines the set of possible statuses for a conversation, e.g., open, bot_active, escalated_to_human, etc.';
