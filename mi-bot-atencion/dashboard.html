@@ -62,6 +62,7 @@
             <li><a href="#ingest">Ingesta</a></li>
             <li><a href="#widget">Widget</a></li>
             <li><a href="#usage">Uso</a></li>
+            <li><a href="#" id="navInboxLink">Bandeja de Entrada</a></li>
             <li><button id="logoutBtnDashboard">Cerrar Sesión</button></li>
         </ul>
     </nav>
@@ -138,7 +139,66 @@
             <!-- Add a button to manually refresh stats -->
             <button id="refreshUsageBtn" style="margin-top: 10px;">Actualizar Estadísticas</button>
         </section>
-        <hr> 
+        <hr>
+
+        <section id="inboxSection" class="dashboard-section" style="display: none; border: 1px solid #ccc; padding: 15px; margin-top: 20px;">
+            <h3>Bandeja de Entrada Compartida</h3>
+            <div style="display: flex; gap: 20px;">
+                <!-- Column 1: Conversation List Panel -->
+                <div id="inboxConvListContainer" class="inbox-column" style="flex: 1; border-right: 1px solid #eee; padding-right: 20px; max-height: 600px; overflow-y: auto;">
+                    <h4>Conversaciones</h4>
+                    <div style="margin-bottom: 15px;">
+                        <label for="inboxStatusFilter">Filtrar por estado:</label>
+                        <select id="inboxStatusFilter" style="padding: 8px; border-radius: 4px; border: 1px solid #ccc;">
+                            <option value="">Todas Abiertas</option>
+                            <option value="escalated_to_human">Nuevas Escaladas</option>
+                            <option value="awaiting_agent_reply">Esperando Respuesta</option>
+                            <option value="agent_replied">Respondidas</option>
+                            <option value="open">Abiertas (General)</option>
+                            <option value="closed_by_agent">Cerradas por Agente</option>
+                            <option value="archived">Archivadas</option>
+                        </select>
+                        <button id="refreshInboxBtn" style="margin-left: 10px; padding: 8px 12px; background-color: #5cb85c; color: white; border: none; border-radius: 4px; cursor: pointer;">Refrescar</button>
+                    </div>
+                    <p id="inboxLoadingMsg" style="text-align: center; display: none;">Cargando conversaciones...</p>
+                    <ul id="inboxConvList" class="conversation-list" style="list-style-type: none; padding: 0; margin: 0;">
+                        <!-- Conversation items will be populated here by JS -->
+                        <!-- Example item: 
+                        <li style="padding: 10px; border-bottom: 1px solid #f0f0f0; cursor: pointer;">
+                            <strong>Preview del mensaje...</strong><br>
+                            <small>ID: conv_123 - Estado: escalated_to_human</small><br>
+                            <small>Último mensaje: 2023-10-28 10:30 AM</small>
+                        </li> 
+                        -->
+                    </ul>
+                </div>
+
+                <!-- Column 2: Message View Panel -->
+                <div id="inboxMessageView" class="inbox-column" style="flex: 2; max-height: 600px; display: flex; flex-direction: column;">
+                    <h4 id="inboxSelectedConvHeader">Seleccione una conversación de la lista</h4>
+                    <div id="messageHistoryContainer" class="message-history" style="flex-grow: 1; border: 1px solid #eee; padding: 10px; overflow-y: auto; background-color: #f9f9f9; margin-bottom: 15px; min-height:300px;">
+                        <!-- Messages will be populated here by JS -->
+                    </div>
+                    <div id="inboxReplyArea" style="display: none;">
+                        <textarea id="inboxReplyText" placeholder="Escriba su respuesta..." style="width: calc(100% - 22px); min-height: 80px; padding: 10px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 10px; box-sizing: border-box;"></textarea>
+                        <button id="inboxSendReplyBtn" style="padding: 10px 15px; background-color: #3B4018; color: white; border: none; border-radius: 4px; cursor: pointer;">Enviar Respuesta</button>
+                    </div>
+                    <div id="inboxConvActions" style="display: none; margin-top: 15px;">
+                        <button id="inboxCloseConvBtn" style="padding: 10px 15px; background-color: #d9534f; color: white; border: none; border-radius: 4px; cursor: pointer;">Marcar como Resuelta y Cerrar</button>
+                        <!-- More granular status changes can be added here if needed -->
+                         <select id="inboxChangeStatusDropdown" style="margin-left: 10px; padding: 10px; border-radius: 4px; border: 1px solid #ccc;">
+                            <option value="">Cambiar Estado...</option>
+                            <option value="open">Marcar como Abierta</option>
+                            <option value="awaiting_agent_reply">Marcar como Esperando Respuesta</option>
+                            <option value="closed_by_agent">Marcar como Cerrada por Agente</option>
+                            <option value="archived">Archivar</option>
+                        </select>
+                        <button id="inboxApplyStatusChangeBtn" style="margin-left: 5px; padding: 10px 15px; background-color: #5bc0de; color: white; border: none; border-radius: 4px; cursor: pointer;">Aplicar Estado</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
         <!-- Other sections will be added here -->
     </div>
     <div id="errorMessageDashboard" style="color: red; padding: 10px; text-align: center;"></div>
