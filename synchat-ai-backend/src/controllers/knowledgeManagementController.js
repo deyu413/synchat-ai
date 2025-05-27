@@ -95,13 +95,15 @@ export const getSources = async (req, res) => {
     // Fetch URL source from synchat_clients
     const { data: clientData, error: clientError } = await supabase
       .from('synchat_clients')
-      .select('knowledge_source_url, knowledge_source_url_last_ingest_at')
+      .select('knowledge_source_url, last_ingest_status, last_ingest_at') // CORRECTED: Selected correct columns
       .eq('client_id', client_id)
       .single();
 
-    if (clientError) {
-      console.warn('Error fetching client URL, proceeding without it:', clientError.message);
-      // Not returning, as we still want to fetch other sources if possible
+    if (clientError && clientError.code !== 'PGRST116') { // PGRST116 means no rows found, which is not a fatal error here
+      console.error('Error fetching client URL details:', clientError.message);
+      // Not returning immediately, try to fetch other sources. 
+      // If this is the only source and it fails, the response might be empty or an error later.
+      // Consider if a 500 is appropriate if this specific query fails for other reasons.
     }
 
     if (clientData && clientData.knowledge_source_url) {
@@ -111,13 +113,13 @@ export const getSources = async (req, res) => {
         source_type: 'url',
         source_name: clientData.knowledge_source_url,
         storage_path: null,
-        content_text: null, // Assuming URL content is not stored directly here
-        status: clientData.knowledge_source_url_last_ingest_at ? 'completed' : 'pending_ingest', // Simplified status
-        character_count: null,
-        last_ingest_at: clientData.knowledge_source_url_last_ingest_at,
-        last_ingest_error: null, // Assuming no error or error is not stored here
-        created_at: null, // Main URL doesn't have a 'created_at' in knowledge_sources
-        updated_at: null, // Main URL doesn't have an 'updated_at' in knowledge_sources
+        content_text: null,
+        status: clientData.last_ingest_status || (clientData.knowledge_source_url ? 'pending_ingest' : 'N/A'), // CORRECTED: Use last_ingest_status
+        character_count: null, // This info is not on synchat_clients for the main URL
+        last_ingest_at: clientData.last_ingest_at, // CORRECTED: Use last_ingest_at
+        last_ingest_error: null, // This info is not on synchat_clients for the main URL
+        created_at: null, 
+        updated_at: null,
       });
     }
 
@@ -129,17 +131,23 @@ export const getSources = async (req, res) => {
       .order('created_at', { ascending: false });
 
     if (sourcesError) {
-      console.error('Error fetching knowledge sources:', sourcesError);
-      return res.status(500).json({ message: 'Failed to retrieve knowledge sources.', error: sourcesError.message });
+      console.error('Error fetching knowledge sources from knowledge_sources table:', sourcesError);
+      // If clientData also failed or was not present, and this fails, then return 500.
+      // If clientData was found, we might still want to return that partial data, or a specific error.
+      // For simplicity now, if this critical part fails, we return 500.
+      return res.status(500).json({ message: 'Failed to retrieve file/article knowledge sources.', error: sourcesError.message });
     }
 
     if (fileSources) {
       allSources = allSources.concat(fileSources);
     }
-
+    
+    // If allSources is still empty after trying both, it's not an error, just no sources.
     res.status(200).json(allSources);
+
   } catch (error) {
-    console.error('Error in getSources controller:', error);
+    // This catch block handles unexpected errors in the overall logic of getSources
+    console.error('Unexpected error in getSources controller:', error);
     res.status(500).json({ message: 'An unexpected error occurred while retrieving sources.', error: error.message });
   }
 };
@@ -156,20 +164,7 @@ export const ingestSource = async (req, res) => {
   console.log(`(Controller) Received request to ingest source_id: ${source_id} for client_id: ${client_id}`);
 
   try {
-    // Special handling for 'main_url' if it's passed as source_id
-    // The ingestionService.ingestWebsite (which calls ingestSourceById) handles creating/finding the actual source_id for a URL.
-    // If the frontend sends 'main_url' directly to this endpoint, we might need to resolve it first or
-    // ensure ingestSourceById can handle 'main_url' as a special case (which the current ingestionService does not directly).
-    // For now, we assume source_id is a valid UUID from knowledge_sources, or ingestWebsite has been called for URLs.
-    // The current frontend logic for 'main_url' in dashboard.js tries to use knowledgeUrlInput.value.
-    // This endpoint is for specific source_id ingestion.
-
     if (source_id === 'main_url') {
-        // This case needs careful handling. The `ingestWebsite` function in `ingestionService`
-        // is responsible for taking a URL, finding/creating a `knowledge_sources` record, and then calling `ingestSourceById`.
-        // If the frontend directly calls this endpoint with 'main_url', it implies we need to fetch the configured URL
-        // for the client and then trigger its ingestion.
-
         const { data: clientConfig, error: configError } = await supabase
             .from('synchat_clients')
             .select('knowledge_source_url')
@@ -183,28 +178,19 @@ export const ingestSource = async (req, res) => {
         const mainUrlToIngest = clientConfig.knowledge_source_url;
         console.log(`(Controller) Ingesting main_url, which is: ${mainUrlToIngest} for client_id: ${client_id}`);
         
-        // Call ingestWebsite, which handles the logic of finding/creating the source row
-        // and then calling ingestSourceById with the actual UUID.
         const result = await ingestionService.ingestWebsite(client_id, mainUrlToIngest);
 
         if (result.success) {
             return res.status(200).json({ message: 'Main URL ingestion process started/completed successfully.', details: result });
         } else {
-            // ingestWebsite itself returns appropriate error messages.
-            // Status code might depend on the nature of the error (e.g., 400 for bad URL, 500 for internal)
-            // For simplicity, using 500 for any failure from the service here.
             return res.status(500).json({ message: 'Main URL ingestion failed.', error: result.error, details: result });
         }
     } else {
-        // Standard ingestion for a specific source_id (UUID)
         const result = await ingestionService.ingestSourceById(source_id, client_id);
 
         if (result.success) {
             return res.status(200).json({ message: 'Ingestion process started/completed successfully.', details: result });
         } else {
-            // Determine appropriate status code based on error type
-            // If result.error indicates "Source ... not found", a 404 might be suitable.
-            // Otherwise, 500 for general ingestion failures.
             let statusCode = 500;
             if (result.error && result.error.toLowerCase().includes('not found')) {
                 statusCode = 404;
@@ -234,7 +220,6 @@ export const deleteSource = async (req, res) => {
   console.log(`(Controller) Received request to delete source_id: ${source_id} for client_id: ${client_id}`);
 
   try {
-    // 1. Fetch Source Details
     const { data: source, error: fetchError } = await supabase
       .from('knowledge_sources')
       .select('source_id, client_id, source_type, storage_path')
@@ -244,50 +229,42 @@ export const deleteSource = async (req, res) => {
 
     if (fetchError) {
       console.error(`(Controller) Error fetching source ${source_id} for client ${client_id}:`, fetchError.message);
-      // Check if the error is "PGRST116" which means "JSON object requested, multiple (or no) rows returned"
-      // This typically indicates the source was not found for the given client_id and source_id.
       if (fetchError.code === 'PGRST116') {
         return res.status(404).json({ message: `Fuente de conocimiento con ID ${source_id} no encontrada para este cliente.` });
       }
       return res.status(500).json({ message: 'Error al buscar la fuente de conocimiento.', error: fetchError.message });
     }
 
-    if (!source) { // Should be caught by PGRST116, but as a fallback
+    if (!source) { 
       return res.status(404).json({ message: `Fuente de conocimiento con ID ${source_id} no encontrada.` });
     }
 
-    // 2. Delete from Supabase Storage (if applicable)
     if ((source.source_type === 'pdf' || source.source_type === 'txt') && source.storage_path) {
       console.log(`(Controller) Deleting file from storage: ${source.storage_path}`);
       const { error: storageError } = await supabase.storage
-        .from('knowledge_files') // Ensure this is your correct bucket name
+        .from('knowledge_files')
         .remove([source.storage_path]);
 
       if (storageError) {
-        // Log error but proceed. The file might not exist, or permissions issue.
-        // Critical part is DB cleanup.
         console.warn(`(Controller) Error deleting file ${source.storage_path} from storage: ${storageError.message}. Proceeding with DB cleanup.`);
       } else {
         console.log(`(Controller) File ${source.storage_path} deleted from storage successfully.`);
       }
     }
 
-    // 3. Delete Chunks from public.knowledge_base (Critical)
     console.log(`(Controller) Deleting chunks from knowledge_base for source_id: ${source_id}`);
     const { error: kbDeleteError } = await supabase
       .from('knowledge_base')
       .delete()
       .eq('client_id', client_id)
-      .eq('metadata->>original_source_id', source_id); // Ensure metadata field is correct
+      .eq('metadata->>original_source_id', source_id); 
 
     if (kbDeleteError) {
       console.error(`(Controller) Critical error deleting chunks from knowledge_base for source ${source_id}:`, kbDeleteError.message);
-      // This is a more critical error. If chunks are left orphaned, it's problematic.
       return res.status(500).json({ message: 'Error eliminando los datos de conocimiento asociados.', error: kbDeleteError.message });
     }
     console.log(`(Controller) Chunks for source ${source_id} deleted from knowledge_base.`);
 
-    // 4. Delete from public.knowledge_sources
     console.log(`(Controller) Deleting source entry from knowledge_sources for source_id: ${source_id}`);
     const { error: sourceDeleteError } = await supabase
       .from('knowledge_sources')
@@ -301,7 +278,6 @@ export const deleteSource = async (req, res) => {
     }
     console.log(`(Controller) Source ${source_id} deleted from knowledge_sources successfully.`);
 
-    // 5. Response Handling
     res.status(200).json({ message: 'Fuente de conocimiento eliminada exitosamente.' });
 
   } catch (error) {
@@ -309,4 +285,3 @@ export const deleteSource = async (req, res) => {
     res.status(500).json({ message: 'Un error inesperado ocurrió en el servidor durante la eliminación.', error: error.message });
   }
 };
-
