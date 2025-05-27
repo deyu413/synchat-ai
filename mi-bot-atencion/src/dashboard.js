@@ -218,8 +218,8 @@ async function loadKnowledgeSources() {
                 else if (source.status === 'completed') statusDisplay = 'Completada';
                 else if (source.status === 'failed_ingest') statusDisplay = 'Falló la ingesta';
                 li.innerHTML = `<strong>${source.source_name || 'Fuente sin nombre'}</strong> (${source.source_type || 'N/A'}) - Estado: ${statusDisplay} ${source.last_ingest_at ? `- Última ingesta: ${new Date(source.last_ingest_at).toLocaleString()}` : ''} ${source.last_ingest_error ? `<br><small style="color:red;">Error: ${source.last_ingest_error}</small>` : ''}<br>
-                    <button class="ingest-source-btn" data-source-id="${source.source_id}" ${source.source_id === 'main_url' || source.status === 'ingesting' ? 'disabled' : ''}>Ingerir Ahora</button>
-                    <button class="delete-source-btn" data-source-id="${source.source_id}" ${source.source_id === 'main_url' || source.status === 'ingesting' ? 'disabled' : ''}>Eliminar</button>`;
+                    <button class="ingest-source-btn" data-source-id="${source.source_id}" ${source.status === 'ingesting' ? 'disabled' : ''}>Ingerir Ahora</button> // Botón Ingerir Ahora habilitado para main_url si no está 'ingesting'
+<button class="delete-source-btn" data-source-id="${source.source_id}" ${source.source_id === 'main_url' || source.status === 'ingesting' ? 'disabled' : ''}>Eliminar</button> // Botón Eliminar sigue deshabilitado para main_url
                 knowledgeSourcesList.appendChild(li);
             });
         }
