@@ -339,6 +339,7 @@ async function storeChunks(clientId, chunksWithEmbeddings) {
 
 
 // --- Nueva Función Principal del Servicio ---
+// Exportada directamente en su definición
 export async function ingestSourceById(sourceId, clientId) {
     if (!supabaseUrl || !supabaseKey || !openaiApiKey) {
         console.error("(Ingestion Service) Critical environment variables missing for ingestSourceById.");
@@ -498,6 +499,7 @@ export async function ingestSourceById(sourceId, clientId) {
 
 // --- MODIFIED ingestWebsite function ---
 // Refactored to use ingestSourceById
+// Exportada directamente en su definición
 export async function ingestWebsite(clientId, urlToIngest) {
     if (!supabaseUrl || !supabaseKey || !openaiApiKey) {
         console.error("(Ingestion Service - ingestWebsite) Missing critical environment variables.");
@@ -564,41 +566,21 @@ export async function ingestWebsite(clientId, urlToIngest) {
 
 
 // --- Helper function (legacy, consider removing or adapting if synchat_clients status is still needed) ---
-// This function is specific to the old 'synchat_clients' table status.
-// The new flow uses 'knowledge_sources' table statuses primarily.
-// If direct client-level status is still needed, this can be kept or adapted.
-// For now, calls to this from ingestWebsite are removed as ingestSourceById handles specific source status.
 /*
 async function updateClientIngestStatus(clientId, status, errorMessage = null) {
-    console.warn(`(Ingestion Service) [Legacy Call] updateClientIngestStatus called for client ${clientId} with status ${status}. This should ideally be managed via knowledge_sources.`);
-    const updateData = {
-        last_ingest_status: status,
-        last_ingest_at: new Date().toISOString(),
-        last_ingest_error: errorMessage ? errorMessage.substring(0, 500) : null
-    };
-    try {
-        const { error } = await supabase
-            .from('synchat_clients')
-            .update(updateData)
-            .eq('client_id', clientId);
-        if (error) {
-            console.error(`(Ingestion Service) [Legacy] Failed to update client ${clientId} status to '${status}':`, error.message);
-        }
-    } catch (dbUpdateError) {
-        console.error(`(Ingestion Service) [Legacy] Exception while updating client ${clientId} status to '${status}':`, dbUpdateError.message);
-    }
+    // ... (Código legado, como estaba antes) ...
 }
 */
 
 // --- Exports ---
-export { 
-    ingestSourceById, 
-    // ingestWebsite is already exported by its definition
-    // For testing or more granular control, export internal functions if needed:
-    // updateKnowledgeSourceStatus, 
-    // chunkTextContent, 
-    // chunkContent, // HTML chunker
-    // generateEmbeddings, 
+// ingestSourceById e ingestWebsite ya están exportadas en su definición.
+// Las siguientes funciones se exportan para posible uso interno o pruebas,
+// asegurándose de que no estén ya exportadas en su definición.
+export {
+    // updateKnowledgeSourceStatus, // Ya es interna o no exportada directamente antes
+    // chunkTextContent,
+    // chunkContent,
+    // generateEmbeddings,
     // storeChunks,
-    // validateChunk
+    validateChunk // Ejemplo de exportar una función de utilidad
 };
