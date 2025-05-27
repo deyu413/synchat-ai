@@ -25,7 +25,7 @@
         welcomeMessage: "Hello! How can I help you today?", 
         inputPlaceholder: "Escribe tu mensaje...",
         triggerLogoUrl: "/zoe.png", // Ruta absoluta desde la raíz del sitio frontend
-        avatarUrl: "/images/zoe.png"       // Ruta absoluta desde la raíz del sitio frontend
+        avatarUrl: "/zoe.png"       // Ruta absoluta desde la raíz del sitio frontend
     };
 
     // --- Función para Cargar Configuración Dinámica del Widget ---
