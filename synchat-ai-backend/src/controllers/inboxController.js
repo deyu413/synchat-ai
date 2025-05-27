@@ -1,5 +1,10 @@
 // src/controllers/inboxController.js
-const databaseService = require('../services/databaseService.js');
+import {
+    getClientConversations,
+    getMessagesForConversation,
+    addAgentMessageToConversation,
+    updateConversationStatusByAgent
+} from '../services/databaseService.js';
 
 // Allowed statuses an agent can set (for validation in changeConversationStatus)
 const AGENT_SETTABLE_STATUSES = [
@@ -14,7 +19,7 @@ const AGENT_SETTABLE_STATUSES = [
 
 
 // 1. List Conversations
-const listConversations = async (req, res) => {
+export const listConversations = async (req, res) => {
     const clientId = req.user.id; // Assuming client_id refers to the organization/tenant ID
     const { status, page: pageQuery, pageSize: pageSizeQuery } = req.query;
 
@@ -35,7 +40,7 @@ const listConversations = async (req, res) => {
 
     try {
         console.log(`(InboxCtrl) Listing conversations for client ${clientId}, page ${page}, size ${pageSize}, statuses: ${statusFiltersArray.join(', ')}`);
-        const result = await databaseService.getClientConversations(clientId, statusFiltersArray, page, pageSize);
+        const result = await getClientConversations(clientId, statusFiltersArray, page, pageSize);
         
         if (result.error) { // Handle errors returned by the service itself (e.g. DB connection issues)
              console.error(`(InboxCtrl) Error from getClientConversations service:`, result.error);
@@ -50,7 +55,7 @@ const listConversations = async (req, res) => {
 };
 
 // 2. Get Messages for a Specific Conversation
-const getConversationMessages = async (req, res) => {
+export const getConversationMessages = async (req, res) => {
     const clientId = req.user.id;
     const { conversation_id } = req.params;
 
@@ -60,7 +65,7 @@ const getConversationMessages = async (req, res) => {
 
     try {
         console.log(`(InboxCtrl) Getting messages for conversation ${conversation_id}, client ${clientId}`);
-        const messages = await databaseService.getMessagesForConversation(conversation_id, clientId);
+        const messages = await getMessagesForConversation(conversation_id, clientId);
         res.status(200).json(messages);
     } catch (error) {
         console.error(`(InboxCtrl) Error in getConversationMessages for conv ${conversation_id}, client ${clientId}:`, error);
@@ -75,7 +80,7 @@ const getConversationMessages = async (req, res) => {
 };
 
 // 3. Post a New Agent Message to a Conversation
-const postAgentMessage = async (req, res) => {
+export const postAgentMessage = async (req, res) => {
     const agentUserId = req.user.id; // The authenticated user is the agent
     const clientId = req.user.client_id; // Assuming client_id is on req.user for ownership check
                                          // If not, and client_id is a path param or similar, adjust.
@@ -128,7 +133,7 @@ const postAgentMessage = async (req, res) => {
 
     try {
         console.log(`(InboxCtrl) Posting agent message by ${actingAgentUserId} to conv ${conversation_id} (owned by ${conversationOwnerClientId})`);
-        const newMessage = await databaseService.addAgentMessageToConversation(conversation_id, conversationOwnerClientId, actingAgentUserId, content);
+        const newMessage = await addAgentMessageToConversation(conversation_id, conversationOwnerClientId, actingAgentUserId, content);
         res.status(201).json(newMessage);
     } catch (error) {
         console.error(`(InboxCtrl) Error in postAgentMessage for conv ${conversation_id}:`, error);
@@ -143,7 +148,7 @@ const postAgentMessage = async (req, res) => {
 };
 
 // 4. Change Conversation Status
-const changeConversationStatus = async (req, res) => {
+export const changeConversationStatus = async (req, res) => {
     const conversationOwnerClientId = req.user.id;
     const actingAgentUserId = req.user.id; // User acting as agent
     const { conversation_id } = req.params;
@@ -165,7 +170,7 @@ const changeConversationStatus = async (req, res) => {
 
     try {
         console.log(`(InboxCtrl) Changing status for conv ${conversation_id} (owned by ${conversationOwnerClientId}) to ${newStatus} by agent ${actingAgentUserId}`);
-        const updatedConversation = await databaseService.updateConversationStatusByAgent(conversation_id, conversationOwnerClientId, actingAgentUserId, newStatus);
+        const updatedConversation = await updateConversationStatusByAgent(conversation_id, conversationOwnerClientId, actingAgentUserId, newStatus);
         res.status(200).json(updatedConversation);
     } catch (error) {
         console.error(`(InboxCtrl) Error in changeConversationStatus for conv ${conversation_id}:`, error);
@@ -183,9 +188,3 @@ const changeConversationStatus = async (req, res) => {
     }
 };
 
-module.exports = {
-    listConversations,
-    getConversationMessages,
-    postAgentMessage,
-    changeConversationStatus,
-};

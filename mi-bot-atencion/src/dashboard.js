@@ -1,6 +1,6 @@
 import { supabase } from './supabaseClientFrontend.js';
 
-const VERCEL_BACKEND_URL = 'https://synchat-ai-s8cf.vercel.app/';
+const VERCEL_BACKEND_URL = window.SYNCHAT_CONFIG.API_BASE_URL;
 
 // --- General Dashboard Elements ---
 const loadingMessage = document.getElementById('loadingMessage');

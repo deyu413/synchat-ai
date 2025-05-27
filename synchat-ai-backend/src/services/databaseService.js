@@ -452,10 +452,3 @@ export const updateConversationStatusByAgent = async (conversationId, clientId, 
     }
 };
 
-// Ensure all new functions are exported
-export { 
-    getClientConversations, 
-    getMessagesForConversation, 
-    addAgentMessageToConversation, 
-    updateConversationStatusByAgent 
-};
