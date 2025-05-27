@@ -34,21 +34,22 @@ const corsOptionsDelegate = function (req, callback) {
     const isWidgetRoute = req.path.startsWith('/api/public-chat'); 
 
     if (isWidgetRoute) {
-        if (allowedWidgetOrigins === true) { // '*' configuration
-            corsOptions.origin = true; // Allow any origin for widget routes
-        } else if (allowedWidgetOrigins.length === 0 && !widgetAllowedOriginsEnv) {
-            // If WIDGET_ALLOWED_ORIGINS is not set at all (empty string from env, resulting in empty array)
-            // and not explicitly '*', we might want to default to a stricter policy (e.g., disallow all or allow none).
-            // For now, if allowedWidgetOrigins is empty (because env var was empty), it will result in origin:false
-            // unless it's caught by another rule (which it won't be for widget routes).
-            // This means an unset WIDGET_ALLOWED_ORIGINS effectively blocks widget CORS unless '*' is used.
-            // This behavior is acceptable.
-             if (allowedWidgetOrigins.includes(origin)) { // This will be false if array is empty.
+        if (allowedWidgetOrigins === true) { // '*' configuration from WIDGET_ALLOWED_ORIGINS
+            corsOptions.origin = true;
+        } else if (allowedWidgetOrigins.length > 0 && origin && allowedWidgetOrigins.includes(origin)) {
+            // Origin is in the explicit list from WIDGET_ALLOWED_ORIGINS
+            corsOptions.origin = true;
+        } else if (allowedWidgetOrigins.length === 0 && process.env.NODE_ENV === 'development') {
+            // WIDGET_ALLOWED_ORIGINS is empty/not set, AND it's development mode.
+            // Allow common localhost origins for widget development convenience.
+            if (origin && (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'))) {
+                console.log(`(CORS) Allowing development widget origin: ${origin}`);
                 corsOptions.origin = true;
-             }
-        } else if (allowedWidgetOrigins.includes(origin)) {
-            corsOptions.origin = true; // Allow if origin is in the widget list
+            }
         }
+        // If WIDGET_ALLOWED_ORIGINS is explicitly set but doesn't include the origin,
+        // or if it's empty and not in development mode, or if origin is undefined,
+        // corsOptions.origin remains false, thus disallowing the origin by default.
     } else { // For non-widget routes (e.g., dashboard /api/client, /api/payments, or general /api/chat)
         if (origin === frontendDashboardURL) {
             corsOptions.origin = true; // Allow dashboard origin
@@ -142,6 +143,8 @@ app.listen(PORT, () => {
          console.warn("ADVERTENCIA: FRONTEND_URL no definida. CORS para el dashboard podría no funcionar como esperado sin fallback a localhost en desarrollo.");
      }
      if (!process.env.WIDGET_ALLOWED_ORIGINS) {
-         console.warn("ADVERTENCIA: WIDGET_ALLOWED_ORIGINS no definida. CORS para el widget podría no funcionar como esperado.");
+         console.warn("ADVERTENCIA: WIDGET_ALLOWED_ORIGINS no definida. CORS para el widget podría no funcionar como esperado (o solo permitir localhost en desarrollo).");
+     } else if (process.env.WIDGET_ALLOWED_ORIGINS === '*' && process.env.NODE_ENV === 'production') {
+         console.warn("ADVERTENCIA DE PRODUCCIÓN: WIDGET_ALLOWED_ORIGINS está configurado como '*' lo cual permite cualquier origen. Esto no es recomendado para producción.");
      }
 });
