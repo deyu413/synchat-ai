@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import { protectRoute as authMiddleware } from '../middleware/authMiddleware.js';
+import * as inboxController from '../controllers/inboxController.js'; // inboxController uses named exports
+
 const router = express.Router();
-const authMiddleware = require('../middleware/authMiddleware');
-const inboxController = require('../controllers/inboxController'); // Controller to be created later
 
 // Route to list conversations
 router.get('/conversations', authMiddleware, inboxController.listConversations);
@@ -15,4 +16,4 @@ router.post('/conversations/:conversation_id/messages', authMiddleware, inboxCon
 // Route to change the status of a conversation
 router.put('/conversations/:conversation_id/status', authMiddleware, inboxController.changeConversationStatus);
 
-module.exports = router;
+export default router;

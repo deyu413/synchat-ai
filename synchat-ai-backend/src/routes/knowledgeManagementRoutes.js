@@ -1,7 +1,8 @@
-const express = require('express');
+import express from 'express';
+import { protectRoute as authMiddleware } from '../middleware/authMiddleware.js';
+import * as knowledgeManagementController from '../controllers/knowledgeManagementController.js';
+
 const router = express.Router();
-const authMiddleware = require('../middleware/authMiddleware');
-const knowledgeManagementController = require('../controllers/knowledgeManagementController');
 
 // Route to upload a file
 router.post('/upload', authMiddleware, knowledgeManagementController.uploadFile);
@@ -15,4 +16,4 @@ router.post('/sources/:source_id/ingest', authMiddleware, knowledgeManagementCon
 // Route to delete a specific source
 router.delete('/sources/:source_id', authMiddleware, knowledgeManagementController.deleteSource);
 
-module.exports = router;
+export default router;
