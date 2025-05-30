@@ -15,13 +15,15 @@ const knowledgeManagementSection = document.getElementById('knowledgeManagement'
 const usageSection = document.getElementById('usage');
 const inboxSection = document.getElementById('inboxSection');
 const widgetSection = document.getElementById('widget'); // Assuming a widget section exists
+const analyticsSection = document.getElementById('analyticsSection'); // New Analytics Section
 
 // --- Navigation Links ---
 const navConfigLink = document.querySelector('nav ul li a[href="#config"]');
-const navIngestLink = document.querySelector('nav ul li a[href="#ingest"]');
+const navIngestLink = document.querySelector('nav ul li a[href="#ingest"]'); // Note: href="#ingest" was in HTML, but no section for it. Assuming knowledgeManagement is used.
 const navWidgetLink = document.querySelector('nav ul li a[href="#widget"]');
 const navUsageLink = document.querySelector('nav ul li a[href="#usage"]');
 const navInboxLink = document.getElementById('navInboxLink');
+const navAnalyticsLink = document.querySelector('nav ul li a[data-section="analyticsSection"]'); // New Analytics Link
 
 // --- Config Form Elements ---
 const configForm = document.getElementById('configForm');
@@ -66,22 +68,43 @@ const inboxCloseConvBtn = document.getElementById('inboxCloseConvBtn');
 const inboxChangeStatusDropdown = document.getElementById('inboxChangeStatusDropdown');
 const inboxApplyStatusChangeBtn = document.getElementById('inboxApplyStatusChangeBtn');
 
+// --- Analytics Section Elements ---
+const analyticsPeriodSelector = document.getElementById('analyticsPeriodSelector');
+const refreshAnalyticsBtn = document.getElementById('refreshAnalyticsBtn');
+const analyticsLoadingMessage = document.getElementById('analyticsLoadingMessage');
+const totalConversationsEl = document.getElementById('totalConversations');
+const escalatedConversationsEl = document.getElementById('escalatedConversations');
+const escalatedPercentageEl = document.getElementById('escalatedPercentage');
+const unansweredByBotConversationsEl = document.getElementById('unansweredByBotConversations');
+const unansweredPercentageEl = document.getElementById('unansweredPercentage');
+const avgDurationEl = document.getElementById('avgDuration');
+const avgMessagesPerConversationEl = document.getElementById('avgMessagesPerConversation');
+const unansweredQueriesListEl = document.getElementById('unansweredQueriesList');
+
+
 // --- State Variables ---
 let currentClientId = null;
 let currentOpenConversationId = null;
 let currentConversations = [];
+let analyticsDataLoadedOnce = false; // Flag for initial analytics load
 
 // --- Helper to show/hide sections ---
-const allDashboardSections = [configSection, knowledgeManagementSection, usageSection, inboxSection, widgetSection].filter(Boolean);
+const allDashboardSections = [configSection, knowledgeManagementSection, usageSection, inboxSection, widgetSection, analyticsSection].filter(Boolean);
 
 function showSection(sectionIdToShow) {
     allDashboardSections.forEach(section => {
         if (section.id === sectionIdToShow) {
             section.style.display = 'block';
+            if (section.id === 'analyticsSection' && !analyticsDataLoadedOnce && analyticsPeriodSelector) {
+                loadChatbotAnalytics(analyticsPeriodSelector.value);
+                analyticsDataLoadedOnce = true;
+            }
         } else {
             section.style.display = 'none';
         }
     });
+    // Update URL hash
+    window.location.hash = sectionIdToShow;
 }
 
 async function checkAuthAndLoadDashboard() {
@@ -107,22 +130,40 @@ async function checkAuthAndLoadDashboard() {
     await loadKnowledgeSources();
     
     const hash = window.location.hash.substring(1);
-    if (hash === 'inboxSection' || (hash === '' && inboxSection)) {
-        showSection('inboxSection');
-        if (inboxStatusFilter) await loadInboxConversations(inboxStatusFilter.value);
-    } else if (hash && document.getElementById(hash)) {
+    const sectionExists = allDashboardSections.some(s => s.id === hash);
+
+    if (hash && sectionExists) {
         showSection(hash);
-    } else if (configSection) {
+        if (hash === 'inboxSection' && inboxStatusFilter) await loadInboxConversations(inboxStatusFilter.value);
+    } else if (configSection) { // Default to config if no valid hash or hash is empty
         showSection('config');
     }
+
 
     if (loadingMessage) loadingMessage.style.display = 'none';
     if (dashboardContent) dashboardContent.classList.remove('hidden');
 }
 
 // --- Navigation Event Listeners ---
-if (navConfigLink && configSection) navConfigLink.addEventListener('click', (e) => { e.preventDefault(); showSection('config'); });
-if (navIngestLink && knowledgeManagementSection) navIngestLink.addEventListener('click', (e) => { e.preventDefault(); showSection('knowledgeManagement'); });
+document.querySelectorAll('nav ul li a[data-section]').forEach(link => {
+    link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const sectionId = e.target.dataset.section;
+        if (document.getElementById(sectionId)) { // Check if section actually exists
+            showSection(sectionId);
+            if (sectionId === 'inboxSection' && inboxStatusFilter) {
+                 loadInboxConversations(inboxStatusFilter.value);
+            }
+        } else {
+            console.warn(`Navigation link points to non-existent section: ${sectionId}`);
+            if(configSection) showSection('config'); // Default to config if link is broken
+        }
+    });
+});
+
+// Special handling for original nav links if they don't have data-section
+if (navConfigLink) navConfigLink.addEventListener('click', (e) => { e.preventDefault(); showSection('config'); });
+if (navIngestLink && knowledgeManagementSection) navIngestLink.addEventListener('click', (e) => { e.preventDefault(); showSection('knowledgeManagement'); }); // Assuming ingest maps to knowledgeManagement
 if (navWidgetLink && widgetSection) navWidgetLink.addEventListener('click', (e) => { e.preventDefault(); showSection('widget'); });
 if (navUsageLink && usageSection) navUsageLink.addEventListener('click', (e) => { e.preventDefault(); showSection('usage'); });
 if (navInboxLink && inboxSection) {
@@ -133,6 +174,7 @@ if (navInboxLink && inboxSection) {
     });
 }
 
+
 async function loadClientConfig(token) {
     if(errorMessageDashboard) errorMessageDashboard.textContent = '';
     try {
@@ -140,7 +182,7 @@ async function loadClientConfig(token) {
             method: 'GET', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
         });
         if (!response.ok) { const errorData = await response.json(); throw new Error(errorData.message || `Error ${response.status}`); }
-        const configData = await response.json(); // Renamed 'config' to 'configData' to avoid conflict
+        const configData = await response.json();
         if (configData.widget_config) {
             if (botNameInput) botNameInput.value = configData.widget_config.botName || '';
             if (welcomeMessageInput) welcomeMessageInput.value = configData.widget_config.welcomeMessage || '';
@@ -210,16 +252,20 @@ async function loadKnowledgeSources() {
                 else if (source.status === 'completed') statusDisplay = 'Completada';
                 else if (source.status === 'failed_ingest') statusDisplay = 'Falló la ingesta';
                 
-                // *** INICIO DE LA CORRECCIÓN ***
                 const ingestButtonDisabled = source.status === 'ingesting' ? 'disabled' : '';
                 const deleteButtonDisabled = (source.source_id === 'main_url' || source.status === 'ingesting') ? 'disabled' : '';
 
-                // Main text content for the list item
                 const textContentDiv = document.createElement('div');
                 textContentDiv.innerHTML = `<strong>${source.source_name || 'Fuente sin nombre'}</strong> (${source.source_type || 'N/A'}) - Estado: ${statusDisplay} ${source.last_ingest_at ? `- Última ingesta: ${new Date(source.last_ingest_at).toLocaleString()}` : ''} ${source.last_ingest_error ? `<br><small style="color:red;">Error: ${source.last_ingest_error}</small>` : ''}`;
+
+                const frequencyDiv = document.createElement('div');
+                frequencyDiv.style.fontSize = '0.9em';
+                frequencyDiv.style.color = '#555';
+                frequencyDiv.style.marginTop = '4px';
+                frequencyDiv.innerHTML = `Frecuencia de Re-ingesta: <strong class="reingest-frequency-value">${source.reingest_frequency || 'Manual'}</strong>`;
+                textContentDiv.appendChild(frequencyDiv);
                 li.appendChild(textContentDiv);
 
-                // Actions container
                 const actionsDiv = document.createElement('div');
                 actionsDiv.className = 'source-actions';
                 actionsDiv.style.marginTop = '5px';
@@ -244,11 +290,27 @@ async function loadKnowledgeSources() {
                 previewChunksButton.dataset.sourceId = source.source_id;
                 previewChunksButton.textContent = 'Ver Muestra de Chunks';
                 previewChunksButton.style.marginLeft = '5px';
-                // Disable if source status indicates no chunks (e.g., uploaded, failed_ingest, or if it's main_url and not ingested yet)
-                if (source.status !== 'completed' && source.status !== 'ingesting') { // ingesting might have some chunks already
-                    // previewChunksButton.disabled = true; // Or hide, or let backend handle empty state
+                if (source.status !== 'completed' && source.status !== 'ingesting') {
+                    // previewChunksButton.disabled = true;
                 }
                 actionsDiv.appendChild(previewChunksButton);
+
+                if (source.source_type === 'url' || source.storage_path) {
+                    const configReingestButton = document.createElement('button');
+                    configReingestButton.className = 'config-reingest-btn btn btn-secondary btn-sm disabled-feature-button';
+                    configReingestButton.dataset.sourceId = source.source_id;
+                    configReingestButton.textContent = 'Configurar Re-ingesta';
+                    configReingestButton.disabled = true;
+                    configReingestButton.style.marginLeft = '5px';
+                    actionsDiv.appendChild(configReingestButton);
+
+                    const futureNote = document.createElement('em');
+                    futureNote.textContent = ' (Próximamente)';
+                    futureNote.style.fontSize = '0.8em';
+                    futureNote.style.color = '#777';
+                    futureNote.classList.add('future-note');
+                    actionsDiv.appendChild(futureNote);
+                }
 
                 li.appendChild(actionsDiv);
                 knowledgeSourcesList.appendChild(li);
@@ -290,20 +352,12 @@ async function handleFileUpload() {
 async function handleSourceAction(event) {
     const target = event.target; 
     const sourceId = target.dataset.sourceId; 
-    const sourceId = target.dataset.sourceId;
     if (!sourceId) return;
 
     if (target.classList.contains('ingest-source-btn')) {
-        // La lógica para 'main_url' al presionar "Ingerir Ahora" ya está manejada en el controller.
-        // El controller 'knowledgeManagementController.js' tiene una sección if (source_id === 'main_url')
-        // que llama a ingestionService.ingestWebsite.
-        // Así que, aquí simplemente llamamos a triggerIngestion con el sourceId (que será 'main_url' o un UUID).
         await triggerIngestion(sourceId);
     } else if (target.classList.contains('delete-source-btn')) {
-        // La lógica que previene la eliminación de 'main_url' está en el controlador,
-        // pero el botón ya está deshabilitado en el frontend para 'main_url'.
-        // Si por alguna razón el botón estuviera habilitado y se hiciera click, el backend lo rechazaría.
-        if (sourceId !== 'main_url' && confirm(`¿Eliminar fuente ${sourceId}?`)) { // Doble chequeo por si acaso
+        if (sourceId !== 'main_url' && confirm(`¿Eliminar fuente ${sourceId}?`)) {
             await deleteKnowledgeSource(sourceId);
         }
     } else if (target.classList.contains('preview-chunks-btn')) {
@@ -323,13 +377,13 @@ async function triggerIngestion(sourceId) {
         if (!response.ok) { const errorData = await response.json(); throw new Error(errorData.message || `Error ${response.status}`); }
         const result = await response.json();
         knowledgeManagementMessage.textContent = result.message || `Ingesta para ${sourceId} iniciada/completada.`; 
-        knowledgeManagementMessage.className = result.success ? 'success' : 'info'; // Usar info si solo se inició
-        await loadKnowledgeSources(); // Refrescar lista para mostrar nuevo estado
+        knowledgeManagementMessage.className = result.success ? 'success' : 'info';
+        await loadKnowledgeSources();
     } catch (error) {
         console.error(`Error ingiriendo ${sourceId}:`, error);
         knowledgeManagementMessage.textContent = `Error ingesta ${sourceId}: ${error.message}`; knowledgeManagementMessage.className = 'error';
     }
-    setTimeout(() => { if(knowledgeManagementMessage) knowledgeManagementMessage.textContent = ''; }, 7000); // Más tiempo para leer
+    setTimeout(() => { if(knowledgeManagementMessage) knowledgeManagementMessage.textContent = ''; }, 7000);
 }
 
 async function deleteKnowledgeSource(sourceId) {
@@ -343,7 +397,7 @@ async function deleteKnowledgeSource(sourceId) {
         });
         if (!response.ok) { const errorData = await response.json(); throw new Error(errorData.message || `Error ${response.status}`); }
         knowledgeManagementMessage.textContent = `Fuente ${sourceId} eliminada.`; knowledgeManagementMessage.className = 'success';
-        await loadKnowledgeSources(); // Refrescar lista
+        await loadKnowledgeSources();
     } catch (error) {
         console.error(`Error eliminando ${sourceId}:`, error);
         knowledgeManagementMessage.textContent = `Error eliminando ${sourceId}: ${error.message}`; knowledgeManagementMessage.className = 'error';
@@ -352,6 +406,7 @@ async function deleteKnowledgeSource(sourceId) {
 }
 
 // --- Shared Inbox Functions ---
+// ... (existing inbox functions remain here) ...
 async function loadInboxConversations(statusFilter = '') {
     if (!inboxLoadingMsg || !inboxConvList) return;
     inboxLoadingMsg.style.display = 'block';
@@ -465,19 +520,18 @@ async function displayConversationMessages(conversationId) {
                     <small style="font-size:0.75em; color: #555;">${new Date(msg.timestamp).toLocaleString()} (${msg.sender})</small>
                 `;
 
-                // Add feedback buttons for bot messages
-                if (msg.sender === 'bot' && msg.message_id) { // Ensure message_id is present
+                if (msg.sender === 'bot' && msg.message_id) {
                     const feedbackActionsDiv = document.createElement('div');
                     feedbackActionsDiv.className = 'feedback-actions';
                     feedbackActionsDiv.style.marginTop = '5px';
-                    feedbackActionsDiv.style.textAlign = 'left'; // Align with bot message bubble
+                    feedbackActionsDiv.style.textAlign = 'left';
 
                     const thumbUpBtn = document.createElement('button');
                     thumbUpBtn.textContent = '👍';
                     thumbUpBtn.classList.add('feedback-btn');
                     thumbUpBtn.dataset.messageId = msg.message_id;
                     thumbUpBtn.dataset.rating = '1';
-                    thumbUpBtn.style.marginLeft = '0px'; // No left margin for the first button
+                    thumbUpBtn.style.marginLeft = '0px';
                     thumbUpBtn.style.marginRight = '5px';
                     thumbUpBtn.style.border = 'none';
                     thumbUpBtn.style.background = 'none';
@@ -574,6 +628,7 @@ async function updateInboxConversationStatus(conversationId, newStatus) {
 }
 
 // --- Event Listeners Setup ---
+// ... (other listeners remain the same) ...
 if (logoutBtnDashboard) {
     logoutBtnDashboard.addEventListener('click', async () => {
         const { error } = await supabase.auth.signOut();
@@ -581,7 +636,7 @@ if (logoutBtnDashboard) {
             console.error('Error al cerrar sesión:', error);
             if (errorMessageDashboard) errorMessageDashboard.textContent = `Error al cerrar sesión: ${error.message}`;
         } else {
-            window.location.href = 'login.html'; // Redirigir después del logout exitoso
+            window.location.href = 'login.html';
         }
     });
 }
@@ -620,7 +675,6 @@ if (inboxApplyStatusChangeBtn && inboxChangeStatusDropdown) {
 async function handleFeedbackSubmit(conversationId, messageId, rating) {
     console.log(`Feedback submitted: ConvID=${conversationId}, MsgID=${messageId}, Rating=${rating}`);
 
-    // Visual feedback: Disable buttons and show a temporary message
     const buttons = messageHistoryContainer.querySelectorAll(`.feedback-btn[data-message-id="${messageId}"]`);
     const parentFeedbackDiv = buttons.length > 0 ? buttons[0].parentElement : null;
 
@@ -629,15 +683,15 @@ async function handleFeedbackSubmit(conversationId, messageId, rating) {
         button.style.opacity = '0.5';
         button.style.cursor = 'default';
         if (parseInt(button.dataset.rating, 10) === rating) {
-            button.style.transform = 'scale(1.1)'; // Highlight selected
+            button.style.transform = 'scale(1.1)';
         }
     });
 
     let feedbackMsgElement;
     if (parentFeedbackDiv) {
         const existingThanks = parentFeedbackDiv.querySelector('.thanks-feedback');
-        if (existingThanks) existingThanks.remove(); // Remove previous "thanks" if any
-        feedbackMsgElement = document.createElement('span'); // Use span for inline display
+        if (existingThanks) existingThanks.remove();
+        feedbackMsgElement = document.createElement('span');
         feedbackMsgElement.className = 'thanks-feedback';
         feedbackMsgElement.style.fontSize = '0.8em';
         feedbackMsgElement.style.marginLeft = '10px';
@@ -648,7 +702,6 @@ async function handleFeedbackSubmit(conversationId, messageId, rating) {
     if (!token) {
         if (feedbackMsgElement) feedbackMsgElement.textContent = 'Error: No autenticado.';
         console.error("Feedback submission failed: Not authenticated.");
-        // Re-enable buttons if auth fails early
         buttons.forEach(button => {
             button.disabled = false;
             button.style.opacity = '1';
@@ -665,7 +718,7 @@ async function handleFeedbackSubmit(conversationId, messageId, rating) {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ rating: rating, comment: "" }) // Empty comment for now
+            body: JSON.stringify({ rating: rating, comment: "" })
         });
 
         if (response.ok) {
@@ -681,7 +734,6 @@ async function handleFeedbackSubmit(conversationId, messageId, rating) {
                 feedbackMsgElement.textContent = 'Error al enviar.';
                 feedbackMsgElement.style.color = 'red';
             }
-            // Re-enable buttons on error so user can try again
             buttons.forEach(button => {
                 button.disabled = false;
                 button.style.opacity = '1';
@@ -695,24 +747,20 @@ async function handleFeedbackSubmit(conversationId, messageId, rating) {
             feedbackMsgElement.textContent = 'Error de red.';
             feedbackMsgElement.style.color = 'red';
         }
-         buttons.forEach(button => { // Also re-enable on network error
+         buttons.forEach(button => {
             button.disabled = false;
             button.style.opacity = '1';
             button.style.cursor = 'pointer';
             button.style.transform = '';
         });
     } finally {
-        // Remove "thanks" message after a few seconds if it's still there
-        if (feedbackMsgElement && feedbackMsgElement.textContent.startsWith("¡Gracias!")) { // Only if successful
+        if (feedbackMsgElement && feedbackMsgElement.textContent.startsWith("¡Gracias!")) {
             setTimeout(() => {
                 if (feedbackMsgElement) feedbackMsgElement.remove();
-                 // Optionally re-enable buttons fully after success and timeout, or keep them semi-disabled
                  buttons.forEach(button => {
-                    // Example: Keep them looking "voted" but allow re-vote if desired by removing disabled
-                    // For now, they remain visually distinct as "voted"
                  });
             }, 3000);
-        } else if (feedbackMsgElement) { // If it was an error message, remove it sooner or clear it
+        } else if (feedbackMsgElement) {
              setTimeout(() => {
                 if (feedbackMsgElement) feedbackMsgElement.remove();
              }, 3000);
@@ -720,14 +768,12 @@ async function handleFeedbackSubmit(conversationId, messageId, rating) {
     }
 }
 
-// Event delegation for feedback buttons (ensure messageHistoryContainer is defined)
 if (messageHistoryContainer) {
     messageHistoryContainer.addEventListener('click', function(event) {
         const feedbackButton = event.target.closest('.feedback-btn');
         if (feedbackButton) {
             const messageId = feedbackButton.dataset.messageId;
             const rating = parseInt(feedbackButton.dataset.rating, 10);
-            // currentOpenConversationId should be set when a conversation is opened
             if (currentOpenConversationId && messageId) {
                 handleFeedbackSubmit(currentOpenConversationId, messageId, rating);
             } else {
@@ -738,8 +784,8 @@ if (messageHistoryContainer) {
     });
 }
 
-
 // --- Chunk Sample Modal Functions ---
+// ... (existing chunk sample modal functions remain here) ...
 const chunkSampleModal = document.getElementById('chunkSampleModal');
 const chunkSampleModalTitle = document.getElementById('chunkSampleModalTitle');
 const chunkSampleModalBody = document.getElementById('chunkSampleModalBody');
@@ -750,7 +796,6 @@ if (closeChunkSampleModalBtn) {
         if(chunkSampleModal) chunkSampleModal.style.display = "none";
     }
 }
-// Close modal if user clicks outside of the modal content
 window.onclick = function(event) {
     if (event.target == chunkSampleModal) {
         if(chunkSampleModal) chunkSampleModal.style.display = "none";
@@ -827,6 +872,132 @@ async function fetchAndDisplayChunkSample(sourceId) {
     }
 }
 
+// --- Analytics Functions ---
+function escapeAttribute(str) {
+    if (typeof str !== 'string') return '';
+    return str.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function loadChatbotAnalytics(period = '30d') {
+    if (!currentClientId || !analyticsLoadingMessage || !totalConversationsEl || !unansweredQueriesListEl) {
+        console.warn("Analytics UI elements not ready or missing client ID.");
+        return;
+    }
+
+    analyticsLoadingMessage.style.display = 'block';
+    analyticsLoadingMessage.textContent = 'Cargando datos analíticos...';
+    unansweredQueriesListEl.innerHTML = '<li>Cargando sugerencias...</li>';
+    // Reset metrics
+    totalConversationsEl.textContent = '0';
+    escalatedConversationsEl.textContent = '0';
+    escalatedPercentageEl.textContent = '0.0';
+    unansweredByBotConversationsEl.textContent = '0';
+    unansweredPercentageEl.textContent = '0.0';
+    avgDurationEl.textContent = '0';
+    avgMessagesPerConversationEl.textContent = '0';
+
+    const token = (await supabase.auth.getSession())?.data.session?.access_token;
+    if (!token) {
+        analyticsLoadingMessage.textContent = 'Error de autenticación para cargar analíticas.';
+        return;
+    }
+
+    try {
+        // Fetch Summary Data
+        const summaryResponse = await fetch(`${VERCEL_BACKEND_URL}/api/client/me/analytics/summary?period=${period}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!summaryResponse.ok) {
+            const errData = await summaryResponse.json();
+            throw new Error(`Error cargando sumario: ${errData.message || summaryResponse.statusText}`);
+        }
+        const summaryData = await summaryResponse.json();
+
+        const totalConversations = summaryData.total_conversations || 0;
+        const escalatedConversations = summaryData.escalated_conversations || 0;
+        const unansweredByBot = summaryData.unanswered_by_bot_conversations || 0;
+
+        totalConversationsEl.textContent = totalConversations;
+        escalatedConversationsEl.textContent = escalatedConversations;
+        unansweredByBotConversationsEl.textContent = unansweredByBot;
+
+        const escalatedPercentage = totalConversations > 0 ? ((escalatedConversations / totalConversations) * 100).toFixed(1) : '0.0';
+        const unansweredPercentage = totalConversations > 0 ? ((unansweredByBot / totalConversations) * 100).toFixed(1) : '0.0';
+        escalatedPercentageEl.textContent = escalatedPercentage;
+        unansweredPercentageEl.textContent = unansweredPercentage;
+
+        avgDurationEl.textContent = (summaryData.avg_duration_seconds || 0).toFixed(0);
+        avgMessagesPerConversationEl.textContent = (summaryData.avg_messages_per_conversation || 0).toFixed(1);
+
+        // Fetch Unanswered/Escalated Queries
+        const suggestionsResponse = await fetch(`${VERCEL_BACKEND_URL}/api/client/me/analytics/suggestions/unanswered?period=${period}&limit=10`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!suggestionsResponse.ok) {
+            const errData = await suggestionsResponse.json();
+            throw new Error(`Error cargando sugerencias: ${errData.message || suggestionsResponse.statusText}`);
+        }
+        const suggestions = await suggestionsResponse.json();
+
+        unansweredQueriesListEl.innerHTML = ''; // Clear loading/previous
+        if (suggestions.length === 0) {
+            unansweredQueriesListEl.innerHTML = '<li>No hay sugerencias por ahora.</li>';
+        } else {
+            suggestions.forEach(item => {
+                const li = document.createElement('li');
+                const queryToEscape = item.summary || "Consulta no disponible";
+                const formattedDate = item.last_occurred_at ? new Date(item.last_occurred_at).toLocaleDateString() : 'N/A';
+                li.innerHTML = `"${escapeAttribute(queryToEscape)}" (Frecuencia: ${item.frequency || 1}, Última vez: ${formattedDate})
+                                <button class="btn btn-sm btn-outline-primary add-to-kb-btn" data-query="${escapeAttribute(queryToEscape)}">Revisar/Añadir</button>`;
+                unansweredQueriesListEl.appendChild(li);
+            });
+        }
+        analyticsLoadingMessage.textContent = 'Datos cargados.';
+        setTimeout(() => { if(analyticsLoadingMessage) analyticsLoadingMessage.style.display = 'none';}, 2000);
+
+    } catch (error) {
+        console.error('Error cargando datos analíticos:', error);
+        if (analyticsLoadingMessage) analyticsLoadingMessage.textContent = `Error al cargar: ${error.message}`;
+        unansweredQueriesListEl.innerHTML = '<li>Error al cargar sugerencias.</li>';
+    } finally {
+        // analyticsLoadingMessage.style.display = 'none'; // Already handled or timed out
+    }
+}
+
+// Event Listeners for Analytics Controls
+if (analyticsPeriodSelector) {
+    analyticsPeriodSelector.addEventListener('change', function() {
+        loadChatbotAnalytics(this.value);
+    });
+}
+if (refreshAnalyticsBtn) {
+    refreshAnalyticsBtn.addEventListener('click', () => {
+        if(analyticsPeriodSelector) loadChatbotAnalytics(analyticsPeriodSelector.value);
+    });
+}
+
+// Event Delegation for "Revisar/Añadir Conocimiento" buttons
+if (unansweredQueriesListEl) {
+    unansweredQueriesListEl.addEventListener('click', function(event) {
+        const target = event.target;
+        if (target && target.classList.contains('add-to-kb-btn')) {
+            const queryText = target.dataset.query;
+            if (queryText) {
+                navigator.clipboard.writeText(queryText)
+                    .then(() => {
+                        alert("Consulta copiada al portapapeles. Por favor, ve a 'Gestionar Fuentes de Conocimiento' para añadir esta información o crear una nueva fuente.");
+                        // Optionally navigate
+                        if(knowledgeManagementSection) showSection('knowledgeManagement');
+                    })
+                    .catch(err => {
+                        console.error('Error al copiar al portapapeles:', err);
+                        alert('Error al copiar la consulta.');
+                    });
+            }
+        }
+    });
+}
+
 
 async function displayClientUsage() {
     if (!currentClientId) {
@@ -858,3 +1029,5 @@ async function displayClientUsage() {
 }
 
 document.addEventListener('DOMContentLoaded', checkAuthAndLoadDashboard);
+
+[end of mi-bot-atencion/src/dashboard.js]

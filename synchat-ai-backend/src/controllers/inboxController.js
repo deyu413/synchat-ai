@@ -171,6 +171,16 @@ export const changeConversationStatus = async (req, res) => {
     try {
         console.log(`(InboxCtrl) Changing status for conv ${conversation_id} (owned by ${conversationOwnerClientId}) to ${newStatus} by agent ${actingAgentUserId}`);
         const updatedConversation = await updateConversationStatusByAgent(conversation_id, conversationOwnerClientId, actingAgentUserId, newStatus);
+
+        // Define terminal statuses for analytics finalization
+        const terminalStatuses = ['resolved_by_ia', 'closed_by_agent', 'closed_by_user', 'archived'];
+        if (terminalStatuses.includes(newStatus)) {
+            // Use updated_at from the conversation record as the lastMessageAt for analytics
+            const lastMessageAtForAnalytics = updatedConversation.updated_at || new Date().toISOString();
+            db.finalizeConversationAnalyticRecord(conversation_id, newStatus, lastMessageAtForAnalytics)
+                .catch(err => console.error(`Analytics: Failed to finalize record for CV:${conversation_id}`, err));
+        }
+
         res.status(200).json(updatedConversation);
     } catch (error) {
         console.error(`(InboxCtrl) Error in changeConversationStatus for conv ${conversation_id}:`, error);

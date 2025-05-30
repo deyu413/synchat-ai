@@ -28,10 +28,16 @@ export const handleChatMessage = async (req, res, next) => {
         try {
             // Save a message indicating user requested escalation
             await db.saveMessage(conversationId, 'user', 'El usuario ha solicitado hablar con un agente humano.');
+            // Increment user message count for analytics
+            db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => console.error(`Analytics: Failed to increment user message count for CV:${conversationId}`, err));
 
             // Update conversation status
             await db.updateConversationStatusByAgent(conversationId, clientId, null, 'escalated_to_human');
             console.log(`(Controller) Conversation CV:${conversationId} status updated to escalated_to_human due to user request.`);
+
+            // Update analytics for escalation
+            db.updateAnalyticOnEscalation(conversationId, new Date(), `User explicitly requested human escalation. Associated message: "${message}"`)
+                .catch(err => console.error(`Analytics: Failed to update escalation data for CV:${conversationId}`, err));
 
             // Send a specific response to the widget
             return res.status(200).json({
@@ -52,8 +58,10 @@ export const handleChatMessage = async (req, res, next) => {
         const cachedReply = db.getCache(cacheKey);
         if (cachedReply) {
             Promise.all([
-                 db.saveMessage(conversationId, 'user', message),
+                 db.saveMessage(conversationId, 'user', message)
+                    .then(() => db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => console.error(`Analytics: Failed to increment user message count (cache) for CV:${conversationId}`, err))),
                  db.saveMessage(conversationId, 'bot', cachedReply)
+                    .then(() => db.incrementAnalyticMessageCount(conversationId, 'bot').catch(err => console.error(`Analytics: Failed to increment bot message count (cache) for CV:${conversationId}`, err)))
             ]).catch(err => console.error("Error guardando mensajes (cache hit):", err));
              return res.status(200).json({ reply: cachedReply });
         }
@@ -185,10 +193,19 @@ Zoe: Actualmente se está evaluando la viabilidad de implementar la función X p
         if (originalBotReplyText && originalBotReplyText.trim() === BOT_CANNOT_ANSWER_MSG) {
             console.log(`(Controller) Bot cannot answer. Escalating conversation CV:${conversationId} for C:${clientId}`);
             try {
+                // Log that bot cannot answer first
+                db.updateAnalyticOnBotCannotAnswer(conversationId, message) // `message` is the user query
+                    .catch(err => console.error(`Analytics: Failed to update bot_cannot_answer for CV:${conversationId}`, err));
+
                 await db.updateConversationStatusByAgent(conversationId, clientId, null, 'escalated_to_human');
-                console.log(`(Controller) Conversation CV:${conversationId} status updated to escalated_to_human.`);
+                console.log(`(Controller) Conversation CV:${conversationId} status updated to escalated_to_human because bot cannot answer.`);
                 botReplyText = BOT_ESCALATION_NOTIFICATION_MSG;
                 wasEscalated = true;
+
+                // Then log the escalation event itself
+                db.updateAnalyticOnEscalation(conversationId, new Date(), message) // `message` is the user query that led to this
+                    .catch(err => console.error(`Analytics: Failed to update escalation data (bot_cannot_answer) for CV:${conversationId}`, err));
+
             } catch (statusUpdateError) {
                 console.error(`(Controller) Failed to update conversation status to escalated_to_human for CV:${conversationId}:`, statusUpdateError);
                 // botReplyText remains originalBotReplyText (the "I cannot answer" message)
@@ -219,10 +236,17 @@ Zoe: Actualmente se está evaluando la viabilidad de implementar la función X p
 
 
         if (botReplyText) {
-            Promise.all([
-                 db.saveMessage(conversationId, 'user', message),
-                 db.saveMessage(conversationId, 'bot', botReplyText)
-            ]).catch(saveError => console.error(`Error no crítico al guardar mensajes para ${conversationId}:`, saveError));
+            // Save user message and increment count (if not already done for cache hit)
+            // Note: If it was a cache hit, messages are already saved. This block is for non-cache hits.
+            db.saveMessage(conversationId, 'user', message)
+                .then(() => db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => console.error(`Analytics: Failed to increment user message count for CV:${conversationId}`, err)))
+                .catch(saveError => console.error(`Error no crítico al guardar mensaje de usuario para ${conversationId}:`, saveError));
+
+            // Save bot message and increment count
+            db.saveMessage(conversationId, 'bot', botReplyText)
+                .then(() => db.incrementAnalyticMessageCount(conversationId, 'bot').catch(err => console.error(`Analytics: Failed to increment bot message count for CV:${conversationId}`, err)))
+                .catch(saveError => console.error(`Error no crítico al guardar mensaje de bot para ${conversationId}:`, saveError));
+
             db.setCache(cacheKey, botReplyText);
             res.status(200).json({ reply: botReplyText });
         } else {
@@ -246,14 +270,23 @@ export const startConversation = async (req, res, next) => {
         return res.status(400).json({ error: 'Falta clientId.' });
     }
     try {
-        const clientExists = await db.getClientConfig(clientId);
+        const clientExists = await db.getClientConfig(clientId); // ClientId here is from req.body
         if (!clientExists) {
             console.warn(`Intento de iniciar conversación para cliente inexistente: ${clientId}`);
             return res.status(404).json({ error: 'Cliente inválido o no encontrado.' });
         }
-        const conversationId = await db.createConversation(clientId);
-        console.log(`(Controller) Conversación iniciada/creada: ${conversationId} para cliente ${clientId}`);
-        res.status(201).json({ conversationId });
+        // db.createConversation returns the conversation object which includes id, client_id, created_at
+        const newConversation = await db.createConversation(clientId);
+        if (!newConversation || !newConversation.conversation_id) {
+            throw new Error("Failed to create conversation or retrieve its ID.");
+        }
+        console.log(`(Controller) Conversación iniciada/creada: ${newConversation.conversation_id} para cliente ${clientId}`);
+
+        // Create initial analytics entry
+        db.createConversationAnalyticEntry(newConversation.conversation_id, newConversation.client_id, newConversation.created_at)
+            .catch(err => console.error(`Analytics: Failed to create entry for CV:${newConversation.conversation_id}`, err));
+
+        res.status(201).json({ conversationId: newConversation.conversation_id });
     } catch (error) {
         console.error(`Error en startConversation para cliente ${clientId}:`, error);
         next(error);

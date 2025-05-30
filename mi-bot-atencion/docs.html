@@ -76,7 +76,62 @@
                                 <p style="margin-top: 0.5rem; color: var(--color-text-muted);">Personaliza la apariencia (colores primarios, logos), el nombre del bot y los mensajes de bienvenida de Zoe directamente desde tu dashboard para que se alineen con la identidad de tu marca y ofrezcan una experiencia de usuario coherente.</p>
                             </li>
                         </ul>
+
                         <hr style="margin: 2rem 0;">
+                        <h2 style="font-family: var(--font-primary); font-size: 1.8rem; margin-top: 3rem; margin-bottom: 1.5rem;">Analíticas del Chatbot y Sugerencias de Conocimiento</h2>
+                        <p>La sección de "Analíticas" en tu dashboard de SynChat AI está diseñada para ofrecerte una visión clara del rendimiento de Zoe y ayudarte a identificar áreas donde puedes mejorar su base de conocimientos. Esto se traduce en una mejor experiencia para tus usuarios y una reducción en la carga de trabajo para tus agentes humanos.</p>
+
+                        <h3>Acceso a las Analíticas</h3>
+                        <p>Puedes acceder a esta sección haciendo clic en el enlace "Analíticas" en el menú de navegación principal de tu dashboard.</p>
+
+                        <h3>Selector de Periodo</h3>
+                        <p>En la parte superior de la sección de analíticas, encontrarás un selector de periodo que te permite filtrar los datos mostrados. Las opciones disponibles son:</p>
+                        <ul>
+                            <li><strong>Últimos 7 días</strong></li>
+                            <li><strong>Últimos 30 días</strong> (seleccionado por defecto)</li>
+                            <li><strong>Este Mes</strong> (desde el día 1 del mes actual hasta la fecha)</li>
+                        </ul>
+                        <p>También encontrarás un botón "Actualizar Datos" para recargar las métricas con el periodo seleccionado.</p>
+
+                        <h3>Resumen de Métricas Clave</h3>
+                        <p>Un conjunto de tarjetas te proporcionará un resumen rápido del rendimiento de Zoe:</p>
+                        <ul>
+                            <li><strong>Total de Conversaciones:</strong> Muestra el número total de interacciones iniciadas con Zoe durante el periodo seleccionado. Una interacción se cuenta como una conversación.</li>
+                            <li><strong>Conversaciones Escaladas:</strong> Indica el número y porcentaje de conversaciones que fueron transferidas o necesitaron la intervención de un agente humano. Esto puede ocurrir por solicitud explícita del usuario o cuando Zoe determina que no puede resolver la consulta.</li>
+                            <li><strong>No Respondidas por Zoe:</strong> Presenta el número y porcentaje de conversaciones donde Zoe utilizó explícitamente su mensaje de "no puedo responder" (generalmente algo como: <em>"Lo siento, no tengo información específica sobre eso en la base de datos de SynChat AI."</em>). Esto te ayuda a identificar consultas para las cuales Zoe no tiene información directa, aunque no todas estas resulten necesariamente en una escalación si el usuario abandona o reformula.</li>
+                            <li><strong>Duración Promedio:</strong> Calcula el tiempo promedio (en segundos) que duran las conversaciones que han sido completadas (es decir, que no están 'activas').</li>
+                            <li><strong>Mensajes Promedio / Conversación:</strong> Muestra el número promedio de mensajes intercambiados (sumando los del usuario y los de Zoe) por cada conversación.</li>
+                        </ul>
+
+                        <h3>Top Consultas No Respondidas o Escaladas</h3>
+                        <p>Esta es una de las herramientas más valiosas para mejorar la base de conocimientos de Zoe. Aquí se listan las consultas de los usuarios (o un resumen del tema que llevó a la situación) que más frecuentemente resultaron en una escalación a un agente humano o en una respuesta donde Zoe indicó no tener la información.</p>
+                        <ul>
+                            <li><strong>Frecuencia:</strong> Indica cuántas veces se ha registrado una consulta similar (agrupada por el resumen del sistema) durante el periodo.</li>
+                            <li><strong>Última vez:</strong> Muestra la fecha más reciente en la que se registró esa consulta o tipo de problema.</li>
+                        </ul>
+                        <h4>Botón "Revisar/Añadir Conocimiento"</h4>
+                        <p>Junto a cada consulta en esta lista, encontrarás un botón "Revisar/Añadir Conocimiento". Al hacer clic en este botón:</p>
+                        <ol>
+                            <li>La consulta del usuario (o el resumen del problema) se copiará automáticamente a tu portapapeles.</li>
+                            <li>Serás redirigido a la sección de "Gestionar Fuentes de Conocimiento" de tu dashboard.</li>
+                            <li>Desde allí, puedes utilizar la información copiada para:
+                                <ul>
+                                    <li>Crear un nuevo artículo o fuente de conocimiento que aborde directamente esa pregunta.</li>
+                                    <li>Buscar contenido existente y mejorarlo o expandirlo para cubrir la consulta.</li>
+                                </ul>
+                            </li>
+                        </ol>
+                        <p>Este flujo de trabajo está diseñado para facilitar la mejora continua de la base de conocimientos de Zoe.</p>
+
+                        <h3>Importancia de la Revisión Continua</h3>
+                        <p>Te recomendamos revisar estas analíticas y sugerencias de forma periódica. Mantener actualizada y completa la base de conocimientos de Zoe es fundamental para:</p>
+                        <ul>
+                            <li>Mejorar la precisión y utilidad de las respuestas de Zoe.</li>
+                            <li>Aumentar la satisfacción del usuario final.</li>
+                            <li>Reducir la cantidad de consultas que necesitan ser manejadas por agentes humanos, optimizando así tus recursos.</li>
+                        </ul>
+                        <hr style="margin: 2rem 0;">
+
                         <h2 style="font-family: var(--font-primary); font-size: 1.8rem; margin-top: 3rem; margin-bottom: 1.5rem;">Referencia API (Próximamente)</h2>
                         <p>Nuestra API RESTful te permitirá integrar SynChat AI con tus sistemas existentes y extender su funcionalidad. A continuación, un avance de lo que podrás hacer:</p>
                         <h3>Endpoints Principales</h3>

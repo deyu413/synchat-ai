@@ -4,9 +4,8 @@
 // Corrected import paths from ../../services/ to ../services/
 import { supabase } from '../services/supabaseClient.js';
 import { ingestWebsite } from '../services/ingestionService.js';
+import * as db from '../services/databaseService.js'; // Import databaseService
 
-// Placeholder for database service or Supabase client if needed later
-// e.g., const db = require('../services/dbService'); // Or your Supabase client
 
 /**
  * Retrieves the client's current configuration.
@@ -40,6 +39,56 @@ export const getClientConfig = async (req, res) => {
     } catch (err) {
         console.error('Unexpected error in getClientConfig:', err.message);
         res.status(500).json({ message: 'An unexpected error occurred.', error: err.message });
+    }
+};
+
+/**
+ * Retrieves chatbot analytics summary for the client.
+ */
+export const getChatbotAnalyticsSummary = async (req, res) => {
+    const clientId = req.user?.id;
+    if (!clientId) {
+        return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
+    }
+
+    const { period = '30d', startDate, endDate } = req.query;
+    const periodOptions = { period, startDate, endDate };
+
+    console.log(`(ClientDashboardCtrl) Fetching analytics summary for client ${clientId}, options:`, periodOptions);
+
+    try {
+        const summaryData = await db.fetchAnalyticsSummary(clientId, periodOptions);
+        if (!summaryData) { // Should not happen if fetchAnalyticsSummary returns an object or throws
+            return res.status(404).json({ message: 'Analytics summary data not found.' });
+        }
+        res.status(200).json(summaryData);
+    } catch (error) {
+        console.error(`(ClientDashboardCtrl) Error fetching analytics summary for client ${clientId}:`, error);
+        res.status(500).json({ message: 'Failed to retrieve analytics summary.', error: error.message });
+    }
+};
+
+/**
+ * Retrieves unanswered query suggestions for the client.
+ */
+export const getUnansweredQuerySuggestions = async (req, res) => {
+    const clientId = req.user?.id;
+    if (!clientId) {
+        return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
+    }
+
+    const { period = '30d', startDate, endDate, limit: limitQuery } = req.query;
+    const periodOptions = { period, startDate, endDate };
+    const limit = parseInt(limitQuery, 10) || 10;
+
+    console.log(`(ClientDashboardCtrl) Fetching unanswered queries for client ${clientId}, options:`, periodOptions, `limit: ${limit}`);
+
+    try {
+        const suggestions = await db.fetchUnansweredQueries(clientId, periodOptions, limit);
+        res.status(200).json(suggestions);
+    } catch (error) {
+        console.error(`(ClientDashboardCtrl) Error fetching unanswered query suggestions for client ${clientId}:`, error);
+        res.status(500).json({ message: 'Failed to retrieve unanswered query suggestions.', error: error.message });
     }
 };
 

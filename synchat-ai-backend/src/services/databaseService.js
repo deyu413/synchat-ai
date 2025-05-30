@@ -403,6 +403,416 @@ Processed Query: "${processedQueryText.substring(0,100)}..."`);
     }
 };
 
+// --- Analytics Helper Functions ---
+
+/**
+ * Calculates a date range based on period options.
+ * @param {object} periodOptions - { period, startDate, endDate }
+ * @returns {object} { fromDate, toDate } ISO strings
+ */
+function getDateRange(periodOptions) {
+    let { period, startDate, endDate } = periodOptions;
+    let fromDate, toDateObj;
+
+    if (startDate && endDate) {
+        fromDate = new Date(startDate);
+        toDateObj = new Date(endDate);
+        toDateObj.setDate(toDateObj.getDate() + 1); // Make toDate exclusive for < comparison
+    } else {
+        period = period || '30d'; // Default period
+        toDateObj = new Date(); // Today (end of day for exclusivity)
+        toDateObj.setHours(23, 59, 59, 999); // End of today
+
+        if (period === '7d') {
+            fromDate = new Date();
+            fromDate.setDate(toDateObj.getDate() - 7);
+        } else if (period === 'current_month') {
+            fromDate = new Date(toDateObj.getFullYear(), toDateObj.getMonth(), 1);
+        } else { // Default '30d'
+            fromDate = new Date();
+            fromDate.setDate(toDateObj.getDate() - 30);
+        }
+        // Set fromDate to start of day
+        fromDate.setHours(0, 0, 0, 0);
+        // Adjust toDateObj to be start of the next day for exclusive comparison
+        toDateObj.setDate(toDateObj.getDate() + 1);
+        toDateObj.setHours(0,0,0,0);
+    }
+    return { fromDate: fromDate.toISOString(), toDate: toDateObj.toISOString() };
+}
+
+
+// --- Analytics Data Fetching Functions ---
+
+/**
+ * Fetches aggregated analytics summary for a client.
+ */
+export const fetchAnalyticsSummary = async (clientId, periodOptions) => {
+    if (!clientId) throw new Error("Client ID is required for analytics summary.");
+
+    const { fromDate, toDate } = getDateRange(periodOptions);
+
+    // Note: AVG(EXTRACT(EPOCH FROM conversation_duration)) is a good way to average intervals in seconds.
+    // The conversation_duration is expected to be an INTERVAL type in the DB.
+    // It's populated by finalizeConversationAnalyticRecord as 'X seconds'.
+    const query = supabase.sql`
+        SELECT
+            COUNT(*)::INTEGER AS total_conversations,
+            SUM(CASE WHEN escalation_timestamp IS NOT NULL THEN 1 ELSE 0 END)::INTEGER AS escalated_conversations,
+            SUM(CASE WHEN tags @> ARRAY['bot_cannot_answer']::text[] THEN 1 ELSE 0 END)::INTEGER AS unanswered_by_bot_conversations,
+            AVG(total_messages)::FLOAT AS avg_messages_per_conversation,
+            (SELECT AVG(EXTRACT(EPOCH FROM conversation_duration))
+             FROM public.conversation_analytics
+             WHERE client_id = ${clientId}
+               AND created_at >= ${fromDate}
+               AND created_at < ${toDate}
+               AND conversation_duration IS NOT NULL
+               AND resolution_status != 'active' -- Only for completed/closed conversations
+            )::FLOAT AS avg_duration_seconds
+        FROM public.conversation_analytics
+        WHERE client_id = ${clientId}
+          AND created_at >= ${fromDate} -- Using created_at of the analytics entry for period filtering
+          AND created_at < ${toDate};
+    `;
+    // Changed filter to created_at for analytics entry, assuming first_message_at might be slightly different
+    // and created_at of the analytic record is more aligned with when it enters the period.
+    // Or use first_message_at if that's the desired time anchor for the conversation period.
+    // For consistency, let's use first_message_at as per the original prompt's intent for conversation timing.
+    // The subquery for avg_duration_seconds also needs to use first_message_at for its period filter.
+
+    const correctedQuery = supabase.sql`
+        SELECT
+            COUNT(*)::INTEGER AS total_conversations,
+            SUM(CASE WHEN escalation_timestamp IS NOT NULL THEN 1 ELSE 0 END)::INTEGER AS escalated_conversations,
+            SUM(CASE WHEN tags @> ARRAY['bot_cannot_answer']::text[] THEN 1 ELSE 0 END)::INTEGER AS unanswered_by_bot_conversations,
+            AVG(total_messages)::FLOAT AS avg_messages_per_conversation,
+            (SELECT AVG(EXTRACT(EPOCH FROM conversation_duration))
+             FROM public.conversation_analytics
+             WHERE client_id = ${clientId}
+               AND first_message_at >= ${fromDate}
+               AND first_message_at < ${toDate}
+               AND conversation_duration IS NOT NULL
+               AND resolution_status <> 'active'
+            )::FLOAT AS avg_duration_seconds
+        FROM public.conversation_analytics
+        WHERE client_id = ${clientId}
+          AND first_message_at >= ${fromDate}
+          AND first_message_at < ${toDate};
+    `;
+
+
+    try {
+        console.log(`(DB Service) Fetching analytics summary for client ${clientId}, from: ${fromDate}, to: ${toDate}`);
+        const { data, error } = await supabase.rpc('execute_sql', { sql: correctedQuery });
+
+
+        if (error) {
+            console.error(`(DB Service) Error fetching analytics summary for client ${clientId}:`, error.message);
+            throw error;
+        }
+        // If using direct query via a generic RPC or if Supabase JS client evolves to support this better:
+        // const { data, error } = await supabase.query(correctedQuery);
+        // For now, assuming `execute_sql` is a placeholder for how you'd run raw SQL if direct `supabase.sql` isn't for queries.
+        // A common way is to create a PL/pgSQL function that takes parameters and executes this.
+        // Let's assume for now that we need to call a PL/pgSQL function that encapsulates this logic.
+        // If direct query with supabase.sql`...` is possible with `await supabase.query(query)` then that's simpler.
+        // Given the limitations, I will call a hypothetical RPC function `get_analytics_summary`.
+        // This RPC function would need to be created in a migration.
+        // For this step, I will structure the call as if `supabase.rpc` can handle parameterized raw SQL or a dedicated RPC.
+        // Let's assume a dedicated RPC `get_analytics_summary_for_client` exists or will be created.
+
+        // Correct approach for parameterized raw query (if client library supports it directly, often not for SELECT with params like this)
+        // Or, more typically, create an RPC function in SQL.
+        // For now, let's use a PL/pgSQL function call via rpc.
+        // This function would need to be defined in a migration:
+        // CREATE OR REPLACE FUNCTION get_analytics_summary_for_client(p_client_id UUID, p_from_date TIMESTAMPTZ, p_to_date TIMESTAMPTZ)
+        // RETURNS TABLE (total_conversations BIGINT, escalated_conversations BIGINT, ...) AS $$ BEGIN RETURN QUERY SELECT ... END; $$ LANGUAGE plpgsql;
+
+        const { data: rpcData, error: rpcError } = await supabase.rpc('get_analytics_summary', {
+            p_client_id: clientId,
+            p_from_date: fromDate,
+            p_to_date: toDate
+        });
+
+        if (rpcError) {
+            console.error(`(DB Service) RPC Error fetching analytics summary for client ${clientId}:`, rpcError.message);
+            throw rpcError;
+        }
+
+        // RPC functions often return an array of rows, even if it's one.
+        return rpcData && rpcData.length > 0 ? rpcData[0] : {
+            total_conversations: 0,
+            escalated_conversations: 0,
+            unanswered_by_bot_conversations: 0,
+            avg_messages_per_conversation: 0,
+            avg_duration_seconds: 0
+        };
+
+    } catch (error) {
+        console.error(`(DB Service) Exception in fetchAnalyticsSummary for client ${clientId}:`, error.message);
+        throw error;
+    }
+};
+
+/**
+ * Fetches unanswered query suggestions for a client.
+ */
+export const fetchUnansweredQueries = async (clientId, periodOptions, limit = 10) => {
+    if (!clientId) throw new Error("Client ID is required for unanswered queries.");
+
+    const { fromDate, toDate } = getDateRange(periodOptions);
+
+    const query = supabase.sql`
+        SELECT
+            summary,
+            COUNT(*) AS frequency,
+            MAX(first_message_at) AS last_occurred_at
+        FROM public.conversation_analytics
+        WHERE
+            client_id = ${clientId}
+            AND first_message_at >= ${fromDate} AND first_message_at < ${toDate}
+            AND (escalation_timestamp IS NOT NULL OR tags @> ARRAY['bot_cannot_answer']::text[])
+            AND summary IS NOT NULL AND summary <> ''
+        GROUP BY summary
+        ORDER BY frequency DESC, last_occurred_at DESC
+        LIMIT ${limit};
+    `;
+
+    try {
+        console.log(`(DB Service) Fetching unanswered queries for client ${clientId}, from: ${fromDate}, to: ${toDate}, limit: ${limit}`);
+        // Similar to above, this assumes a way to execute raw SQL.
+        // Let's assume an RPC function `get_unanswered_query_suggestions`.
+        // CREATE OR REPLACE FUNCTION get_unanswered_query_suggestions(p_client_id UUID, p_from_date TIMESTAMPTZ, p_to_date TIMESTAMPTZ, p_limit INT)
+        // RETURNS TABLE (summary TEXT, frequency BIGINT, last_occurred_at TIMESTAMPTZ) ...
+         const { data: rpcData, error: rpcError } = await supabase.rpc('get_unanswered_query_suggestions', {
+            p_client_id: clientId,
+            p_from_date: fromDate,
+            p_to_date: toDate,
+            p_limit: limit
+        });
+
+        if (rpcError) {
+            console.error(`(DB Service) RPC Error fetching unanswered queries for client ${clientId}:`, rpcError.message);
+            throw rpcError;
+        }
+        return rpcData || [];
+    } catch (error) {
+        console.error(`(DB Service) Exception in fetchUnansweredQueries for client ${clientId}:`, error.message);
+        throw error;
+    }
+};
+
+
+// --- Conversation Analytics Functions ---
+
+/**
+ * Creates an initial entry in the conversation_analytics table.
+ */
+export const createConversationAnalyticEntry = async (conversationId, clientId, firstMessageAt) => {
+    if (!conversationId || !clientId || !firstMessageAt) {
+        console.error("(DB Service) createConversationAnalyticEntry: conversationId, clientId, and firstMessageAt are required.");
+        return null;
+    }
+    try {
+        const { data, error } = await supabase
+            .from('conversation_analytics')
+            .insert({
+                conversation_id: conversationId,
+                client_id: clientId,
+                first_message_at: firstMessageAt,
+                total_messages: 0,
+                user_messages: 0,
+                bot_messages: 0,
+                agent_messages: 0,
+                resolution_status: 'active', // Initial status
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            })
+            .select()
+            .single();
+
+        if (error) {
+            console.error(`(DB Service) Error creating conversation analytic entry for CV:${conversationId}:`, error.message);
+            throw error;
+        }
+        console.log(`(DB Service) Conversation analytic entry created for CV:${conversationId}.`);
+        return data;
+    } catch (err) {
+        console.error(`(DB Service) Exception in createConversationAnalyticEntry for CV:${conversationId}:`, err.message);
+        throw err;
+    }
+};
+
+/**
+ * Increments message counts in the conversation_analytics table.
+ */
+export const incrementAnalyticMessageCount = async (conversationId, senderType) => {
+    if (!conversationId || !senderType) {
+        console.error("(DB Service) incrementAnalyticMessageCount: conversationId and senderType are required.");
+        return;
+    }
+
+    let fieldToIncrement;
+    switch (senderType) {
+        case 'user':
+            fieldToIncrement = 'user_messages';
+            break;
+        case 'bot':
+            fieldToIncrement = 'bot_messages';
+            break;
+        case 'agent':
+            fieldToIncrement = 'agent_messages';
+            break;
+        default:
+            console.error(`(DB Service) incrementAnalyticMessageCount: Invalid senderType "${senderType}" for CV:${conversationId}.`);
+            return;
+    }
+
+    try {
+        // Using Supabase RPC for atomic increment or direct update
+        // For direct update, ensure RLS allows the backend role to perform this.
+        // Using .rpc might be overkill if a simple update works fine and is atomic for single row.
+        // Let's try with a direct update first. Supabase handles single-row counter updates atomically.
+        const { error } = await supabase
+            .from('conversation_analytics')
+            .update({
+                [fieldToIncrement]: supabase.sql(`${fieldToIncrement} + 1`), // Raw SQL for increment
+                total_messages: supabase.sql('total_messages + 1'),
+                updated_at: new Date().toISOString()
+            })
+            .eq('conversation_id', conversationId);
+
+        if (error) {
+            console.error(`(DB Service) Error incrementing ${fieldToIncrement} for CV:${conversationId}:`, error.message);
+        } else {
+            // console.log(`(DB Service) Incremented ${fieldToIncrement} for CV:${conversationId}.`); // Can be too verbose
+        }
+    } catch (err) {
+        console.error(`(DB Service) Exception in incrementAnalyticMessageCount for CV:${conversationId}:`, err.message);
+    }
+};
+
+
+/**
+ * Updates conversation_analytics on escalation.
+ */
+export const updateAnalyticOnEscalation = async (conversationId, escalationTimestamp, lastUserQuery) => {
+    if (!conversationId || !escalationTimestamp) {
+        console.error("(DB Service) updateAnalyticOnEscalation: conversationId and escalationTimestamp are required.");
+        return;
+    }
+    try {
+        const updatePayload = {
+            escalation_timestamp: escalationTimestamp,
+            tags: supabase.sql`array_append(COALESCE(tags, '{}'), 'escalated')`,
+            updated_at: new Date().toISOString()
+        };
+        if (lastUserQuery) {
+            updatePayload.summary = supabase.sql`COALESCE(summary, '') || '\nEscalated. Last user query: ' || ${lastUserQuery}`;
+        }
+
+        const { error } = await supabase
+            .from('conversation_analytics')
+            .update(updatePayload)
+            .eq('conversation_id', conversationId);
+
+        if (error) {
+            console.error(`(DB Service) Error updating analytics on escalation for CV:${conversationId}:`, error.message);
+        } else {
+            console.log(`(DB Service) Analytics updated on escalation for CV:${conversationId}.`);
+        }
+    } catch (err) {
+        console.error(`(DB Service) Exception in updateAnalyticOnEscalation for CV:${conversationId}:`, err.message);
+    }
+};
+
+/**
+ * Updates conversation_analytics when bot cannot answer.
+ */
+export const updateAnalyticOnBotCannotAnswer = async (conversationId, lastUserQuery) => {
+     if (!conversationId) {
+        console.error("(DB Service) updateAnalyticOnBotCannotAnswer: conversationId is required.");
+        return;
+    }
+    try {
+        const updatePayload = {
+            tags: supabase.sql`array_append(COALESCE(tags, '{}'), 'bot_cannot_answer')`,
+            updated_at: new Date().toISOString()
+        };
+        if (lastUserQuery) {
+             updatePayload.summary = supabase.sql`COALESCE(summary, '') || '\nBot_cannot_answer. Last user query: ' || ${lastUserQuery}`;
+        }
+
+        const { error } = await supabase
+            .from('conversation_analytics')
+            .update(updatePayload)
+            .eq('conversation_id', conversationId);
+
+        if (error) {
+            console.error(`(DB Service) Error updating analytics on bot_cannot_answer for CV:${conversationId}:`, error.message);
+        } else {
+            console.log(`(DB Service) Analytics updated on bot_cannot_answer for CV:${conversationId}.`);
+        }
+    } catch (err) {
+        console.error(`(DB Service) Exception in updateAnalyticOnBotCannotAnswer for CV:${conversationId}:`, err.message);
+    }
+};
+
+/**
+ * Finalizes a conversation analytic record.
+ */
+export const finalizeConversationAnalyticRecord = async (conversationId, resolutionStatus, lastMessageAt) => {
+    if (!conversationId || !resolutionStatus || !lastMessageAt) {
+        console.error("(DB Service) finalizeConversationAnalyticRecord: conversationId, resolutionStatus, and lastMessageAt are required.");
+        return;
+    }
+    try {
+        // First, fetch the first_message_at to calculate duration
+        const { data: convAnalytic, error: fetchError } = await supabase
+            .from('conversation_analytics')
+            .select('first_message_at')
+            .eq('conversation_id', conversationId)
+            .single();
+
+        if (fetchError || !convAnalytic) {
+            console.error(`(DB Service) Error fetching first_message_at for CV:${conversationId} to finalize analytics:`, fetchError?.message);
+            // If no record, maybe create a partial one or just log error. For now, just error out.
+            throw new Error(fetchError?.message || "Analytic record not found to finalize.");
+        }
+
+        const firstMessageTime = new Date(convAnalytic.first_message_at).getTime();
+        const lastMessageTime = new Date(lastMessageAt).getTime();
+        const durationMilliseconds = lastMessageTime - firstMessageTime;
+        // Convert duration to PostgreSQL interval format 'X seconds' or let DB handle it if possible with epoch seconds
+        // For simplicity, store as ISO string or seconds. The table expects INTERVAL.
+        // Supabase client might handle number of seconds to interval.
+        // Or construct string like 'HH:MM:SS'. Let's store seconds. DB can convert.
+        // The table column is INTERVAL. We can use `make_interval(secs := ...)`.
+        // Or pass string 'X seconds'.
+        const durationInSeconds = Math.max(0, Math.round(durationMilliseconds / 1000));
+
+
+        const { error } = await supabase
+            .from('conversation_analytics')
+            .update({
+                resolution_status: resolutionStatus,
+                last_message_at: lastMessageAt,
+                conversation_duration: `${durationInSeconds} seconds`, // Pass as string for interval
+                updated_at: new Date().toISOString()
+            })
+            .eq('conversation_id', conversationId);
+
+        if (error) {
+            console.error(`(DB Service) Error finalizing analytics for CV:${conversationId}:`, error.message);
+        } else {
+            console.log(`(DB Service) Analytics finalized for CV:${conversationId}. Status: ${resolutionStatus}`);
+        }
+    } catch (err) {
+        console.error(`(DB Service) Exception in finalizeConversationAnalyticRecord for CV:${conversationId}:`, err.message);
+    }
+};
+
+
 // --- Helper functions for Reranking ---
 function tokenizeText(text, removeStopWords = false) {
     if (!text) return [];

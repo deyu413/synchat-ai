@@ -49,6 +49,21 @@
             border-radius: 4px; cursor: pointer; 
             font-size: 0.9em; margin-top:10px;
         }
+        /* Analytics Section CSS */
+        .analytics-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; margin-top: 20px;}
+        .summary-card { background-color: #f9f9f9; border: 1px solid #ddd; border-radius: 5px; padding: 15px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .summary-card h4 { margin-top: 0; font-size: 1.1em; color: #3B4018; }
+        .metric-value { font-size: 2em; font-weight: bold; color: #2F3314; margin-top: 5px; margin-bottom: 5px; }
+        .summary-card p { margin-bottom: 0; }
+        .suggestions-area { margin-top: 30px; padding: 15px; background-color: #fdfdfd; border: 1px solid #eee; border-radius: 5px;}
+        .suggestions-list { list-style-type: decimal; padding-left: 20px; }
+        .suggestions-list li { background-color: #fff; border: 1px solid #eee; padding: 10px; margin-bottom: 8px; border-radius: 4px; }
+        .suggestions-list .add-to-kb-btn { margin-left: 10px; padding: 5px 10px; font-size: 0.9em; background-color: #5cb85c; color:white; border:none; border-radius:3px; cursor:pointer; }
+        .suggestions-list .add-to-kb-btn:hover { background-color: #4cae4c;}
+        .small-text {font-size: 0.9em; color: #666; margin-bottom: 15px;}
+        .analytics-controls { margin-bottom: 20px; padding: 15px; background-color: #f0f0f0; border-radius: 5px; display:flex; align-items:center; gap:10px; }
+        .analytics-controls label {font-weight:bold;}
+        .dashboard-section { border-top: 1px solid #ccc; padding-top: 20px; margin-top:20px;} /* Common style for sections */
 
     </style>
     <script>
@@ -68,6 +83,7 @@
             <li><a href="#widget">Widget</a></li>
             <li><a href="#usage">Uso</a></li>
             <li><a href="#" id="navInboxLink">Bandeja de Entrada</a></li>
+            <li><a href="#" data-section="analyticsSection">Analíticas</a></li>
             <li><button id="logoutBtnDashboard">Cerrar Sesión</button></li>
         </ul>
     </nav>
@@ -104,17 +120,7 @@
             <div id="configMessage"></div>
         </section>
         <hr>
-        <!-- 
-        <section id="ingest">
-            <h3>Ingesta de Conocimiento</h3>
-            <p>URL para ingesta actual (guardada en configuración): <strong id="currentIngestUrlDisplay">No configurada</strong></p>
-            <button id="startIngestBtn">Iniciar/Reiniciar Ingesta con URL Configurada</button>
-            <p>Estado de la última ingesta: <strong id="lastIngestStatusDisplay">N/A</strong></p>
-            <p>Fecha de última ingesta: <strong id="lastIngestAtDisplay">N/A</strong></p>
-            <div id="ingestMessage" style="margin-top: 10px;"></div>
-        </section>
-        <hr>
-        -->
+
         <section id="knowledgeManagement">
             <h3>Gestionar Fuentes de Conocimiento</h3>
             
@@ -141,7 +147,6 @@
             <p>Consultas totales recibidas este mes: <strong id="totalQueriesCount">Cargando...</strong></p>
             <p>Última actualización de estadísticas: <strong id="statsLastUpdated">N/A</strong></p>
             <div id="usageMessage" style="margin-top: 10px;"></div>
-            <!-- Add a button to manually refresh stats -->
             <button id="refreshUsageBtn" style="margin-top: 10px;">Actualizar Estadísticas</button>
         </section>
         <hr>
@@ -168,13 +173,6 @@
                     <p id="inboxLoadingMsg" style="text-align: center; display: none;">Cargando conversaciones...</p>
                     <ul id="inboxConvList" class="conversation-list" style="list-style-type: none; padding: 0; margin: 0;">
                         <!-- Conversation items will be populated here by JS -->
-                        <!-- Example item: 
-                        <li style="padding: 10px; border-bottom: 1px solid #f0f0f0; cursor: pointer;">
-                            <strong>Preview del mensaje...</strong><br>
-                            <small>ID: conv_123 - Estado: escalated_to_human</small><br>
-                            <small>Último mensaje: 2023-10-28 10:30 AM</small>
-                        </li> 
-                        -->
                     </ul>
                 </div>
 
@@ -190,7 +188,6 @@
                     </div>
                     <div id="inboxConvActions" style="display: none; margin-top: 15px;">
                         <button id="inboxCloseConvBtn" style="padding: 10px 15px; background-color: #d9534f; color: white; border: none; border-radius: 4px; cursor: pointer;">Marcar como Resuelta y Cerrar</button>
-                        <!-- More granular status changes can be added here if needed -->
                          <select id="inboxChangeStatusDropdown" style="margin-left: 10px; padding: 10px; border-radius: 4px; border: 1px solid #ccc;">
                             <option value="">Cambiar Estado...</option>
                             <option value="open">Marcar como Abierta</option>
@@ -201,6 +198,55 @@
                         <button id="inboxApplyStatusChangeBtn" style="margin-left: 5px; padding: 10px 15px; background-color: #5bc0de; color: white; border: none; border-radius: 4px; cursor: pointer;">Aplicar Estado</button>
                     </div>
                 </div>
+            </div>
+        </section>
+        <hr>
+
+        <section id="analyticsSection" class="dashboard-section" style="display: none;">
+            <h2>Analíticas del Chatbot y Sugerencias</h2>
+
+            <div class="analytics-controls">
+                <label for="analyticsPeriodSelector">Seleccionar Periodo:</label>
+                <select id="analyticsPeriodSelector">
+                    <option value="7d" selected>Últimos 7 días</option>
+                    <option value="30d">Últimos 30 días</option>
+                    <option value="current_month">Este Mes</option>
+                    <!-- TODO: Add custom date range pickers later if needed -->
+                </select>
+                <button id="refreshAnalyticsBtn" style="padding: 8px 12px; background-color: #5cb85c; color: white; border: none; border-radius: 4px; cursor: pointer;">Actualizar Analíticas</button>
+            </div>
+            <div id="analyticsLoadingMessage" style="text-align:center; padding:10px; display:none;">Cargando analíticas...</div>
+
+            <div class="analytics-summary-grid">
+                <div class="summary-card">
+                    <h4>Total de Conversaciones</h4>
+                    <p id="totalConversations" class="metric-value">0</p>
+                </div>
+                <div class="summary-card">
+                    <h4>Conversaciones Escaladas</h4>
+                    <p><span id="escalatedConversations" class="metric-value">0</span> (<span id="escalatedPercentage">0</span>%)</p>
+                </div>
+                <div class="summary-card">
+                    <h4>No Respondidas por Zoe</h4>
+                    <p><span id="unansweredByBotConversations" class="metric-value">0</span> (<span id="unansweredPercentage">0</span>%)</p>
+                </div>
+                <div class="summary-card">
+                    <h4>Duración Promedio (seg)</h4>
+                    <p><span id="avgDuration" class="metric-value">0</span></p>
+                </div>
+                <div class="summary-card">
+                    <h4>Mensajes Promedio / Conversación</h4>
+                    <p id="avgMessagesPerConversation" class="metric-value">0</p>
+                </div>
+            </div>
+
+            <div class="suggestions-area">
+                <h4>Top Consultas No Respondidas o Escaladas (por resumen)</h4>
+                <p class="small-text">Revisa estas consultas. Si son preguntas válidas que Zoe debería responder, considera añadir o mejorar el conocimiento relacionado.</p>
+                <ul id="unansweredQueriesList" class="suggestions-list">
+                    <!-- JS will populate this -->
+                    <li class="placeholder-item">Cargando sugerencias...</li>
+                </ul>
             </div>
         </section>
         
