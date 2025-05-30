@@ -464,6 +464,39 @@ async function displayConversationMessages(conversationId) {
                     <p style="margin:0; padding:0;">${msg.content}</p>
                     <small style="font-size:0.75em; color: #555;">${new Date(msg.timestamp).toLocaleString()} (${msg.sender})</small>
                 `;
+
+                // Add feedback buttons for bot messages
+                if (msg.sender === 'bot' && msg.message_id) { // Ensure message_id is present
+                    const feedbackActionsDiv = document.createElement('div');
+                    feedbackActionsDiv.className = 'feedback-actions';
+                    feedbackActionsDiv.style.marginTop = '5px';
+                    feedbackActionsDiv.style.textAlign = 'left'; // Align with bot message bubble
+
+                    const thumbUpBtn = document.createElement('button');
+                    thumbUpBtn.textContent = '👍';
+                    thumbUpBtn.classList.add('feedback-btn');
+                    thumbUpBtn.dataset.messageId = msg.message_id;
+                    thumbUpBtn.dataset.rating = '1';
+                    thumbUpBtn.style.marginLeft = '0px'; // No left margin for the first button
+                    thumbUpBtn.style.marginRight = '5px';
+                    thumbUpBtn.style.border = 'none';
+                    thumbUpBtn.style.background = 'none';
+                    thumbUpBtn.style.cursor = 'pointer';
+
+                    const thumbDownBtn = document.createElement('button');
+                    thumbDownBtn.textContent = '👎';
+                    thumbDownBtn.classList.add('feedback-btn');
+                    thumbDownBtn.dataset.messageId = msg.message_id;
+                    thumbDownBtn.dataset.rating = '-1';
+                    thumbDownBtn.style.marginLeft = '5px';
+                    thumbDownBtn.style.border = 'none';
+                    thumbDownBtn.style.background = 'none';
+                    thumbDownBtn.style.cursor = 'pointer';
+
+                    feedbackActionsDiv.appendChild(thumbUpBtn);
+                    feedbackActionsDiv.appendChild(thumbDownBtn);
+                    msgDiv.appendChild(feedbackActionsDiv);
+                }
                 messageHistoryContainer.appendChild(msgDiv);
             });
             messageHistoryContainer.scrollTop = messageHistoryContainer.scrollHeight;
@@ -582,6 +615,129 @@ if (inboxApplyStatusChangeBtn && inboxChangeStatusDropdown) {
         }
     });
 }
+
+// --- Feedback Submission Function ---
+async function handleFeedbackSubmit(conversationId, messageId, rating) {
+    console.log(`Feedback submitted: ConvID=${conversationId}, MsgID=${messageId}, Rating=${rating}`);
+
+    // Visual feedback: Disable buttons and show a temporary message
+    const buttons = messageHistoryContainer.querySelectorAll(`.feedback-btn[data-message-id="${messageId}"]`);
+    const parentFeedbackDiv = buttons.length > 0 ? buttons[0].parentElement : null;
+
+    buttons.forEach(button => {
+        button.disabled = true;
+        button.style.opacity = '0.5';
+        button.style.cursor = 'default';
+        if (parseInt(button.dataset.rating, 10) === rating) {
+            button.style.transform = 'scale(1.1)'; // Highlight selected
+        }
+    });
+
+    let feedbackMsgElement;
+    if (parentFeedbackDiv) {
+        const existingThanks = parentFeedbackDiv.querySelector('.thanks-feedback');
+        if (existingThanks) existingThanks.remove(); // Remove previous "thanks" if any
+        feedbackMsgElement = document.createElement('span'); // Use span for inline display
+        feedbackMsgElement.className = 'thanks-feedback';
+        feedbackMsgElement.style.fontSize = '0.8em';
+        feedbackMsgElement.style.marginLeft = '10px';
+        parentFeedbackDiv.appendChild(feedbackMsgElement);
+    }
+
+    const token = (await supabase.auth.getSession())?.data.session?.access_token;
+    if (!token) {
+        if (feedbackMsgElement) feedbackMsgElement.textContent = 'Error: No autenticado.';
+        console.error("Feedback submission failed: Not authenticated.");
+        // Re-enable buttons if auth fails early
+        buttons.forEach(button => {
+            button.disabled = false;
+            button.style.opacity = '1';
+            button.style.cursor = 'pointer';
+            button.style.transform = '';
+        });
+        return;
+    }
+
+    try {
+        const response = await fetch(`${VERCEL_BACKEND_URL}/api/client/me/inbox/conversations/${conversationId}/messages/${messageId}/feedback`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ rating: rating, comment: "" }) // Empty comment for now
+        });
+
+        if (response.ok) {
+            console.log(`Feedback for MsgID=${messageId} submitted successfully.`);
+            if (feedbackMsgElement) {
+                feedbackMsgElement.textContent = '¡Gracias!';
+                feedbackMsgElement.style.color = 'green';
+            }
+        } else {
+            const errorData = await response.json();
+            console.error(`Failed to submit feedback for MsgID=${messageId}:`, errorData.message || response.statusText);
+            if (feedbackMsgElement) {
+                feedbackMsgElement.textContent = 'Error al enviar.';
+                feedbackMsgElement.style.color = 'red';
+            }
+            // Re-enable buttons on error so user can try again
+            buttons.forEach(button => {
+                button.disabled = false;
+                button.style.opacity = '1';
+                button.style.cursor = 'pointer';
+                button.style.transform = '';
+            });
+        }
+    } catch (error) {
+        console.error(`Exception during feedback submission for MsgID=${messageId}:`, error);
+        if (feedbackMsgElement) {
+            feedbackMsgElement.textContent = 'Error de red.';
+            feedbackMsgElement.style.color = 'red';
+        }
+         buttons.forEach(button => { // Also re-enable on network error
+            button.disabled = false;
+            button.style.opacity = '1';
+            button.style.cursor = 'pointer';
+            button.style.transform = '';
+        });
+    } finally {
+        // Remove "thanks" message after a few seconds if it's still there
+        if (feedbackMsgElement && feedbackMsgElement.textContent.startsWith("¡Gracias!")) { // Only if successful
+            setTimeout(() => {
+                if (feedbackMsgElement) feedbackMsgElement.remove();
+                 // Optionally re-enable buttons fully after success and timeout, or keep them semi-disabled
+                 buttons.forEach(button => {
+                    // Example: Keep them looking "voted" but allow re-vote if desired by removing disabled
+                    // For now, they remain visually distinct as "voted"
+                 });
+            }, 3000);
+        } else if (feedbackMsgElement) { // If it was an error message, remove it sooner or clear it
+             setTimeout(() => {
+                if (feedbackMsgElement) feedbackMsgElement.remove();
+             }, 3000);
+        }
+    }
+}
+
+// Event delegation for feedback buttons (ensure messageHistoryContainer is defined)
+if (messageHistoryContainer) {
+    messageHistoryContainer.addEventListener('click', function(event) {
+        const feedbackButton = event.target.closest('.feedback-btn');
+        if (feedbackButton) {
+            const messageId = feedbackButton.dataset.messageId;
+            const rating = parseInt(feedbackButton.dataset.rating, 10);
+            // currentOpenConversationId should be set when a conversation is opened
+            if (currentOpenConversationId && messageId) {
+                handleFeedbackSubmit(currentOpenConversationId, messageId, rating);
+            } else {
+                console.error("Cannot submit feedback: conversationId or messageId missing.", {currentOpenConversationId, messageId});
+                alert("No se pudo determinar la conversación o el mensaje para el feedback.");
+            }
+        }
+    });
+}
+
 
 // --- Chunk Sample Modal Functions ---
 const chunkSampleModal = document.getElementById('chunkSampleModal');
