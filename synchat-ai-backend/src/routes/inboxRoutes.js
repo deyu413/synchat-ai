@@ -16,4 +16,7 @@ router.post('/conversations/:conversation_id/messages', authMiddleware, inboxCon
 // Route to change the status of a conversation
 router.put('/conversations/:conversation_id/status', authMiddleware, inboxController.changeConversationStatus);
 
+// Route to submit feedback for a specific message within a conversation
+router.post('/conversations/:conversation_id/messages/:message_id/feedback', authMiddleware, inboxController.submitMessageFeedback);
+
 export default router;

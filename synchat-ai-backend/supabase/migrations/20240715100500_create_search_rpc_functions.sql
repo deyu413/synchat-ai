@@ -16,6 +16,7 @@ RETURNS TABLE(id BIGINT, content TEXT, metadata JSONB, similarity FLOAT)
 LANGUAGE plpgsql
 AS $$
 BEGIN
+    EXECUTE 'SET LOCAL ivfflat.probes = 5';
     RETURN QUERY
     SELECT
         kb.id,

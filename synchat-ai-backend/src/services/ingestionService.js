@@ -14,6 +14,7 @@ const MIN_KEYWORDS_FOR_VALIDATION = 4; // Mínimo palabras clave (largas) para v
 const EMBEDDING_BATCH_SIZE = 20;     // Lotes para generar embeddings
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const USER_AGENT = 'Mozilla/5.0 (compatible; SynChatBot/1.1; +https://www.synchatai.com/bot)';
+const DEBUG_PREPROCESSING = false; // Controla el logging de preprocesamiento
 
 // --- Inicialización de Clientes ---
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -57,6 +58,69 @@ async function updateKnowledgeSourceStatus(sourceId, status, characterCount = nu
     }
 }
 
+// --- Funciones de Preprocesamiento de Texto ---
+
+const SPANISH_ABBREVIATIONS = {
+    "p. ej.": "por ejemplo",
+    "p.e.": "por ejemplo",
+    "ej.": "ejemplo",
+    "etc.": "etcétera",
+    "sr.": "señor", // Lowercase already, but good to have for consistency
+    "sra.": "señora",
+    "dr.": "doctor",
+    "dra.": "doctora",
+    "ud.": "usted",
+    "uds.": "ustedes",
+    "fig.": "figura",
+    "cap.": "capítulo",
+    "aprox.": "aproximadamente",
+    // Add more as needed
+};
+
+/**
+ * Preprocesa el texto para mejorar la calidad de los embeddings.
+ * @param {string} text - El texto original.
+ * @returns {string} - El texto preprocesado.
+ */
+function preprocessTextForEmbedding(text) {
+    if (!text) return "";
+
+    let originalTextForDebug = DEBUG_PREPROCESSING ? text.substring(0, 150) : ""; // Sample for logging
+
+    // 1. Unicode Normalization (NFC)
+    let processedText = text.normalize('NFC');
+
+    // 2. Convert to lowercase
+    processedText = processedText.toLowerCase();
+
+    // 3. Expand common Spanish abbreviations
+    // Iterate over a sorted list of keys (by length, descending) to handle nested abbreviations correctly.
+    // For example, "p. ej." should be matched before "ej." if "ej." is also a key.
+    // However, with current regex using word boundaries, direct iteration might be fine.
+    // Using word boundaries (\b) to ensure "p. ej." isn't part of another word.
+    for (const [abbr, expansion] of Object.entries(SPANISH_ABBREVIATIONS)) {
+        // Escape special characters in abbreviation for regex and ensure it's a whole word/sequence
+        const escapedAbbr = abbr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\b${escapedAbbr}\\b`, 'gi'); // Case insensitive due to prior toLowerCase
+        processedText = processedText.replace(regex, expansion);
+    }
+
+    // 4. Regex-based cleaning
+    // Collapse excessive or repeated punctuation (e.g., !!! to !, ??? to ?, multiple commas/periods to a single one)
+    processedText = processedText.replace(/([!?.,;:])\1+/g, '$1'); //  Example: !!! -> !,  .. -> .
+
+    // Normalize non-standard whitespace patterns
+    processedText = processedText.replace(/\s\s+/g, ' '); // Collapse multiple spaces/tabs to a single space
+    processedText = processedText.trim(); // Trim leading/trailing whitespace
+
+    if (DEBUG_PREPROCESSING && originalTextForDebug !== processedText.substring(0, 150)) {
+        console.log(`(Ingestion Service DEBUG) Text Preprocessing:
+Original: "${originalTextForDebug}..."
+Processed: "${processedText.substring(0, 150)}..."`);
+    }
+    return processedText;
+}
+
 
 // --- Funciones de Ayuda (Existentes y Modificadas) ---
 
@@ -74,53 +138,134 @@ function validateChunk(text) {
 /**
  * Chunks plain text content (from PDF, TXT, or article).
  */
-function chunkTextContent(text, baseMetadata) {
-    console.log(`(Ingestion Service) Starting text chunking for source_id: ${baseMetadata.original_source_id}, name: ${baseMetadata.source_name}`);
+function chunkTextContent(text, baseMetadata, sentenceOverlapCount = 1) {
+    console.log(`(Ingestion Service) Starting text chunking for source_id: ${baseMetadata.original_source_id}, name: ${baseMetadata.source_name}, sentenceOverlap: ${sentenceOverlapCount}`);
     const chunks = [];
-    const sentences = text.split(/(?<=[.!?])\s+/); // Split by sentence-ending punctuation
+    const sentences = text.split(/(?<=[.!?])\s+/);
     let currentChunkLines = [];
     let currentWordCount = 0;
     let chunkIndex = 0;
 
-    for (const sentence of sentences) {
-        const sentenceWordCount = sentence.split(/\s+/).length;
-        if (sentence.trim().length === 0) continue;
+    // Initialize currentChunkLines with potential overlap from a hypothetical "previous" chunk (empty at the start)
+    let sentencesToPrependForOverlap = [];
 
+    for (let i = 0; i < sentences.length; i++) {
+        const sentence = sentences[i];
+        const sentenceWordCount = sentence.split(/\s+/).length;
+
+        if (sentence.trim().length === 0) {
+            continue;
+        }
+
+        // Prepend overlap sentences if currentChunkLines is empty
+        // This happens at the beginning of processing or after a chunk is finalized.
+        if (currentChunkLines.length === 0 && sentencesToPrependForOverlap.length > 0) {
+            currentChunkLines.push(...sentencesToPrependForOverlap);
+            currentWordCount = currentChunkLines.reduce((acc, s) => acc + s.split(/\s+/).length, 0);
+            sentencesToPrependForOverlap = []; // Clear after use
+        }
+
+        // Scenario 1: Adding current sentence EXCEEDS MAX_CHUNK_WORDS
+        // Action: Finalize current chunk *without* current sentence. Current sentence starts the next chunk.
         if (currentWordCount > 0 && (currentWordCount + sentenceWordCount) > MAX_CHUNK_WORDS) {
-            const chunkText = currentChunkLines.join(' ').trim();
+            let chunkText = currentChunkLines.join(' ').trim();
             if (validateChunk(chunkText)) {
-                chunks.push({
-                    text: chunkText,
-                    metadata: { ...baseMetadata, chunk_index: chunkIndex++ }
-                });
+                const processedChunkText = preprocessTextForEmbedding(chunkText);
+                const metadata = {
+                    ...baseMetadata,
+                    chunk_index: chunkIndex++,
+                    chunk_char_length: processedChunkText.length,
+                    content_type_hint: "text"
+                };
+                if (baseMetadata.source_document_updated_at) {
+                    metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
+                }
+                chunks.push({ text: processedChunkText, metadata: metadata});
             }
-            currentChunkLines = [sentence];
-            currentWordCount = sentenceWordCount;
-        } else {
+
+            if (sentenceOverlapCount > 0 && currentChunkLines.length > 0) {
+                sentencesToPrependForOverlap = currentChunkLines.slice(-sentenceOverlapCount);
+            } else {
+                sentencesToPrependForOverlap = [];
+            }
+
+            currentChunkLines = [...sentencesToPrependForOverlap, sentence]; // New chunk starts with overlap + current sentence
+            currentWordCount = currentChunkLines.reduce((acc, s) => acc + s.split(/\s+/).length, 0);
+            sentencesToPrependForOverlap = []; // Overlap for *this* new chunk is now incorporated
+        }
+        // Scenario 2: Adding current sentence MEETS OR EXCEEDS TARGET_CHUNK_WORDS (but not MAX)
+        // Action: Finalize current chunk *with* current sentence.
+        else if ((currentWordCount + sentenceWordCount) >= TARGET_CHUNK_WORDS) {
+            currentChunkLines.push(sentence);
+            currentWordCount += sentenceWordCount;
+
+            let chunkText = currentChunkLines.join(' ').trim();
+            if (validateChunk(chunkText)) {
+                const processedChunkText = preprocessTextForEmbedding(chunkText);
+                chunks.push({ text: processedChunkText, metadata: { ...baseMetadata, chunk_index: chunkIndex++ }});
+            }
+
+            if (sentenceOverlapCount > 0 && currentChunkLines.length > 0) {
+                sentencesToPrependForOverlap = currentChunkLines.slice(-sentenceOverlapCount);
+            } else {
+                sentencesToPrependForOverlap = [];
+            }
+            currentChunkLines = []; // Reset for next chunk (will be populated with overlap at loop start)
+            currentWordCount = 0;
+        }
+        // Scenario 3: Adding current sentence DOES NOT YET meet TARGET_CHUNK_WORDS
+        // Action: Add sentence to current chunk and continue.
+        else {
             currentChunkLines.push(sentence);
             currentWordCount += sentenceWordCount;
         }
+    }
 
-        if (currentWordCount >= TARGET_CHUNK_WORDS) {
-            const chunkText = currentChunkLines.join(' ').trim();
-            if (validateChunk(chunkText)) {
-                 chunks.push({
-                    text: chunkText,
-                    metadata: { ...baseMetadata, chunk_index: chunkIndex++ }
-                });
-            }
-            currentChunkLines = [];
-            currentWordCount = 0;
-        }
+    // After the loop, if there's anything left in currentChunkLines, it forms the last chunk.
+    // This part might also need to correctly use any pending `sentencesToPrependForOverlap`
+    // if the loop finished and `currentChunkLines` became empty but overlap was due.
+    if (currentChunkLines.length === 0 && sentencesToPrependForOverlap.length > 0) {
+        currentChunkLines.push(...sentencesToPrependForOverlap);
+        currentWordCount = currentChunkLines.reduce((acc, s) => acc + s.split(/\s+/).length, 0);
+        // No need to clear sentencesToPrependForOverlap here as it's the end.
     }
 
     if (currentChunkLines.length > 0) {
-        const chunkText = currentChunkLines.join(' ').trim();
+        let chunkText = currentChunkLines.join(' ').trim();
         if (validateChunk(chunkText)) {
-            chunks.push({
-                text: chunkText,
-                metadata: { ...baseMetadata, chunk_index: chunkIndex++ }
-            });
+            // Prevent adding a duplicate chunk if the last chunk consists *only* of the overlap
+            // from a previously added identical chunk.
+            // Note: isPureOverlapOfPrevious check should ideally use preprocessed text if that's what's stored,
+            // or be done before preprocessing for this final chunk.
+            // For simplicity here, we'll preprocess then check, this might mean a non-preprocessed check for overlap.
+            const processedChunkText = preprocessTextForEmbedding(chunkText);
+            let isPureOverlapOfPrevious = false;
+            if (chunks.length > 0 && sentenceOverlapCount > 0) {
+                // This check ideally should compare against the *processed* text of the previous chunk's overlap sentences.
+                // However, that would require storing processed versions or reprocessing overlap here.
+                // Current check is against raw text, which might be fine if preprocessing is mostly idempotent for overlaps.
+                const lastChunkSentences = chunks[chunks.length-1].text.split(/(?<=[.!?])\s+/); // This is processed text
+                const overlapFromLast = lastChunkSentences.slice(-sentenceOverlapCount);
+                // To compare apples to apples, we'd need to join and then preprocess what `chunkText` would be if it were only overlap.
+                // Or, ensure the comparison text `processedChunkText` is compared against an equally processed version of potential overlap.
+                // This simplified check might lead to slight discrepancies if preprocessing alters overlap significantly.
+                if (overlapFromLast.join(' ') === processedChunkText && currentChunkLines.length === sentenceOverlapCount) {
+                     isPureOverlapOfPrevious = true;
+                }
+            }
+
+            if (!isPureOverlapOfPrevious) {
+                const metadata = {
+                    ...baseMetadata,
+                    chunk_index: chunkIndex++,
+                    chunk_char_length: processedChunkText.length,
+                    content_type_hint: "text"
+                };
+                if (baseMetadata.source_document_updated_at) {
+                    metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
+                }
+                chunks.push({ text: processedChunkText, metadata: metadata});
+            }
         }
     }
     console.log(`(Ingestion Service) Text chunking completed for ${baseMetadata.source_name}. Generated ${chunks.length} chunks.`);
@@ -132,88 +277,233 @@ function chunkTextContent(text, baseMetadata) {
  * Divide el contenido HTML en chunks jerárquicos.
  * MODIFIED: Accepts baseMetadata and incorporates it.
  */
-function chunkContent(html, url, baseMetadata) { // baseMetadata is new
-    console.log(`(Ingestion Service) Starting HTML chunking for URL: ${url}, source_id: ${baseMetadata.original_source_id}`);
+function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // baseMetadata is new, elementOverlapCount added
+    console.log(`(Ingestion Service) Starting HTML chunking for URL: ${url}, source_id: ${baseMetadata.original_source_id}, elementOverlap: ${elementOverlapCount}`);
     const $ = load(html);
     const chunks = [];
-    let contextStack = [];
+    let contextStack = []; // Will store {level, text} objects
     let currentChunkLines = [];
+    let currentChunkRawElements = []; // Store raw text of elements for overlap
     let currentWordCount = 0;
-    let chunkIndex = 0; // For HTML chunks as well
+    let chunkIndex = 0;
+    let elementsToPrependForOverlap = [];
 
     // Standard noise removal
     $('script, style, nav, footer, header, aside, form, noscript, iframe, svg, link[rel="stylesheet"], button, input, select, textarea, label, .sidebar, #sidebar, .comments, #comments, .related-posts, .share-buttons, .pagination, .breadcrumb, .modal, .popup, [aria-hidden="true"], [role="navigation"], [role="search"], .ad, .advertisement, #ad, #advertisement').remove();
 
-    const relevantSelectors = 'h1, h2, h3, h4, h5, h6, p, li, td, th, pre, blockquote, article'; // Added article
-    $(relevantSelectors).each((i, el) => {
+    const relevantSelectors = 'h1, h2, h3, h4, h5, h6, p, li, td, th, pre, blockquote, article';
+    const elements = $(relevantSelectors).toArray(); // Get all elements once
+
+    for (let i = 0; i < elements.length; i++) {
+        const el = elements[i];
         const $el = $(el);
         const tag = $el.prop('tagName').toLowerCase();
         let text = ($el.text() || '').replace(/\s\s+/g, ' ').trim();
 
-        if (text.length < 15 && tag !== 'article') return; // Allow article tag to be empty container initially
+        if (text.length < 15 && tag !== 'article' && !tag.match(/^h[1-6]$/)) { // Keep headers even if short
+             // If article is empty but contains relevant children, those children will be processed.
+            if (tag === 'article' && $el.children(relevantSelectors).length > 0) {
+                // Continue to process children, do not return
+            } else if (text.length === 0 && tag === 'article' && $el.children().length === 0){
+                continue; // Skip empty article tags with no children
+            } else if (text.length < 15 && tag !== 'article') {
+                continue; // Skip short non-article, non-header elements
+            }
+        }
 
-        let currentHierarchy = [...contextStack];
+        // Overlap prepending logic
+        if (currentChunkLines.length === 0 && elementsToPrependForOverlap.length > 0) {
+            currentChunkLines.push(...elementsToPrependForOverlap.map(e => e.text)); // Add text lines
+            currentChunkRawElements.push(...elementsToPrependForOverlap);
+            currentWordCount = currentChunkLines.join('\n').split(/\s+/).length; // Recalculate word count
+            elementsToPrependForOverlap = [];
+        }
+
+        let hierarchyForCurrentElement = [...contextStack]; // Default hierarchy for non-header elements
+
         if (tag.match(/^h[1-6]$/)) {
             const level = parseInt(tag[1]);
-            contextStack = contextStack.slice(0, level - 1); // Reset lower levels
-            contextStack[level - 1] = text; // Set current level
-            currentHierarchy = [...contextStack]; // Capture current hierarchy for potential chunk
-            
-            // If there was content before this header, chunk it
+            const headerObj = { level: level, text: text };
+
+            // Finalize previous chunk if this header triggers a new section
             if (currentChunkLines.length > 0) {
-                 const chunkText = currentChunkLines.join('\n').trim();
-                 if (validateChunk(chunkText)) {
-                      chunks.push({
-                          text: chunkText,
-                          // Use hierarchy before this header
-                          metadata: { ...baseMetadata, url, hierarchy: [...contextStack.slice(0, level-1)], chunk_index: chunkIndex++ } 
-                      });
-                 }
-                 currentChunkLines = [];
-                 currentWordCount = 0;
+                let chunkText = currentChunkLines.join('\n').trim();
+                if (validateChunk(chunkText)) {
+                    const processedChunkText = preprocessTextForEmbedding(chunkText);
+                    const currentHierarchy = [...contextStack];
+                    const metadata = {
+                        ...baseMetadata,
+                        url,
+                        hierarchy: currentHierarchy,
+                        chunk_index: chunkIndex++,
+                        chunk_char_length: processedChunkText.length,
+                        content_type_hint: currentHierarchy && currentHierarchy.length > 0 ? "structured_html" : "html_content"
+                    };
+                    if (baseMetadata.source_document_updated_at) {
+                        metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
+                    }
+                    chunks.push({
+                        text: processedChunkText,
+                        metadata: metadata
+                    });
+                }
+
+                if (elementOverlapCount > 0 && currentChunkRawElements.length > 0) {
+                    elementsToPrependForOverlap = currentChunkRawElements.slice(-elementOverlapCount);
+                } else {
+                    elementsToPrependForOverlap = [];
+                }
+                currentChunkLines = [];
+                currentChunkRawElements = [];
+                currentWordCount = 0;
+
+                // Prepend overlap immediately if captured
+                if (elementsToPrependForOverlap.length > 0) {
+                    currentChunkLines.push(...elementsToPrependForOverlap.map(e => e.text));
+                    currentChunkRawElements.push(...elementsToPrependForOverlap);
+                    currentWordCount = currentChunkLines.join('\n').split(/\s+/).length;
+                    elementsToPrependForOverlap = [];
+                }
             }
+
+            contextStack = contextStack.filter(h => h.level < level); // Remove deeper or same-level headers
+            contextStack.push(headerObj);
+            hierarchyForCurrentElement = [...contextStack]; // Header's own hierarchy includes itself
         }
 
         const elementWordCount = text.split(/\s+/).length;
+        const currentElementData = { text, tag, wordCount: elementWordCount, hierarchy: hierarchyForCurrentElement };
 
-        // If current chunk + new element exceeds max words, finalize current chunk
-        if (currentWordCount > 0 && (currentWordCount + elementWordCount) > MAX_CHUNK_WORDS) {
-             const chunkText = currentChunkLines.join('\n').trim();
-             if (validateChunk(chunkText)) {
-                 chunks.push({
-                     text: chunkText,
-                     metadata: { ...baseMetadata, url, hierarchy: [...currentHierarchy], chunk_index: chunkIndex++ }
-                 });
+        // Scenario 1: Adding current element EXCEEDS MAX_CHUNK_WORDS
+        if (currentWordCount > 0 && (currentWordCount + elementWordCount) > MAX_CHUNK_WORDS && text.length > 0) {
+            let chunkText = currentChunkLines.join('\n').trim();
+            if (validateChunk(chunkText)) {
+                const processedChunkText = preprocessTextForEmbedding(chunkText);
+                const lastElementInChunkHierarchy = currentChunkRawElements.length > 0 ? currentChunkRawElements[currentChunkRawElements.length-1].hierarchy : [...contextStack];
+                const metadata = {
+                    ...baseMetadata,
+                    url,
+                    hierarchy: lastElementInChunkHierarchy,
+                    chunk_index: chunkIndex++,
+                    chunk_char_length: processedChunkText.length,
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                };
+                if (baseMetadata.source_document_updated_at) {
+                    metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
+                }
+                chunks.push({ text: processedChunkText, metadata: metadata});
             }
-            currentChunkLines = [text]; // Start new chunk with current element
-            currentWordCount = elementWordCount;
-        } else {
-            currentChunkLines.push(text);
-            currentWordCount += elementWordCount;
-        }
 
-        // If current chunk meets target word count, finalize it
-        if (currentWordCount >= TARGET_CHUNK_WORDS) {
-             const chunkText = currentChunkLines.join('\n').trim();
-             if (validateChunk(chunkText)) {
-                 chunks.push({
-                     text: chunkText,
-                     metadata: { ...baseMetadata, url, hierarchy: [...currentHierarchy], chunk_index: chunkIndex++ }
-                 });
-             }
+            if (elementOverlapCount > 0 && currentChunkRawElements.length > 0) {
+                elementsToPrependForOverlap = currentChunkRawElements.slice(-elementOverlapCount);
+            } else {
+                elementsToPrependForOverlap = [];
+            }
+
+            currentChunkLines = elementsToPrependForOverlap.map(e => e.text);
+            currentChunkRawElements = [...elementsToPrependForOverlap];
+            currentWordCount = currentChunkLines.join('\n').split(/\s+/).length;
+            elementsToPrependForOverlap = []; // Consumed for this new chunk start
+
+            if (text.length > 0) { // Add current element text if it's not empty (headers might be)
+                currentChunkLines.push(text);
+                currentChunkRawElements.push(currentElementData);
+                currentWordCount += elementWordCount;
+            }
+        }
+        // Scenario 2: Adding current element MEETS/EXCEEDS TARGET_CHUNK_WORDS (but not MAX)
+        else if (text.length > 0 && (currentWordCount + elementWordCount) >= TARGET_CHUNK_WORDS) {
+            currentChunkLines.push(text);
+            currentChunkRawElements.push(currentElementData);
+            currentWordCount += elementWordCount;
+
+            let chunkText = currentChunkLines.join('\n').trim();
+            if (validateChunk(chunkText)) {
+                const processedChunkText = preprocessTextForEmbedding(chunkText);
+                const lastElementInChunkHierarchy = currentChunkRawElements.length > 0 ? currentChunkRawElements[currentChunkRawElements.length-1].hierarchy : [...contextStack];
+                const metadata = {
+                    ...baseMetadata,
+                    url,
+                    hierarchy: lastElementInChunkHierarchy,
+                    chunk_index: chunkIndex++,
+                    chunk_char_length: processedChunkText.length,
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                };
+                if (baseMetadata.source_document_updated_at) {
+                    metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
+                }
+                chunks.push({ text: processedChunkText, metadata: metadata});
+            }
+
+            if (elementOverlapCount > 0 && currentChunkRawElements.length > 0) {
+                elementsToPrependForOverlap = currentChunkRawElements.slice(-elementOverlapCount);
+            } else {
+                elementsToPrependForOverlap = [];
+            }
             currentChunkLines = [];
+            currentChunkRawElements = [];
             currentWordCount = 0;
         }
-    });
+        // Scenario 3: Adding current element DOES NOT YET meet TARGET_CHUNK_WORDS
+        else if (text.length > 0) { // Only add if there's text
+            currentChunkLines.push(text);
+            currentChunkRawElements.push(currentElementData);
+            currentWordCount += elementWordCount;
+        }
+         // If it was an 'article' tag and it was empty, it doesn't contribute to words/lines here
+         // but its context (hierarchy) is set for its children.
+    }
 
-    // Add any remaining content as the last chunk
+    // After the loop, handle any remaining content
+    if (currentChunkLines.length === 0 && elementsToPrependForOverlap.length > 0) {
+        currentChunkLines.push(...elementsToPrependForOverlap.map(e => e.text));
+        currentChunkRawElements.push(...elementsToPrependForOverlap);
+        // currentWordCount = currentChunkLines.join('\n').split(/\s+/).length; // Not strictly needed as it's the end
+    }
+
     if (currentChunkLines.length > 0) {
-        const chunkText = currentChunkLines.join('\n').trim();
+        let chunkText = currentChunkLines.join('\n').trim();
         if (validateChunk(chunkText)) {
-            chunks.push({
-                text: chunkText,
-                metadata: { ...baseMetadata, url, hierarchy: [...contextStack], chunk_index: chunkIndex++ }
-            });
+            const processedChunkText = preprocessTextForEmbedding(chunkText);
+            let isPureOverlapOfPrevious = false;
+            if (chunks.length > 0 && elementOverlapCount > 0 && currentChunkRawElements.length === elementOverlapCount) {
+                const lastChunkText = chunks[chunks.length-1].text; // This is processed text
+                // Similar to chunkTextContent, this comparison ideally needs care if preprocessing changes overlap text.
+                // currentChunkRawElements contains original text.
+                const originalOverlapText = currentChunkRawElements.map(e => e.text).join('\n');
+                const processedOriginalOverlapText = preprocessTextForEmbedding(originalOverlapText);
+
+                if (processedOriginalOverlapText === processedChunkText &&
+                    originalOverlapText.split('\n').length === elementOverlapCount && // Ensure it's only the overlap
+                    lastChunkText.endsWith(processedOriginalOverlapText) // Check if previous chunk ended with this processed overlap
+                ) {
+                   // More robust check: does the *processed* version of the raw overlap match the current processed chunk?
+                   // And does the previous chunk (which is already processed) end with this?
+                   // This is still heuristic. A perfect check is complex.
+                   if (processedChunkText === preprocessTextForEmbedding(currentChunkRawElements.map(e=>e.text).join('\n'))) {
+                        isPureOverlapOfPrevious = true;
+                   }
+                }
+            }
+
+            if (!isPureOverlapOfPrevious) {
+                const lastElementInChunkHierarchy = currentChunkRawElements.length > 0 ? currentChunkRawElements[currentChunkRawElements.length-1].hierarchy : [...contextStack];
+                const metadata = {
+                    ...baseMetadata,
+                    url,
+                    hierarchy: lastElementInChunkHierarchy,
+                    chunk_index: chunkIndex++,
+                    chunk_char_length: processedChunkText.length,
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                };
+                if (baseMetadata.source_document_updated_at) {
+                    metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
+                }
+                chunks.push({
+                    text: processedChunkText,
+                    metadata: metadata
+                });
+            }
         }
     }
     console.log(`(Ingestion Service) HTML chunking completed for ${url}. Generated ${chunks.length} chunks.`);
@@ -351,6 +641,7 @@ export async function ingestSourceById(sourceId, clientId) {
     }
 
     console.log(`\n--- (Ingestion Service) Starting Ingestion for Source ID: ${sourceId}, Client ID: ${clientId} ---`);
+    console.log(`(Ingestion Service) Using chunking parameters: TARGET_CHUNK_WORDS=${TARGET_CHUNK_WORDS}, MAX_CHUNK_WORDS=${MAX_CHUNK_WORDS}`);
     let source;
     try {
         // 1. Fetch Source details
@@ -415,12 +706,34 @@ export async function ingestSourceById(sourceId, clientId) {
 
         // 4. Chunking
         let chunks;
-        const baseMetadata = { original_source_id: source.source_id, source_name: sourceName };
+        // Initial baseMetadata with core, non-overwritable fields
+        let baseMetadata = {
+            original_source_id: source.source_id,
+            source_name: sourceName,
+        };
+
+        // Add source_document_updated_at if it exists on the source
+        if (source.updated_at) {
+            baseMetadata.source_document_updated_at = source.updated_at;
+        }
+
+        // Merge custom_metadata from the source, allowing its properties to be added,
+        // but core properties defined above will take precedence if there are conflicts.
+        if (source.custom_metadata && typeof source.custom_metadata === 'object') {
+            baseMetadata = {
+                ...source.custom_metadata, // Custom properties first
+                ...baseMetadata            // Core properties overwrite if keys conflict
+            };
+        }
 
         if (source.source_type === 'url') {
-            chunks = chunkContent(htmlContent, source.source_name, baseMetadata); // Pass URL and baseMetadata
+            // Assuming default elementOverlapCount of 1, can be configured later
+            chunks = chunkContent(htmlContent, source.source_name, baseMetadata, 1);
         } else { // For 'pdf', 'txt', 'article'
-            chunks = chunkTextContent(textToProcess, baseMetadata);
+            // The new parameter will be passed here. Let's assume a default or configured value for now.
+            // For this modification, we'll use the default of 1.
+            // In a real scenario, this might come from source.settings or a global config.
+            chunks = chunkTextContent(textToProcess, baseMetadata, 1); // Using default overlap of 1
         }
 
         if (!chunks || chunks.length === 0) {

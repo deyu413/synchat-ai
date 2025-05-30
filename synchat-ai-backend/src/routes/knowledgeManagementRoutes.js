@@ -16,4 +16,7 @@ router.post('/sources/:source_id/ingest', authMiddleware, knowledgeManagementCon
 // Route to delete a specific source
 router.delete('/sources/:source_id', authMiddleware, knowledgeManagementController.deleteSource);
 
+// Route to get a sample of chunks for a specific source
+router.get('/sources/:source_id/chunk_sample', authMiddleware, knowledgeManagementController.getSourceChunkSample);
+
 export default router;

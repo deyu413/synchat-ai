@@ -214,10 +214,43 @@ async function loadKnowledgeSources() {
                 const ingestButtonDisabled = source.status === 'ingesting' ? 'disabled' : '';
                 const deleteButtonDisabled = (source.source_id === 'main_url' || source.status === 'ingesting') ? 'disabled' : '';
 
-                li.innerHTML = `<strong>${source.source_name || 'Fuente sin nombre'}</strong> (${source.source_type || 'N/A'}) - Estado: ${statusDisplay} ${source.last_ingest_at ? `- Última ingesta: ${new Date(source.last_ingest_at).toLocaleString()}` : ''} ${source.last_ingest_error ? `<br><small style="color:red;">Error: ${source.last_ingest_error}</small>` : ''}<br>
-                    <button class="ingest-source-btn" data-source-id="${source.source_id}" ${ingestButtonDisabled}>Ingerir Ahora</button>
-                    <button class="delete-source-btn" data-source-id="${source.source_id}" ${deleteButtonDisabled}>Eliminar</button>`;
-                // *** FIN DE LA CORRECCIÓN ***
+                // Main text content for the list item
+                const textContentDiv = document.createElement('div');
+                textContentDiv.innerHTML = `<strong>${source.source_name || 'Fuente sin nombre'}</strong> (${source.source_type || 'N/A'}) - Estado: ${statusDisplay} ${source.last_ingest_at ? `- Última ingesta: ${new Date(source.last_ingest_at).toLocaleString()}` : ''} ${source.last_ingest_error ? `<br><small style="color:red;">Error: ${source.last_ingest_error}</small>` : ''}`;
+                li.appendChild(textContentDiv);
+
+                // Actions container
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'source-actions';
+                actionsDiv.style.marginTop = '5px';
+
+                const ingestButton = document.createElement('button');
+                ingestButton.className = 'ingest-source-btn';
+                ingestButton.dataset.sourceId = source.source_id;
+                ingestButton.textContent = 'Ingerir Ahora';
+                if (ingestButtonDisabled) ingestButton.disabled = true;
+                actionsDiv.appendChild(ingestButton);
+
+                const deleteButton = document.createElement('button');
+                deleteButton.className = 'delete-source-btn';
+                deleteButton.dataset.sourceId = source.source_id;
+                deleteButton.textContent = 'Eliminar';
+                if (deleteButtonDisabled) deleteButton.disabled = true;
+                deleteButton.style.marginLeft = '5px';
+                actionsDiv.appendChild(deleteButton);
+
+                const previewChunksButton = document.createElement('button');
+                previewChunksButton.className = 'preview-chunks-btn';
+                previewChunksButton.dataset.sourceId = source.source_id;
+                previewChunksButton.textContent = 'Ver Muestra de Chunks';
+                previewChunksButton.style.marginLeft = '5px';
+                // Disable if source status indicates no chunks (e.g., uploaded, failed_ingest, or if it's main_url and not ingested yet)
+                if (source.status !== 'completed' && source.status !== 'ingesting') { // ingesting might have some chunks already
+                    // previewChunksButton.disabled = true; // Or hide, or let backend handle empty state
+                }
+                actionsDiv.appendChild(previewChunksButton);
+
+                li.appendChild(actionsDiv);
                 knowledgeSourcesList.appendChild(li);
             });
         }
@@ -257,7 +290,8 @@ async function handleFileUpload() {
 async function handleSourceAction(event) {
     const target = event.target; 
     const sourceId = target.dataset.sourceId; 
-    if (!sourceId || !target.classList.contains('ingest-source-btn') && !target.classList.contains('delete-source-btn')) return;
+    const sourceId = target.dataset.sourceId;
+    if (!sourceId) return;
 
     if (target.classList.contains('ingest-source-btn')) {
         // La lógica para 'main_url' al presionar "Ingerir Ahora" ya está manejada en el controller.
@@ -272,6 +306,8 @@ async function handleSourceAction(event) {
         if (sourceId !== 'main_url' && confirm(`¿Eliminar fuente ${sourceId}?`)) { // Doble chequeo por si acaso
             await deleteKnowledgeSource(sourceId);
         }
+    } else if (target.classList.contains('preview-chunks-btn')) {
+        await fetchAndDisplayChunkSample(sourceId);
     }
 }
 
@@ -546,6 +582,95 @@ if (inboxApplyStatusChangeBtn && inboxChangeStatusDropdown) {
         }
     });
 }
+
+// --- Chunk Sample Modal Functions ---
+const chunkSampleModal = document.getElementById('chunkSampleModal');
+const chunkSampleModalTitle = document.getElementById('chunkSampleModalTitle');
+const chunkSampleModalBody = document.getElementById('chunkSampleModalBody');
+const closeChunkSampleModalBtn = document.getElementById('closeChunkSampleModalBtn');
+
+if (closeChunkSampleModalBtn) {
+    closeChunkSampleModalBtn.onclick = function() {
+        if(chunkSampleModal) chunkSampleModal.style.display = "none";
+    }
+}
+// Close modal if user clicks outside of the modal content
+window.onclick = function(event) {
+    if (event.target == chunkSampleModal) {
+        if(chunkSampleModal) chunkSampleModal.style.display = "none";
+    }
+}
+
+async function fetchAndDisplayChunkSample(sourceId) {
+    if (!chunkSampleModal || !chunkSampleModalTitle || !chunkSampleModalBody) {
+        console.error("Modal elements not found for chunk sample display.");
+        alert("Error de UI: No se pueden mostrar los chunks.");
+        return;
+    }
+
+    chunkSampleModalTitle.textContent = `Muestra de Chunks para Fuente ID: ${sourceId.substring(0,8)}...`;
+    chunkSampleModalBody.innerHTML = '<p>Cargando muestra de chunks...</p>';
+    chunkSampleModal.style.display = "block";
+
+    const token = (await supabase.auth.getSession())?.data.session?.access_token;
+    if (!token) {
+        chunkSampleModalBody.innerHTML = '<p>Error de autenticación.</p>';
+        return;
+    }
+
+    try {
+        const response = await fetch(`${VERCEL_BACKEND_URL}/api/client/me/knowledge/sources/${sourceId}/chunk_sample`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.message || `Error ${response.status} - ${response.statusText}`);
+        }
+
+        const chunks = await response.json();
+
+        if (!chunks || chunks.length === 0) {
+            chunkSampleModalBody.innerHTML = '<p>No se encontraron chunks para esta fuente o la muestra está vacía.</p>';
+            return;
+        }
+
+        let contentHtml = '<ul>';
+        chunks.forEach(chunk => {
+            contentHtml += `<li style="margin-bottom: 15px; padding: 10px; border: 1px solid #eee; background-color: #f9f9f9;">`;
+            contentHtml += `<p><strong>Contenido (primeros 300 caracteres):</strong></p>`;
+            contentHtml += `<pre style="white-space: pre-wrap; word-wrap: break-word; max-height: 100px; overflow-y: auto; background-color: #fff; padding: 5px;">${chunk.content ? chunk.content.substring(0, 300) + (chunk.content.length > 300 ? '...' : '') : 'N/A'}</pre>`;
+
+            if (chunk.metadata) {
+                contentHtml += `<p style="font-size:0.9em; margin-top:5px;"><strong>Metadata:</strong></p>`;
+                contentHtml += `<ul style="font-size:0.85em; list-style-type:square; margin-left:20px;">`;
+                if (chunk.metadata.chunk_char_length) {
+                    contentHtml += `<li>Longitud: ${chunk.metadata.chunk_char_length} caracteres</li>`;
+                }
+                if (chunk.metadata.hierarchy && chunk.metadata.hierarchy.length > 0) {
+                    const hierarchyString = chunk.metadata.hierarchy.map(h => `${h.level}: ${h.text}`).join(' > ');
+                    contentHtml += `<li>Jerarquía: ${hierarchyString}</li>`;
+                }
+                 if (chunk.metadata.content_type_hint) {
+                    contentHtml += `<li>Tipo Contenido (Pista): ${chunk.metadata.content_type_hint}</li>`;
+                }
+                if (chunk.metadata.source_name) { // From baseMetadata
+                    contentHtml += `<li>Nombre Fuente Original: ${chunk.metadata.source_name}</li>`;
+                }
+                contentHtml += `</ul>`;
+            }
+            contentHtml += `</li>`;
+        });
+        contentHtml += '</ul>';
+        chunkSampleModalBody.innerHTML = contentHtml;
+
+    } catch (error) {
+        console.error(`Error cargando muestra de chunks para ${sourceId}:`, error);
+        chunkSampleModalBody.innerHTML = `<p style="color:red;">Error al cargar muestra de chunks: ${error.message}</p>`;
+    }
+}
+
 
 async function displayClientUsage() {
     if (!currentClientId) {

@@ -1,7 +1,8 @@
 import { supabase } from '../services/supabaseClient.js';
 import multer from 'multer';
 import path from 'path';
-import * as ingestionService from '../services/ingestionService.js'; // Import the service
+import * as ingestionService from '../services/ingestionService.js';
+import * as db from '../services/databaseService.js'; // Import databaseService
 
 // Configure Multer for file uploads
 const storage = multer.memoryStorage();
@@ -204,7 +205,38 @@ export const ingestSource = async (req, res) => {
   }
 };
 
-// 4. Delete Source
+// 4. Get Chunk Sample for a Source
+export const getSourceChunkSample = async (req, res) => {
+  const { source_id } = req.params;
+  const client_id = req.user.id; // Assuming authMiddleware populates req.user with client_id
+
+  if (!source_id) {
+    return res.status(400).json({ message: 'Source ID is required.' });
+  }
+
+  console.log(`(Controller) Received request for chunk sample for source_id: ${source_id} for client_id: ${client_id}`);
+
+  try {
+    // Using a default limit of 5 for the sample
+    const chunks = await db.getChunkSampleForSource(client_id, source_id, 5);
+
+    if (!chunks) { // Should not happen if getChunkSampleForSource throws or returns []
+        return res.status(404).json({ message: 'No chunk samples found or error fetching samples.' });
+    }
+
+    res.status(200).json(chunks);
+
+  } catch (error) {
+    console.error(`(Controller) Error fetching chunk sample for source_id ${source_id}:`, error);
+    if (error.message.toLowerCase().includes("not found")) { // More generic check
+        return res.status(404).json({ message: `Samples for source ID ${source_id} not found.` });
+    }
+    res.status(500).json({ message: 'An unexpected error occurred on the server while fetching chunk samples.', error: error.message });
+  }
+};
+
+
+// 5. Delete Source
 export const deleteSource = async (req, res) => {
   const { source_id } = req.params;
   const client_id = req.user.id;

@@ -188,3 +188,42 @@ export const changeConversationStatus = async (req, res) => {
     }
 };
 
+// 5. Submit Feedback for a Message
+export const submitMessageFeedback = async (req, res) => {
+    const agentUserId = req.user.id; // User acting as agent is the dashboard owner
+    const clientId = req.user.id; // The client context for this operation
+    const { conversation_id, message_id } = req.params;
+    const { rating, comment } = req.body;
+
+    if (!conversation_id || !message_id) {
+        return res.status(400).json({ message: 'Conversation ID and Message ID are required.' });
+    }
+    if (rating === undefined || ![-1, 1].includes(Number(rating))) {
+        return res.status(400).json({ message: 'Rating is required and must be 1 (positive) or -1 (negative).' });
+    }
+    if (comment && typeof comment !== 'string') {
+        return res.status(400).json({ message: 'Comment must be a string.' });
+    }
+
+    try {
+        // Optional: Verify the message belongs to the conversation and client if needed,
+        // but RLS on message_feedback table should handle security.
+        // We trust message_id comes from a message displayed to this client.
+
+        console.log(`(InboxCtrl) Submitting feedback for msg ${message_id} in conv ${conversation_id} by agent ${agentUserId} (Client: ${clientId})`);
+
+        // The databaseService.logMessageFeedback function was added in a previous step.
+        // Its signature is: logMessageFeedback(messageId, clientId, agentUserId, rating, comment)
+        await db.logMessageFeedback(message_id, clientId, agentUserId, Number(rating), comment);
+
+        res.status(201).json({ message: 'Feedback submitted successfully.' });
+
+    } catch (error) {
+        console.error(`(InboxCtrl) Error in submitMessageFeedback for msg ${message_id}:`, error);
+        // Check for specific DB errors if needed, e.g., foreign key violation if message_id is wrong
+        if (error.message.includes("violates foreign key constraint")) {
+             return res.status(404).json({ message: 'Failed to submit feedback: Invalid message or conversation.' });
+        }
+        res.status(500).json({ message: 'Failed to submit feedback.', error: error.message });
+    }
+};
