@@ -170,11 +170,48 @@ export const saveMessage = async (conversationId, sender, textContent, ragIntera
     }
 };
 
+export const getClientKnowledgeCategories = async (clientId) => {
+    if (!clientId) {
+        console.warn('(DB Service) getClientKnowledgeCategories: clientId is required.');
+        return { data: [], error: 'Client ID is required.' };
+    }
+    try {
+        const { data, error } = await supabase
+            .from('knowledge_sources')
+            .select('category_tags')
+            .eq('client_id', clientId)
+            .not('category_tags', 'is', null); // Only sources with tags
+
+        if (error) {
+            console.error(`(DB Service) Error fetching category_tags for client ${clientId}:`, error);
+            return { data: [], error: error.message };
+        }
+
+        const uniqueCategories = new Set();
+        if (data) {
+            data.forEach(source => {
+                if (Array.isArray(source.category_tags)) {
+                    source.category_tags.forEach(tag => {
+                        if (tag && typeof tag === 'string') { // Ensure tag is not null/empty string
+                            uniqueCategories.add(tag.trim());
+                        }
+                    });
+                }
+            });
+        }
+        return { data: Array.from(uniqueCategories), error: null };
+    } catch (err) {
+        console.error(`(DB Service) Exception in getClientKnowledgeCategories for client ${clientId}:`, err);
+        return { data: [], error: 'An unexpected error occurred.' };
+    }
+};
+
 export const createConversation = async (clientId) => { /* ... */ };
 
 export const hybridSearch = async (clientId, queryText, conversationId, options = {}, returnPipelineDetails = false) => {
     const originalUserQueryAtStart = queryText; // Store the absolute original query
     let currentQueryText = originalUserQueryAtStart; // This will be used by subsequent steps, potentially corrected
+    let predictedCategory = null; // Initialize predictedCategory
 
     let queryCorrectionDetails = {
         attempted: false,
@@ -230,12 +267,104 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
             mergedAndPreRankedResultsPreview: [],
             crossEncoderProcessing: { inputs: [], outputs: [] },
             finalRankedResultsForPlayground: [],
-            finalPropositionResults: []
+            finalPropositionResults: [],
+            queryClassification: { predictedCategory: null, categoriesAvailable: [] } // Initialize for pipelineDetails
         };
     }
 
-    const searchParamsForLog = { /* ... as before ... */ };
-    console.log(`(DB Service) Hybrid Search Parameters: Effective Query='${currentQueryText.substring(0,50)}...', vectorWeight=${searchParamsForLog.vectorWeight}, ftsWeight=${searchParamsForLog.ftsWeight}, vectorMatchThreshold=${searchParamsForLog.threshold}, finalLimit=${searchParamsForLog.finalLimit}, initialRetrieveLimit=${searchParamsForLog.initialLimit}, clientId=${clientId}`);
+    // Query Correction Logic (existing)
+    if (ENABLE_ADVANCED_QUERY_CORRECTION && originalUserQueryAtStart && originalUserQueryAtStart.trim().length > 0) {
+        queryCorrectionDetails.attempted = true;
+        try {
+            const correctionMessages = [
+                { role: "system", content: "Eres un asistente de IA experto en español. Tu tarea es corregir errores ortográficos y gramaticales en la consulta del usuario, y reformularla ligeramente para mayor claridad si es necesario, pero DEBES preservar estrictamente la intención original y el significado clave de la consulta. Devuelve únicamente la consulta corregida. Si la consulta ya es perfecta y no necesita cambios, devuélvela tal cual. No añadas comentarios ni explicaciones adicionales." },
+                { role: "user", content: `Consulta Original: "${originalUserQueryAtStart}"\nConsulta Corregida:` }
+            ];
+            const llmCorrectedQuery = await getChatCompletion(
+                correctionMessages,
+                QUERY_CORRECTION_MODEL,
+                QUERY_CORRECTION_TEMP,
+                Math.floor(originalUserQueryAtStart.length * 1.5) + 30
+            );
+
+            if (llmCorrectedQuery && llmCorrectedQuery.trim().length > 0) {
+                const trimmedLlmQuery = llmCorrectedQuery.trim();
+                queryCorrectionDetails.correctedQuery = trimmedLlmQuery;
+                queryCorrectionDetails.wasChanged = originalUserQueryAtStart !== trimmedLlmQuery;
+                currentQueryText = trimmedLlmQuery;
+                console.log(`(DB Service) Query Correction: Original='${originalUserQueryAtStart}', Corrected='${currentQueryText}'`);
+            } else {
+                console.warn("(DB Service) Query correction LLM call returned empty or invalid. Using original query.");
+            }
+        } catch (error) {
+            console.error("(DB Service) Error during query correction LLM call:", error.message);
+        }
+    }
+    if (returnPipelineDetails) {
+        pipelineDetails.queryCorrection = queryCorrectionDetails; // Ensure this is updated after correction attempt
+    }
+
+    // --- Query Classification Logic ---
+    let clientCategoriesArray = [];
+    try {
+        const { data: categories, error: catError } = await getClientKnowledgeCategories(clientId);
+        if (catError) {
+            console.warn(`(DB Service) Error fetching client knowledge categories for ${clientId}: ${catError.message}. Proceeding without classification.`);
+        } else if (categories && categories.length > 0) {
+            clientCategoriesArray = categories;
+            if (returnPipelineDetails) {
+                pipelineDetails.queryClassification.categoriesAvailable = clientCategoriesArray;
+            }
+
+            const systemPrompt = `You are an expert query classifier. Your task is to classify the user's query into ONE of the following predefined categories. Respond with ONLY the category name from the list. If no category is a good fit or the query is too generic, respond with "None".
+
+Available Categories:
+${clientCategoriesArray.join('\n')}
+
+User Query: "${currentQueryText}"
+
+Classification:`;
+
+            const llmClassification = await getChatCompletion(
+                [{ role: 'system', content: systemPrompt }], // User prompt is part of system for this simple classification
+                'gpt-3.5-turbo', 0.2, 15
+            );
+
+            if (llmClassification && llmClassification.trim().length > 0) {
+                const trimmedClassification = llmClassification.trim();
+                if (clientCategoriesArray.includes(trimmedClassification)) {
+                    predictedCategory = trimmedClassification;
+                    console.log(`(DB Service) Query classified for client ${clientId}. Query: "${currentQueryText.substring(0,30)}...", Category: ${predictedCategory}`);
+                } else if (trimmedClassification.toLowerCase() === 'none') {
+                    predictedCategory = null; // Or a special "None_Predicted" value
+                    console.log(`(DB Service) Query classification for client ${clientId} resulted in "None". Query: "${currentQueryText.substring(0,30)}..."`);
+                } else {
+                    console.warn(`(DB Service) LLM returned an unlisted category: "${trimmedClassification}" for client ${clientId}. Query: "${currentQueryText.substring(0,30)}...". Treating as unclassified.`);
+                    predictedCategory = null;
+                }
+            } else {
+                console.warn(`(DB Service) Query classification LLM call returned empty or invalid for client ${clientId}. Query: "${currentQueryText.substring(0,30)}..."`);
+            }
+        } else {
+            console.log(`(DB Service) No categories defined for client ${clientId}. Skipping query classification.`);
+        }
+    } catch (classificationError) {
+        console.error(`(DB Service) Error during query classification process for client ${clientId}: ${classificationError.message}`);
+    }
+    if (returnPipelineDetails) {
+        pipelineDetails.queryClassification.predictedCategory = predictedCategory;
+    }
+    // --- End Query Classification Logic ---
+
+    const searchParamsForLog = {
+        vectorWeight: finalVectorWeight,
+        ftsWeight: finalFtsWeight,
+        threshold: finalVectorMatchThreshold,
+        finalLimit: finalLimit,
+        initialLimit: initialRetrieveLimit,
+        predicted_category_applied: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? predictedCategory : null
+    };
+    console.log(`(DB Service) Hybrid Search Parameters: Effective Query='${currentQueryText.substring(0,50)}...', vectorWeight=${searchParamsForLog.vectorWeight}, ftsWeight=${searchParamsForLog.ftsWeight}, vectorMatchThreshold=${searchParamsForLog.threshold}, finalLimit=${searchParamsForLog.finalLimit}, initialRetrieveLimit=${searchParamsForLog.initialLimit}, clientId=${clientId}, categoryFilter='${searchParamsForLog.predicted_category_applied}'`);
 
     // Tokenize the *corrected* query text for subsequent Jaccard similarity etc.
     const correctedQueryTokens = tokenizeText(currentQueryText, true);
@@ -328,7 +457,14 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
 
             if (currentLoopEmbeddings.length > 0) {
                 for (const { query: eqQuery, embedding: eqEmbedding } of currentLoopEmbeddings) {
-                    const { data: vsData, error: vsError } = await supabase.rpc('vector_search', { client_id_param: clientId, query_embedding: eqEmbedding, match_threshold: finalVectorMatchThreshold, match_count: initialRetrieveLimit });
+                    const rpcParamsVector = {
+                        client_id_param: clientId,
+                        query_embedding: eqEmbedding,
+                        match_threshold: finalVectorMatchThreshold,
+                        match_count: initialRetrieveLimit,
+                        p_category_filter: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? [predictedCategory] : null
+                    };
+                    const { data: vsData, error: vsError } = await supabase.rpc('vector_search', rpcParamsVector);
                     if (vsError) { console.error(`(DB Service) Vector search error for "${eqQuery.substring(0,50)}...":`, vsError.message); }
                     else if (vsData) {
                         aggregatedVectorResults.push(...vsData);
@@ -336,7 +472,13 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
                     }
                 }
             }
-            const { data: ftsSubData, error: ftsSubError } = await supabase.rpc('fts_search_with_rank', { client_id_param: clientId, query_text: processedQueryText, match_count: initialRetrieveLimit });
+            const rpcParamsFts = {
+                client_id_param: clientId,
+                query_text: processedQueryText,
+                match_count: initialRetrieveLimit,
+                p_category_filter: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? [predictedCategory] : null
+            };
+            const { data: ftsSubData, error: ftsSubError } = await supabase.rpc('fts_search_with_rank', rpcParamsFts);
             if (ftsSubError) { console.error(`(DB Service) FTS error for "${processedQueryText.substring(0,50)}...":`, ftsSubError.message); }
             else if (ftsSubData) {
                 aggregatedFtsResults.push(...ftsSubData);
@@ -359,7 +501,7 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
         if (returnPipelineDetails) pipelineDetails.mergedAndPreRankedResultsPreview = rankedResults.slice(0,50).map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', metadata: item.metadata, initialHybridScore: item.hybrid_score, vectorSimilarity: item.vector_similarity, ftsScore: item.fts_score }));
 
         if (rankedResults.length === 0) {
-            const emptyReturn = { results: [], propositionResults: [], searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog };
+            const emptyReturn = { results: [], propositionResults: [], searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog, predictedCategory };
             if (returnPipelineDetails) emptyReturn.pipelineDetails = pipelineDetails;
             console.log("(DB Service) No results after merging. Returning empty.");
             return emptyReturn;
@@ -419,18 +561,19 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
         if (returnPipelineDetails) pipelineDetails.finalPropositionResults = propositionDataForReturn.map(p => ({ propositionId: p.proposition_id, text: p.proposition_text, sourceChunkId: p.source_chunk_id, score: p.similarity }));
 
         if (returnPipelineDetails) {
-            return { results: finalResultsMapped, propositionResults: propositionDataForReturn, searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog, pipelineDetails: pipelineDetails };
+            return { results: finalResultsMapped, propositionResults: propositionDataForReturn, searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog, predictedCategory, pipelineDetails: pipelineDetails };
         } else {
-            return { results: finalResultsMapped, propositionResults: propositionDataForReturn, searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog };
+            return { results: finalResultsMapped, propositionResults: propositionDataForReturn, searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog, predictedCategory };
         }
     } catch (error) {
         console.error(`(DB Service) Error general durante la búsqueda híbrida para cliente ${clientId}:`, error.message, error.stack);
-        const errorReturn = { results: [], propositionResults: [], searchParams: searchParamsForLog, queriesEmbeddedForLog: [originalUserQueryAtStart], rawRankedResultsForLog: [] }; // Use originalUserQueryAtStart
+        const errorReturn = { results: [], propositionResults: [], searchParams: searchParamsForLog, queriesEmbeddedForLog: [originalUserQueryAtStart], rawRankedResultsForLog: [], predictedCategory }; // Use originalUserQueryAtStart
         if (returnPipelineDetails && pipelineDetails) {
             pipelineDetails.error = error.message;
+            // pipelineDetails.queryClassification might already be set or remain at its initial values
             errorReturn.pipelineDetails = pipelineDetails;
-        } else if (returnPipelineDetails) {
-             errorReturn.pipelineDetails = { originalQuery: originalUserQueryAtStart, error: error.message };
+        } else if (returnPipelineDetails) { // This case implies pipelineDetails might not have been fully initialized if error was early
+             errorReturn.pipelineDetails = { originalQuery: originalUserQueryAtStart, error: error.message, queryClassification: { predictedCategory: predictedCategory, categoriesAvailable: clientCategoriesArray || [] } };
         }
         return errorReturn;
     }
@@ -473,6 +616,7 @@ export const logRagInteraction = async (logData) => {
         query_embeddings_used: logData.query_embeddings_used, // Optional (this is for RAG pipeline, not the user_query embedding itself)
         vector_search_params: logData.vector_search_params, // Optional
         was_escalated: logData.was_escalated || false, // Default to false
+        predicted_query_category: logData.predicted_query_category, // Add this line
         // query_embedding will be added in a subsequent update step
     };
 

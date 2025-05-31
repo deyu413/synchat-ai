@@ -80,12 +80,16 @@ export const handleChatMessage = async (req, res, next) => {
 
         const conversationHistory = await db.getConversationHistory(conversationId);
         // Use effectiveQuery for the search
-        const hybridSearchResult = await db.hybridSearch(clientId, effectiveQuery, conversationId, {});
-        let initialRelevantKnowledge = hybridSearchResult.results;
-        const propositionResults = hybridSearchResult.propositionResults || [];
-        const searchParamsUsed = hybridSearchResult.searchParams;
-        const queriesThatWereEmbedded = hybridSearchResult.queriesEmbeddedForLog;
-        const rawRankedResultsForLog = hybridSearchResult.rawRankedResultsForLog;
+        const {
+            results: hybridSearchResultsOnly, // Renamed to avoid conflict with a var name `results` if any
+            propositionResults,
+            searchParams: searchParamsUsed,
+            queriesEmbeddedForLog: queriesThatWereEmbedded,
+            predictedCategory, // Capture predictedCategory
+            rawRankedResultsForLog // Ensure this is also captured if it was part of hybridSearchResult
+        } = await db.hybridSearch(clientId, effectiveQuery, conversationId, {});
+
+        let initialRelevantKnowledge = hybridSearchResultsOnly; // Use the renamed variable
 
         // --- Ambiguity Detection ---
         let isAmbiguous = false;
@@ -198,8 +202,19 @@ export const handleChatMessage = async (req, res, next) => {
                  db.updateAnalyticOnEscalation(conversationId, new Date(), effectiveQuery).catch(err => console.error(`Analytics: Failed to update escalation data for CV:${conversationId}`, err));
             }
 
-            const retrievedContextForLog = rawRankedResultsForLog.map(c => ({ id: c.id, content_preview: c.content.substring(0,150)+"...", score: c.reranked_score, metadata: c.metadata }));
-            const logData = { clientId, conversationId, userQuery: effectiveQuery, retrievedContext: retrievedContextForLog, finalPromptToLlm: JSON.stringify(messagesForAPI), llmResponse: botReplyText, queryEmbeddingsUsed: queriesThatWereEmbedded, vectorSearchParams: searchParamsUsed, wasEscalated };
+            const retrievedContextForLog = rawRankedResultsForLog ? rawRankedResultsForLog.map(c => ({ id: c.id, content_preview: c.content.substring(0,150)+"...", score: c.reranked_score, metadata: c.metadata })) : [];
+            const logData = {
+                clientId,
+                conversationId,
+                userQuery: effectiveQuery,
+                retrievedContext: retrievedContextForLog,
+                finalPromptToLlm: JSON.stringify(messagesForAPI),
+                llmResponse: botReplyText,
+                queryEmbeddingsUsed: queriesThatWereEmbedded,
+                vectorSearchParams: searchParamsUsed,
+                wasEscalated,
+                predicted_query_category: predictedCategory // Add this line
+            };
 
             try {
                 const ragLogResult = await db.logRagInteraction(logData);

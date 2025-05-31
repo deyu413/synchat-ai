@@ -337,6 +337,7 @@ export const runRagPlaygroundQuery = async (req, res, next) => {
             query_embeddings_used: hybridSearchOutput.queriesEmbeddedForLog,
             vector_search_params: hybridSearchOutput.searchParams,
             was_escalated: false,
+            predicted_query_category: hybridSearchOutput.predictedCategory || null, // Using direct output
             // conversation_id can be null for playground interactions if not tied to one
         };
 
