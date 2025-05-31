@@ -11,7 +11,12 @@ import { // Assuming clientDashboardController.js uses named exports
     testKnowledgeQuery,
     getKnowledgeSuggestions, // New controller function for getting suggestions
     updateKnowledgeSuggestionStatus, // New controller function for updating suggestion status
-    runRagPlaygroundQuery // Controller function for the RAG playground query
+    runRagPlaygroundQuery, // Controller function for the RAG playground query
+    handlePlaygroundRagFeedback, // Import for RAG playground feedback
+    // New analytics controller functions
+    getSentimentDistributionAnalytics,
+    getTopicAnalyticsData,
+    getKnowledgeSourcePerformanceAnalytics
 } from '../controllers/clientDashboardController.js';
 
 const router = express.Router();
@@ -39,5 +44,17 @@ router.post(
     protectRoute,
     runRagPlaygroundQuery
 );
+
+// Route for RAG Playground feedback
+router.post(
+    '/me/knowledge/rag-playground/feedback',
+    protectRoute,
+    handlePlaygroundRagFeedback
+);
+
+// More specific analytics routes
+router.get('/me/analytics/sentiment', protectRoute, getSentimentDistributionAnalytics);
+router.get('/me/analytics/topics', protectRoute, getTopicAnalyticsData);
+router.get('/me/analytics/source-performance', protectRoute, getKnowledgeSourcePerformanceAnalytics);
 
 export default router;

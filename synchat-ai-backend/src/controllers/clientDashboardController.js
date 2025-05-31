@@ -329,3 +329,174 @@ export const runRagPlaygroundQuery = async (req, res, next) => {
         next(error); // Pass to global error handler
     }
 };
+
+export const handlePlaygroundRagFeedback = async (req, res) => {
+    const user_id = req.user?.id; // User providing the feedback
+    const client_id = req.user?.id; // Client context for the feedback, assuming user is the client
+
+    if (!user_id) { // This also covers client_id based on the assumption
+        console.error('(ClientDashboardCtrl) Critical: User ID (and thus Client ID) not found for authenticated user in handlePlaygroundRagFeedback.');
+        return res.status(401).json({ error: 'Unauthorized. User information not found.' });
+    }
+
+    const {
+        rating,
+        comment,
+        feedback_type,
+        rag_interaction_log_id,
+        knowledge_base_chunk_id,
+        // knowledge_proposition_id is intentionally omitted as it's commented out in DB
+        feedback_context
+    } = req.body;
+
+    // Validate required fields
+    if (typeof rating !== 'number') {
+        return res.status(400).json({ error: 'Rating (number) is required.' });
+    }
+    if (typeof feedback_type !== 'string' || feedback_type.trim() === '') {
+        return res.status(400).json({ error: 'feedback_type (string) is required.' });
+    }
+
+    // Specific validation based on feedback_type
+    if (feedback_type === 'chunk_relevance' && !knowledge_base_chunk_id) {
+        return res.status(400).json({ error: 'knowledge_base_chunk_id is required when feedback_type is "chunk_relevance".' });
+    }
+    // Add more specific validations if other feedback_types require certain IDs
+    // e.g., if 'proposition_relevance' were active:
+    // if (feedback_type === 'proposition_relevance' && !knowledge_proposition_id) {
+    //     return res.status(400).json({ error: 'knowledge_proposition_id is required for "proposition_relevance".' });
+    // }
+
+
+    const feedbackData = {
+        client_id,
+        user_id,
+        rag_interaction_log_id,
+        knowledge_base_chunk_id,
+        // knowledge_proposition_id: undefined, // Explicitly ensure it's not included
+        feedback_type,
+        rating,
+        comment,
+        feedback_context
+        // conversation_id and message_id are null/undefined here as this is playground feedback
+    };
+
+    // Remove undefined properties to ensure they are not sent to the database service,
+    // which also has logic to strip them. This is just being thorough.
+    Object.keys(feedbackData).forEach(key => {
+        if (feedbackData[key] === undefined) {
+            delete feedbackData[key];
+        }
+    });
+
+    try {
+        console.log(`(ClientDashboardCtrl) Submitting RAG Playground feedback by user ${user_id} (Client: ${client_id}), type: ${feedback_type}`);
+        // logRagFeedback is imported via `import * as db from ...` so it's `db.logRagFeedback`
+        const result = await db.logRagFeedback(feedbackData);
+
+        if (result.error) {
+            console.error('(ClientDashboardCtrl) Error in handlePlaygroundRagFeedback calling db.logRagFeedback:', result.error);
+            if (result.error.includes('Invalid input')) {
+                return res.status(400).json({ error: result.error });
+            }
+            return res.status(500).json({ error: "Failed to submit RAG feedback due to a server error." });
+        }
+
+        res.status(201).json({ message: 'RAG Playground Feedback submitted successfully', data: result.data });
+    } catch (error) {
+        console.error('(ClientDashboardCtrl) Exception in handlePlaygroundRagFeedback:', error);
+        res.status(500).json({ error: 'Failed to submit RAG feedback due to an unexpected server error.' });
+    }
+};
+
+// --- New Analytics Controller Functions ---
+
+export const getSentimentDistributionAnalytics = async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+        const clientId = req.user?.id;
+
+        if (!clientId) {
+            // This should ideally be caught by authMiddleware if user is not found,
+            // but as a safeguard for client_id derivation:
+            console.error('(ClientDashboardCtrl) Client ID not found in req.user for getSentimentDistributionAnalytics.');
+            return res.status(401).json({ error: 'Unauthorized or Client ID not determinable.' });
+        }
+        if (!startDate || !endDate) {
+            return res.status(400).json({ error: 'startDate and endDate query parameters are required.' });
+        }
+
+        // Basic date validation (can be more sophisticated)
+        if (isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid date format for startDate or endDate.' });
+        }
+
+        const result = await db.getSentimentDistribution(clientId, { startDate, endDate });
+
+        if (result.error) {
+            // db.getSentimentDistribution already logs detailed error
+            return res.status(500).json({ error: result.error });
+        }
+        res.status(200).json(result.data);
+    } catch (error) {
+        console.error('(ClientDashboardCtrl) Exception in getSentimentDistributionAnalytics:', error);
+        res.status(500).json({ error: 'Failed to fetch sentiment distribution analytics.' });
+    }
+};
+
+export const getTopicAnalyticsData = async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query; // Period options can be expanded later
+        const clientId = req.user?.id;
+
+        if (!clientId) {
+            console.error('(ClientDashboardCtrl) Client ID not found in req.user for getTopicAnalyticsData.');
+            return res.status(401).json({ error: 'Unauthorized or Client ID not determinable.' });
+        }
+        if (!startDate || !endDate) { // Basic validation, can be expanded
+            return res.status(400).json({ error: 'startDate and endDate query parameters are required for topic analytics.' });
+        }
+        if (isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid date format for startDate or endDate.' });
+        }
+
+        const result = await db.getTopicAnalytics(clientId, { startDate, endDate });
+
+        // Since it's a placeholder, it might return a specific structure including a message
+        if (result.error) {
+            return res.status(500).json({ error: result.error });
+        }
+        res.status(200).json(result); // Send the whole result including data and message
+    } catch (error) {
+        console.error('(ClientDashboardCtrl) Exception in getTopicAnalyticsData:', error);
+        res.status(500).json({ error: 'Failed to fetch topic analytics data.' });
+    }
+};
+
+export const getKnowledgeSourcePerformanceAnalytics = async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query; // Period options
+        const clientId = req.user?.id;
+
+        if (!clientId) {
+            console.error('(ClientDashboardCtrl) Client ID not found in req.user for getKnowledgeSourcePerformanceAnalytics.');
+            return res.status(401).json({ error: 'Unauthorized or Client ID not determinable.' });
+        }
+        if (!startDate || !endDate) { // Basic validation
+            return res.status(400).json({ error: 'startDate and endDate query parameters are required for source performance analytics.' });
+        }
+         if (isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid date format for startDate or endDate.' });
+        }
+
+        const result = await db.getKnowledgeSourcePerformance(clientId, { startDate, endDate });
+
+        if (result.error) {
+            return res.status(500).json({ error: result.error });
+        }
+        res.status(200).json(result); // Send the whole result including data and message
+    } catch (error) {
+        console.error('(ClientDashboardCtrl) Exception in getKnowledgeSourcePerformanceAnalytics:', error);
+        res.status(500).json({ error: 'Failed to fetch knowledge source performance analytics.' });
+    }
+};
