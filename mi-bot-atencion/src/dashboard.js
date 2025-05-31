@@ -329,7 +329,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 alert('ID de interacción RAG no encontrado. No se puede enviar feedback.');
                 return;
             }
-            openPlaygroundFeedbackModal('overall_response_quality', null, currentPlaygroundRagLogId);
+            const queryText = playgroundQueryInput.value;
+            const contextForOverallFeedback = {
+                query_text: queryText,
+                final_context_string: data?.llmContextualization?.finalLLMContextString || data?.finalLLMContextString || "Context string not available"
+            };
+            openPlaygroundFeedbackModal('overall_response_quality', null, currentPlaygroundRagLogId, null, contextForOverallFeedback);
         };
         overallFeedbackDiv.appendChild(rateOverallResponseBtn);
         playgroundResultsContainer.appendChild(overallFeedbackDiv);
@@ -394,14 +399,33 @@ document.addEventListener('DOMContentLoaded', () => {
                 button.addEventListener('click', (e) => {
                     const itemId = e.target.dataset.itemId; const rating = parseInt(e.target.dataset.rating, 10);
                     if (!currentPlaygroundRagLogId) { alert('ID de RAG Log no encontrado.'); return; }
-                    doSubmitPlaygroundFeedback('chunk_relevance', itemId, currentPlaygroundRagLogId, rating, null).then(() => alert(`Feedback para chunk ${itemId} enviado.`)).catch(err => alert(`Error: ${err.message}`));
+                    const queryText = playgroundQueryInput.value;
+                    const directChunkContext = {
+                        query_text: queryText,
+                        chunk_id: itemId,
+                        chunk_content_snippet_preview: "Content preview not directly available for quick feedback"
+                        // Note: Could try to find 'item.contentSnippet' here if 'item' is accessible or by iterating 'data'
+                        // but keeping it simple as per prompt for direct feedback.
+                    };
+                    doSubmitPlaygroundFeedback('chunk_relevance', itemId, currentPlaygroundRagLogId, rating, null, directChunkContext)
+                        .then(() => alert(`Feedback para chunk ${itemId} enviado.`))
+                        .catch(err => alert(`Error: ${err.message}`));
                 });
             });
             div.querySelectorAll('.btn-chunk-feedback-comment').forEach(button => {
                 button.addEventListener('click', (e) => {
                     const itemId = e.target.dataset.itemId;
                     if (!currentPlaygroundRagLogId) { alert('ID de RAG Log no encontrado.'); return; }
-                    openPlaygroundFeedbackModal('chunk_relevance', itemId, currentPlaygroundRagLogId);
+
+                    const queryText = playgroundQueryInput.value;
+                    // Find the 'item' that corresponds to this itemId from the 'data' object used to render this section
+                    const currentItem = data.finalRankedResultsForPlayground.find(it => it.id.toString() === itemId.toString());
+                    const contextForChunkFeedback = {
+                        query_text: queryText,
+                        chunk_id: itemId,
+                        chunk_content_snippet: currentItem ? (currentItem.contentSnippet || currentItem.content?.substring(0, 250) + '...') : "Snippet not found for this ID"
+                    };
+                    openPlaygroundFeedbackModal('chunk_relevance', itemId, currentPlaygroundRagLogId, null, contextForChunkFeedback);
                 });
             });
         }, data));
@@ -691,13 +715,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const submitPlaygroundFeedbackBtn = document.getElementById('submitPlaygroundFeedbackBtn');
     let currentPlaygroundFeedbackRating = null;
 
-    function openPlaygroundFeedbackModal(feedbackType, itemId, ragLogId, initialRating = null) {
+    function openPlaygroundFeedbackModal(feedbackType, itemId, ragLogId, initialRating = null, feedbackContext = null) {
         if (!playgroundFeedbackModal) { console.error("Playground feedback modal not found in DOM"); return; }
         playgroundFeedbackTypeStore.value = feedbackType;
         playgroundItemIdStore.value = itemId || '';
         playgroundRagLogIdStore.value = ragLogId || '';
         playgroundFeedbackCommentInput.value = '';
         currentPlaygroundFeedbackRating = initialRating;
+
+        const playgroundFeedbackContextStore = document.getElementById('playgroundFeedbackContextStore');
+        if (playgroundFeedbackContextStore) {
+            playgroundFeedbackContextStore.value = feedbackContext ? JSON.stringify(feedbackContext) : '';
+        }
 
         if (feedbackType === 'chunk_relevance') {
             playgroundFeedbackModalTitle.textContent = `Feedback para Chunk ID: ${itemId}`;
@@ -752,12 +781,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 const ragLogId = playgroundRagLogIdStore.value || null;
                 const comment = playgroundFeedbackCommentInput.value.trim();
 
+                const playgroundFeedbackContextStore = document.getElementById('playgroundFeedbackContextStore');
+                let feedbackContext = null;
+                if (playgroundFeedbackContextStore && playgroundFeedbackContextStore.value) {
+                    try {
+                        feedbackContext = JSON.parse(playgroundFeedbackContextStore.value);
+                    } catch (e) {
+                        console.error("Error parsing feedbackContext from store:", e);
+                        // feedbackContext remains null if parsing fails
+                    }
+                }
+
                 if (currentPlaygroundFeedbackRating === null) { alert('Por favor, seleccione una calificación.'); return; }
                 if (!feedbackType || !ragLogId) { alert('Error: Tipo de feedback o ID de RAG Log faltante.'); return; }
                 if (feedbackType === 'chunk_relevance' && !itemId) { alert('Error: ID del chunk faltante.'); return; }
 
                 try {
-                    await doSubmitPlaygroundFeedback(feedbackType, itemId, ragLogId, currentPlaygroundFeedbackRating, comment);
+                    await doSubmitPlaygroundFeedback(feedbackType, itemId, ragLogId, currentPlaygroundFeedbackRating, comment, feedbackContext);
                     if(playgroundFeedbackModal) playgroundFeedbackModal.style.display = 'none';
                     alert('Feedback del Playground enviado.');
                 } catch (error) {
@@ -766,10 +806,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         }
-        async function doSubmitPlaygroundFeedback(feedbackType, itemId, ragLogId, rating, comment) {
+        async function doSubmitPlaygroundFeedback(feedbackType, itemId, ragLogId, rating, comment, feedbackContext = null) {
             const payload = {
-                feedback_type: feedbackType, rating: rating, comment: comment || null,
-                rag_interaction_log_id: ragLogId
+                feedback_type: feedbackType,
+                rating: rating,
+                comment: comment || null,
+                rag_interaction_log_id: ragLogId,
+                feedback_context: feedbackContext // Add the context here
             };
             if (feedbackType === 'chunk_relevance' && itemId) payload.knowledge_base_chunk_id = itemId;
             const response = await fetch(`${API_BASE_URL}/api/client/me/knowledge/rag-playground/feedback`, {
@@ -807,12 +850,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // window.displayConversationMessages = (messages) => { /* ... */ };
         // To avoid conflicts, renaming inbox feedback rating variable
         let currentInboxFeedbackRating = null;
-        function openInboxFeedbackModal(messageId, ragLogId) {
+        function openInboxFeedbackModal(messageId, ragLogId, messageContent) {
             if (!inboxFeedbackModal) { console.error("Inbox feedback modal not found"); return; }
             feedbackMessageIdStore.value = messageId;
             feedbackRagLogIdStore.value = ragLogId || '';
             feedbackCommentInput.value = '';
             currentInboxFeedbackRating = null;
+
+            const feedbackMessageContentStore = document.getElementById('feedbackMessageContentStore');
+            if (feedbackMessageContentStore) {
+                feedbackMessageContentStore.value = messageContent || '';
+            }
 
             feedbackPositiveBtn.style.border = 'none';
             feedbackNegativeBtn.style.border = 'none';
@@ -845,12 +893,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 const messageId = feedbackMessageIdStore.value;
                 const ragLogId = feedbackRagLogIdStore.value || null;
                 const comment = feedbackCommentInput.value.trim();
+                const feedbackMessageContentStore = document.getElementById('feedbackMessageContentStore');
+                const messageContent = feedbackMessageContentStore ? feedbackMessageContentStore.value : '';
+
 
                 if (currentInboxFeedbackRating === null) { alert('Por favor, seleccione una calificación.'); return; }
                 if (!messageId || !currentOpenConversationId) { alert('Error: No se pudo identificar mensaje/conversación.'); return;}
 
                 try {
-                    await submitInboxMessageFeedback(currentOpenConversationId, messageId, ragLogId, currentInboxFeedbackRating, comment);
+                    await submitInboxMessageFeedback(currentOpenConversationId, messageId, ragLogId, currentInboxFeedbackRating, comment, messageContent);
                     if(inboxFeedbackModal) inboxFeedbackModal.style.display = 'none';
                     alert('Feedback enviado.');
                 } catch (error) {
@@ -859,9 +910,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             });
         }
-        async function submitInboxMessageFeedback(conversationId, messageId, ragLogId, rating, comment) {
+        async function submitInboxMessageFeedback(conversationId, messageId, ragLogId, rating, comment, messageContent) {
             const feedbackPayload = {
-                rating: rating, comment: comment || null, rag_interaction_log_id: ragLogId
+                rating: rating,
+                comment: comment || null,
+                rag_interaction_log_id: ragLogId,
+                feedback_context: { // Store the original message content here
+                    message_content: messageContent
+                }
             };
             const response = await fetch(`${API_BASE_URL}/api/client/me/inbox/conversations/${conversationId}/messages/${messageId}/rag_feedback`, {
                 method: 'POST',
@@ -878,19 +934,42 @@ document.addEventListener('DOMContentLoaded', () => {
         const existingDisplayConvMessages = window.displayConversationMessages;
         window.displayConversationMessages = function(messages, ...args) {
             if (typeof existingDisplayConvMessages === 'function') {
-                existingDisplayConvMessages.apply(this, [messages, ...args]);
+                existingDisplayConvMessages.apply(this, [messages, ...args]); // Call original
             }
             const msgContainer = document.getElementById('messageHistoryContainer');
-            if(msgContainer) {
+
+            // BEGIN MODIFICATION - Set data-rag-log-id from message data
+            if (msgContainer && Array.isArray(messages)) {
+                messages.forEach(message => {
+                    if (message.sender === 'bot' && message.rag_interaction_ref) {
+                        // Ensure message.message_id is available and used by original function to set data-message-id
+                        const botMsgElement = msgContainer.querySelector(`.message-item[data-message-id="${message.message_id}"]`);
+                        if (botMsgElement) {
+                            botMsgElement.dataset.ragLogId = message.rag_interaction_ref;
+                        }
+                    }
+                });
+            }
+            // END MODIFICATION
+
+            // Existing logic to add feedback buttons follows
+            if(msgContainer) { // This if(msgContainer) is repeated from above, but okay for now
                  msgContainer.querySelectorAll('.message-item.bot-message').forEach(msgElement => {
                     if (msgElement.querySelector('.feedback-open-btn')) return;
                     const msgId = msgElement.dataset.messageId;
-                    const ragId = msgElement.dataset.ragLogId;
-                    if (msgId) {
+                    const ragId = msgElement.dataset.ragLogId; // This should now be populated if ref existed
+
+                    if (msgId && ragId) { // <<<< MODIFIED CONDITION HERE
                         const btn = document.createElement('button');
                         btn.textContent = 'Valorar'; btn.className = 'feedback-open-btn';
                         btn.style.marginLeft = '10px'; btn.style.padding = '3px 8px'; btn.style.fontSize = '0.8em';
-                        btn.onclick = () => openInboxFeedbackModal(msgId, ragId);
+
+                        // Attempt to get meaningful message text, adjust selector as needed.
+                        // Common patterns: text is directly in .message-content or in a <p> or <span> within it.
+                        const messageContentElement = msgElement.querySelector('.message-content p') || msgElement.querySelector('.message-content span') || msgElement.querySelector('.message-content');
+                        const botMessageText = messageContentElement ? messageContentElement.textContent.trim() : msgElement.textContent.trim();
+
+                        btn.onclick = () => openInboxFeedbackModal(msgId, ragId, botMessageText);
 
                         const contentDiv = msgElement.querySelector('.message-content') || msgElement;
                         contentDiv.appendChild(btn);

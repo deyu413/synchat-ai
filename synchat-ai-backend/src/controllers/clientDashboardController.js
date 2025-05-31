@@ -321,6 +321,38 @@ export const runRagPlaygroundQuery = async (req, res, next) => {
         playgroundData.hybridSearchResults = hybridSearchOutput.results;
         playgroundData.hybridSearchPropositionResults = hybridSearchOutput.propositionResults;
 
+        // BEGIN RAG Interaction Logging for Playground
+        const retrievedContextForLog = hybridSearchOutput.results?.map(c => ({
+            id: c.id,
+            content_preview: c.content?.substring(0,150)+"...",
+            score: c.reranked_score || c.hybrid_score, // Use best available score
+            metadata: c.metadata
+        })) || [];
+
+        const ragInteractionLogData = {
+            client_id: clientId,
+            user_query: queryText,
+            retrieved_context: retrievedContextForLog,
+            llm_response: "Playground Interaction - RAG components displayed.", // Or null
+            query_embeddings_used: hybridSearchOutput.queriesEmbeddedForLog,
+            vector_search_params: hybridSearchOutput.searchParams,
+            was_escalated: false,
+            // conversation_id can be null for playground interactions if not tied to one
+        };
+
+        try {
+            const ragLogResult = await db.logRagInteraction(ragInteractionLogData);
+            if (ragLogResult && ragLogResult.rag_interaction_log_id) {
+                playgroundData.rag_interaction_log_id = ragLogResult.rag_interaction_log_id;
+                console.log(`(ClientDashboardCtrl) Playground RAG interaction logged with ID: ${ragLogResult.rag_interaction_log_id}`);
+            } else {
+                console.error("(ClientDashboardCtrl) Failed to get rag_interaction_log_id from db.logRagInteraction for playground.");
+            }
+        } catch (logError) {
+            console.error("(ClientDashboardCtrl) Error logging RAG interaction for playground:", logError.message);
+            // Decide if you want to still send response or error out. For now, continue and log.
+        }
+        // END RAG Interaction Logging for Playground
 
         res.status(200).json(playgroundData);
 

@@ -80,7 +80,7 @@ export const getAllActiveClientIds = async () => { /* ... */ }; // Keep only one
 export const getChunkSampleForSource = async (clientId, sourceId, limit = 5) => { /* ... */ };
 export const getConversationHistory = async (conversationId) => { /* ... */ };
 
-export const saveMessage = async (conversationId, sender, textContent) => {
+export const saveMessage = async (conversationId, sender, textContent, ragInteractionRef = null) => {
     if (!conversationId || !sender || typeof textContent !== 'string') {
         console.error('(DB Service) Invalid parameters for saveMessage.');
         return { error: 'Invalid parameters: conversationId, sender, and textContent are required.' };
@@ -93,6 +93,10 @@ export const saveMessage = async (conversationId, sender, textContent) => {
         // timestamp is defaulted by DB
         sentiment: null // Default to null
     };
+
+    if (ragInteractionRef) {
+        messageData.rag_interaction_ref = ragInteractionRef;
+    }
 
     if (sender === 'user' && textContent && textContent.trim() !== '') {
         try {
@@ -586,7 +590,43 @@ export const logRagFeedback = async (feedbackData) => {
 };
 
 export const getClientConversations = async (clientId, statusFilters = [], page = 1, pageSize = 20) => { /* ... */ };
-export const getMessagesForConversation = async (conversationId, clientId) => { /* ... */ };
+
+export const getMessagesForConversation = async (conversationId, clientId) => {
+    if (!conversationId || !clientId) {
+        console.error('(DB Service) Invalid params for getMessagesForConversation: conversationId and clientId are required.');
+        return { error: 'conversationId and clientId are required.' };
+    }
+    try {
+        const { data: conversation, error: convError } = await supabase
+            .from('conversations')
+            .select('client_id')
+            .eq('conversation_id', conversationId)
+            .eq('client_id', clientId) // Verify ownership
+            .single();
+
+        if (convError || !conversation) {
+            console.error(`(DB Service) Error fetching conversation or ownership verification failed for conv ${conversationId}, client ${clientId}:`, convError);
+            throw new Error('Conversation not found or access denied.');
+        }
+
+        const { data, error } = await supabase
+            .from('messages')
+            .select('message_id, conversation_id, sender, content, timestamp, sentiment, rag_interaction_ref') // Added rag_interaction_ref
+            .eq('conversation_id', conversationId)
+            .order('timestamp', { ascending: true });
+
+        if (error) {
+            console.error(`(DB Service) Error fetching messages for conv ${conversationId}:`, error);
+            return { error: error.message };
+        }
+        return { data };
+    } catch (err) {
+        console.error(`(DB Service) Exception in getMessagesForConversation for conv ${conversationId}:`, err);
+        // Ensure error message is passed through if it's a custom error like "Conversation not found..."
+        return { error: err.message || 'An unexpected error occurred while fetching messages.' };
+    }
+};
+
 export const addAgentMessageToConversation = async (conversationId, clientId, agentUserId, content) => { /* ... */ };
 export const updateConversationStatusByAgent = async (conversationId, clientId, agentUserId, newStatus) => { /* ... */ };
 
@@ -603,7 +643,7 @@ export const updateConversationStatusByAgent = async (conversationId, clientId, 
 // createConversationAnalyticEntry, incrementAnalyticMessageCount, updateAnalyticOnEscalation, updateAnalyticOnBotCannotAnswer, finalizeConversationAnalyticRecord
 // tokenizeText, calculateJaccardSimilarity, SPANISH_ABBREVIATIONS, preprocessTextForEmbedding
 // getConversationDetails, logAiResolution, logRagInteraction
-// getClientConversations, getMessagesForConversation, addAgentMessageToConversation, updateConversationStatusByAgent
+// getClientConversations, addAgentMessageToConversation, updateConversationStatusByAgent
 
 // (The actual overwrite will use the full existing file content with the hybridSearch modifications)
 

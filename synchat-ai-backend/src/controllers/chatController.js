@@ -38,6 +38,7 @@ export const handleChatMessage = async (req, res, next) => {
 
     let effectiveQuery = userMessageInput;
     let originalQueryForContext = userMessageInput; // Used for some prompts, might be overridden by clarification
+    let ragLogId = null; // <<<< Initialize ragLogId here
 
     if (clarification_response_details && clarification_response_details.original_query) {
         console.log(`(Controller) Received a clarification response for original query: "${clarification_response_details.original_query}" with user's choice/input: "${userMessageInput}"`);
@@ -199,13 +200,24 @@ export const handleChatMessage = async (req, res, next) => {
 
             const retrievedContextForLog = rawRankedResultsForLog.map(c => ({ id: c.id, content_preview: c.content.substring(0,150)+"...", score: c.reranked_score, metadata: c.metadata }));
             const logData = { clientId, conversationId, userQuery: effectiveQuery, retrievedContext: retrievedContextForLog, finalPromptToLlm: JSON.stringify(messagesForAPI), llmResponse: botReplyText, queryEmbeddingsUsed: queriesThatWereEmbedded, vectorSearchParams: searchParamsUsed, wasEscalated };
-            db.logRagInteraction(logData).catch(err => console.error("Failed to log RAG interaction:", err.message));
+
+            try {
+                const ragLogResult = await db.logRagInteraction(logData);
+                if (ragLogResult && ragLogResult.rag_interaction_log_id) {
+                    ragLogId = ragLogResult.rag_interaction_log_id;
+                    console.log(`(Controller) RAG Interaction logged with ID: ${ragLogId}`);
+                } else {
+                    console.error("(Controller) Failed to get rag_interaction_log_id from logRagInteraction result:", ragLogResult);
+                }
+            } catch (err) {
+                console.error("(Controller) Error logging RAG interaction:", err.message);
+            }
 
             if (botReplyText) {
                 // Save the user's actual typed message, and bot's reply
-                await db.saveMessage(conversationId, 'user', userMessageInput);
+                await db.saveMessage(conversationId, 'user', userMessageInput); // User message does not get ragLogId
                 db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => console.error("Analytics err:", err));
-                await db.saveMessage(conversationId, 'bot', botReplyText);
+                await db.saveMessage(conversationId, 'bot', botReplyText, ragLogId); // Pass ragLogId here for bot message
                 db.incrementAnalyticMessageCount(conversationId, 'bot').catch(err => console.error("Analytics err:", err));
 
                 if (!(clarification_response_details && clarification_response_details.original_query)) { // Don't cache if it was a clarification cycle that led to this answer
