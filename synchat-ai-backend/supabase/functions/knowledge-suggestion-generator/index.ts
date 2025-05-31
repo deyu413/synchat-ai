@@ -22,18 +22,18 @@ async function sendAlert(supabaseAdmin: SupabaseClient | null, functionName: str
   console.error(`ALERT [${severity.toUpperCase()}] for ${functionName}: ${message}`, details);
 
   // Example: Insert into a system_alerts table (if it exists and SupabaseClient is provided)
-  // if (supabaseAdmin) {
-  //   try {
-  //     const { error } = await supabaseAdmin.from('system_alerts').insert([alertPayload]);
-  //     if (error) {
-  //       console.error(`(EdgeFunc) Failed to insert alert into system_alerts for ${functionName}:`, error);
-  //     } else {
-  //       console.log(`(EdgeFunc) System alert for ${functionName} successfully recorded.`);
-  //     }
-  //   } catch (e) {
-  //     console.error(`(EdgeFunc) Exception while trying to store alert for ${functionName}:`, e);
-  //   }
-  // }
+  if (supabaseAdmin) {
+    try {
+      const { error } = await supabaseAdmin.from('system_alerts').insert([alertPayload]);
+      if (error) {
+        console.error(`(EdgeFunc) Failed to insert alert into system_alerts for ${functionName}:`, error);
+      } else {
+        console.log(`(EdgeFunc) System alert for ${functionName} successfully recorded.`);
+      }
+    } catch (e) {
+      console.error(`(EdgeFunc) Exception while trying to store alert for ${functionName}:`, e);
+    }
+  }
 }
 
 interface Client {
