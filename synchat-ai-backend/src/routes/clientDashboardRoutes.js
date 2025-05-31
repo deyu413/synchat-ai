@@ -6,6 +6,17 @@ import { // Assuming clientDashboardController.js uses named exports
     updateClientConfig,
     requestKnowledgeIngest,
     getClientUsageResolutions,
+    getChatbotAnalyticsSummary,
+    getUnansweredQuerySuggestions,
+    testKnowledgeQuery,
+    getKnowledgeSuggestions, // New controller function for getting suggestions
+    updateKnowledgeSuggestionStatus, // New controller function for updating suggestion status
+    runRagPlaygroundQuery, // Controller function for the RAG playground query
+    handlePlaygroundRagFeedback, // Import for RAG playground feedback
+    // New analytics controller functions
+    getSentimentDistributionAnalytics,
+    getTopicAnalyticsData,
+    getKnowledgeSourcePerformanceAnalytics
 } from '../controllers/clientDashboardController.js';
 
 const router = express.Router();
@@ -15,5 +26,35 @@ router.get('/me/config', protectRoute, getClientConfig);
 router.put('/me/config', protectRoute, updateClientConfig);
 router.post('/me/ingest', protectRoute, requestKnowledgeIngest);
 router.get('/me/usage/resolutions', protectRoute, getClientUsageResolutions);
+
+// New analytics routes
+router.get('/me/analytics/summary', protectRoute, getChatbotAnalyticsSummary);
+router.get('/me/analytics/suggestions/unanswered', protectRoute, getUnansweredQuerySuggestions);
+
+// New route for testing knowledge query
+router.post('/me/knowledge/test_query', protectRoute, testKnowledgeQuery);
+
+// Routes for knowledge suggestions
+router.get('/me/knowledge/suggestions', protectRoute, getKnowledgeSuggestions);
+router.put('/me/knowledge/suggestions/:suggestion_id/status', protectRoute, updateKnowledgeSuggestionStatus);
+
+// Route for RAG Playground query
+router.post(
+    '/me/knowledge/rag-playground-query',
+    protectRoute,
+    runRagPlaygroundQuery
+);
+
+// Route for RAG Playground feedback
+router.post(
+    '/me/knowledge/rag-playground/feedback',
+    protectRoute,
+    handlePlaygroundRagFeedback
+);
+
+// More specific analytics routes
+router.get('/me/analytics/sentiment', protectRoute, getSentimentDistributionAnalytics);
+router.get('/me/analytics/topics', protectRoute, getTopicAnalyticsData);
+router.get('/me/analytics/source-performance', protectRoute, getKnowledgeSourcePerformanceAnalytics);
 
 export default router;

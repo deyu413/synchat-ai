@@ -8,10 +8,10 @@ export const getWidgetConfigByClientId = async (req, res) => {
         return res.status(400).json({ error: 'ClientId is missing.' });
     }
 
-    // Optional: Add proper UUID validation for clientId if needed in the future.
-    // e.g., if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(clientId)) {
-    //     return res.status(400).json({ error: 'ClientId has an invalid format.' });
-    // }
+    // Validate clientId format as UUID.
+    if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(clientId)) {
+        return res.status(400).json({ error: 'ClientId has an invalid format.' });
+    }
 
     try {
         const { data: clientRecord, error: dbError } = await supabase

@@ -12,16 +12,18 @@ if (!process.env.OPENAI_API_KEY) {
  * @param {Array<object>} messages - Array de mensajes en formato OpenAI.
  * @param {string} modelName - Nombre del modelo a usar (ej: "gpt-3.5-turbo").
  * @param {number} temperature - Temperatura para la generación.
+ * @param {number} [maxTokensOverride] - Opcional: Número máximo de tokens para la respuesta.
  * @returns {Promise<string|null>} - La respuesta del bot o null si hay error.
  */
-export const getChatCompletion = async (messages, modelName = "gpt-3.5-turbo", temperature = 0.7) => {
-    console.log(`(OpenAI Service) Enviando ${messages.length} mensajes a la API (Modelo: ${modelName}, Temp: ${temperature})...`);
+export const getChatCompletion = async (messages, modelName = "gpt-3.5-turbo", temperature = 0.7, maxTokensOverride = null) => {
+    const effectiveMaxTokens = maxTokensOverride !== null ? maxTokensOverride : 500; // Default to 500 if not provided
+    console.log(`(OpenAI Service) Enviando ${messages.length} mensajes a la API (Modelo: ${modelName}, Temp: ${temperature}, MaxTokens: ${effectiveMaxTokens})...`);
     try {
         const completion = await openai.chat.completions.create({
             model: modelName,
             messages: messages,
             temperature: temperature,
-            max_tokens: 500, // Considera añadir si necesitas limitar longitud
+            max_tokens: effectiveMaxTokens,
         });
 
         // Loguear el uso de tokens (útil para control de costes)

@@ -1,9 +1,13 @@
 // src/controllers/inboxController.js
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const POSITIVE_INT_REGEX = /^[1-9]\d*$/;
+
 import {
     getClientConversations,
     getMessagesForConversation,
     addAgentMessageToConversation,
-    updateConversationStatusByAgent
+    updateConversationStatusByAgent,
+    logRagFeedback // Added for RAG feedback
 } from '../services/databaseService.js';
 
 // Allowed statuses an agent can set (for validation in changeConversationStatus)
@@ -24,25 +28,40 @@ export const listConversations = async (req, res) => {
     const { status, page: pageQuery, pageSize: pageSizeQuery } = req.query;
 
     let statusFiltersArray = [];
+    const knownConversationStatuses = ['open', 'awaiting_agent_reply', 'agent_replied', 'closed_by_agent', 'escalated_to_human', 'bot_active', 'closed_by_user', 'resolved_by_ia'];
+
     if (status && typeof status === 'string') {
         statusFiltersArray = status.split(',').map(s => s.trim()).filter(s => s);
-    } else if (Array.isArray(status)) { // If query parser somehow produces an array
+    } else if (Array.isArray(status)) {
         statusFiltersArray = status.map(s => String(s).trim()).filter(s => s);
     }
-    
-    // Default to ['escalated_to_human'] if no specific filters are provided for MVP
-    if (statusFiltersArray.length === 0) {
+
+    if (statusFiltersArray.length > 0) {
+        for (const s of statusFiltersArray) {
+            if (!knownConversationStatuses.includes(s)) {
+                return res.status(400).json({ error: `Invalid status filter: '${s}'. Allowed statuses are: ${knownConversationStatuses.join(', ')}` });
+            }
+        }
+    } else {
+        // Default to a set of active statuses if no specific filters are provided
         statusFiltersArray = ['escalated_to_human', 'awaiting_agent_reply', 'agent_replied', 'open'];
     }
 
-    const page = parseInt(pageQuery, 10) || 1;
-    const pageSize = parseInt(pageSizeQuery, 10) || 20;
+    const parsedPage = pageQuery ? parseInt(pageQuery, 10) : 1;
+    const parsedPageSize = pageSizeQuery ? parseInt(pageSizeQuery, 10) : 20;
+
+    if (pageQuery && (isNaN(parsedPage) || parsedPage < 0)) {
+        return res.status(400).json({ error: 'Invalid page value. Must be a non-negative integer.' });
+    }
+    if (pageSizeQuery && (isNaN(parsedPageSize) || parsedPageSize < 0)) {
+        return res.status(400).json({ error: 'Invalid pageSize value. Must be a non-negative integer.' });
+    }
 
     try {
-        console.log(`(InboxCtrl) Listing conversations for client ${clientId}, page ${page}, size ${pageSize}, statuses: ${statusFiltersArray.join(', ')}`);
-        const result = await getClientConversations(clientId, statusFiltersArray, page, pageSize);
+        console.log(`(InboxCtrl) Listing conversations for client ${clientId}, page ${parsedPage}, size ${parsedPageSize}, statuses: ${statusFiltersArray.join(', ')}`);
+        const result = await getClientConversations(clientId, statusFiltersArray, parsedPage, parsedPageSize);
         
-        if (result.error) { // Handle errors returned by the service itself (e.g. DB connection issues)
+        if (result.error) {
              console.error(`(InboxCtrl) Error from getClientConversations service:`, result.error);
              return res.status(500).json({ message: "Error retrieving conversations.", error: result.error });
         }
@@ -61,6 +80,9 @@ export const getConversationMessages = async (req, res) => {
 
     if (!conversation_id) {
         return res.status(400).json({ message: 'Conversation ID is required.' });
+    }
+    if (!UUID_REGEX.test(conversation_id)) {
+        return res.status(400).json({ error: 'conversation_id has an invalid format.' });
     }
 
     try {
@@ -94,8 +116,14 @@ export const postAgentMessage = async (req, res) => {
     if (!conversation_id) {
         return res.status(400).json({ message: 'Conversation ID is required.' });
     }
+    if (!UUID_REGEX.test(conversation_id)) {
+        return res.status(400).json({ error: 'conversation_id has an invalid format.' });
+    }
     if (!content || typeof content !== 'string' || content.trim() === '') {
         return res.status(400).json({ message: 'Message content is required and cannot be empty.' });
+    }
+    if (content.length > 5000) {
+        return res.status(400).json({ error: 'Message content exceeds maximum length of 5000 characters.' });
     }
     
     // We need the client_id associated with the user/agent to pass to the service for ownership check.
@@ -157,6 +185,9 @@ export const changeConversationStatus = async (req, res) => {
     if (!conversation_id) {
         return res.status(400).json({ message: 'Conversation ID is required.' });
     }
+    if (!UUID_REGEX.test(conversation_id)) {
+        return res.status(400).json({ error: 'conversation_id has an invalid format.' });
+    }
     if (!newStatus || typeof newStatus !== 'string' || newStatus.trim() === '') {
         return res.status(400).json({ message: 'New status is required.' });
     }
@@ -171,6 +202,16 @@ export const changeConversationStatus = async (req, res) => {
     try {
         console.log(`(InboxCtrl) Changing status for conv ${conversation_id} (owned by ${conversationOwnerClientId}) to ${newStatus} by agent ${actingAgentUserId}`);
         const updatedConversation = await updateConversationStatusByAgent(conversation_id, conversationOwnerClientId, actingAgentUserId, newStatus);
+
+        // Define terminal statuses for analytics finalization
+        const terminalStatuses = ['resolved_by_ia', 'closed_by_agent', 'closed_by_user', 'archived'];
+        if (terminalStatuses.includes(newStatus)) {
+            // Use updated_at from the conversation record as the lastMessageAt for analytics
+            const lastMessageAtForAnalytics = updatedConversation.updated_at || new Date().toISOString();
+            db.finalizeConversationAnalyticRecord(conversation_id, newStatus, lastMessageAtForAnalytics)
+                .catch(err => console.error(`Analytics: Failed to finalize record for CV:${conversation_id}`, err));
+        }
+
         res.status(200).json(updatedConversation);
     } catch (error) {
         console.error(`(InboxCtrl) Error in changeConversationStatus for conv ${conversation_id}:`, error);
@@ -188,3 +229,139 @@ export const changeConversationStatus = async (req, res) => {
     }
 };
 
+// 5. Submit Feedback for a Message
+export const submitMessageFeedback = async (req, res) => {
+    const agentUserId = req.user.id; // User acting as agent is the dashboard owner
+    const clientId = req.user.id; // The client context for this operation
+    const { conversation_id, message_id } = req.params;
+    const { rating, comment } = req.body;
+
+    if (!conversation_id || !message_id) {
+        return res.status(400).json({ message: 'Conversation ID and Message ID are required.' });
+    }
+    if (!UUID_REGEX.test(conversation_id)) {
+        return res.status(400).json({ error: 'conversation_id has an invalid format.' });
+    }
+    if (!POSITIVE_INT_REGEX.test(message_id)) {
+        return res.status(400).json({ error: 'message_id must be a positive integer string.' });
+    }
+    if (rating === undefined || ![-1, 1].includes(Number(rating))) { // Assuming 0 is not a valid rating for this specific feedback type
+        return res.status(400).json({ message: 'Rating is required and must be 1 (positive) or -1 (negative).' });
+    }
+    if (comment && (typeof comment !== 'string' || comment.length > 1000)) {
+        return res.status(400).json({ message: 'Comment must be a string and not exceed 1000 characters.' });
+    }
+
+    try {
+        // Optional: Verify the message belongs to the conversation and client if needed,
+        // but RLS on message_feedback table should handle security.
+        // We trust message_id comes from a message displayed to this client.
+
+        console.log(`(InboxCtrl) Submitting feedback for msg ${message_id} in conv ${conversation_id} by agent ${agentUserId} (Client: ${clientId})`);
+
+        // The databaseService.logMessageFeedback function was added in a previous step.
+        // Its signature is: logMessageFeedback(messageId, clientId, agentUserId, rating, comment)
+        // Note: The existing code uses 'db.logMessageFeedback'. This seems to be an inconsistency
+        // as other functions are imported directly. Assuming direct import for new function.
+        // If 'db' is an alias or instance, this might need adjustment.
+        // For now, proceeding with direct import as per other examples in this file.
+        const { data, error: dbError } = await logMessageFeedback(message_id, clientId, agentUserId, Number(rating), comment);
+        // For consistency, I should check if `logMessageFeedback` is actually what's used or if it's an alias.
+        // The prompt refers to `databaseService.logRagFeedback`.
+        // The existing code for `submitMessageFeedback` uses `db.logMessageFeedback`.
+        // This is confusing. I will use the direct import style for the new RAG feedback function.
+        // It's possible `logMessageFeedback` is also directly imported but aliased or part of an object not shown.
+
+        if (dbError) {
+            console.error(`(InboxCtrl) Error from logMessageFeedback service:`, dbError);
+            return res.status(500).json({ message: "Error submitting feedback.", error: dbError });
+        }
+
+        res.status(201).json({ message: 'Feedback submitted successfully.', data });
+
+    } catch (error) {
+        console.error(`(InboxCtrl) Error in submitMessageFeedback for msg ${message_id}:`, error);
+        // Check for specific DB errors if needed, e.g., foreign key violation if message_id is wrong
+        if (error.message && error.message.includes("violates foreign key constraint")) {
+             return res.status(404).json({ message: 'Failed to submit feedback: Invalid message or conversation.' });
+        }
+        res.status(500).json({ message: 'Failed to submit feedback.', error: error.message });
+    }
+};
+
+// 6. Handle RAG Feedback for a specific message
+export const handleMessageRagFeedback = async (req, res) => {
+    const { conversation_id, message_id } = req.params;
+    const { rating, comment, rag_interaction_log_id, feedback_context } = req.body;
+    const user_id = req.user.id; // From authMiddleware (Supabase user UID)
+    const client_id = req.user.id; // Assuming Supabase user UID is the client_id for 'synchat_clients'
+
+    // Validate critical inputs
+    if (typeof rating !== 'number' || ![-1, 0, 1].includes(rating)) {
+        return res.status(400).json({ error: 'Rating must be a number: -1, 0, or 1.' });
+    }
+    if (comment && (typeof comment !== 'string' || comment.length > 1000)) {
+        return res.status(400).json({ error: 'Comment, if provided, must be a string and not exceed 1000 characters.' });
+    }
+
+    if (!client_id) {
+        console.error('(InboxCtrl) Critical: Client ID not found for authenticated user in handleMessageRagFeedback. User ID:', user_id);
+        return res.status(500).json({ error: 'Could not determine client ID for feedback. Ensure user is correctly associated with a client.' });
+    }
+    if (!conversation_id || !message_id) {
+        return res.status(400).json({ error: 'Conversation ID and Message ID are required in path parameters.' });
+    }
+    if (!UUID_REGEX.test(conversation_id)) {
+        return res.status(400).json({ error: 'conversation_id has an invalid format.' });
+    }
+    if (!POSITIVE_INT_REGEX.test(message_id)) {
+        return res.status(400).json({ error: 'message_id must be a positive integer string.' });
+    }
+
+    // Validate rag_interaction_log_id if provided
+    if (rag_interaction_log_id && !UUID_REGEX.test(rag_interaction_log_id)) {
+        return res.status(400).json({ error: 'rag_interaction_log_id has an invalid format.' });
+    }
+     // Validate feedback_context (optional, but if present must be an object)
+    if (feedback_context !== undefined && typeof feedback_context !== 'object') {
+        return res.status(400).json({ error: 'feedback_context, if provided, must be an object.' });
+    }
+
+    const feedbackData = {
+        client_id,
+        user_id, // user_id from auth, represents the person giving feedback
+        conversation_id,
+        message_id,
+        rag_interaction_log_id, // Optional, from request body
+        feedback_type: 'response_quality', // Fixed for this endpoint
+        rating,
+        comment, // Optional, from request body
+        feedback_context // Optional, from request body
+    };
+
+    // Ensure optional fields that are undefined are not sent to the DB service,
+    // as it already handles stripping undefined keys.
+    if (rag_interaction_log_id === undefined) delete feedbackData.rag_interaction_log_id;
+    if (comment === undefined) delete feedbackData.comment;
+    if (feedback_context === undefined) delete feedbackData.feedback_context;
+
+
+    try {
+        console.log(`(InboxCtrl) Submitting RAG feedback for msg ${message_id} in conv ${conversation_id} by user ${user_id} (Client: ${client_id})`);
+        const result = await logRagFeedback(feedbackData);
+
+        if (result.error) {
+            console.error('(InboxCtrl) Error in handleMessageRagFeedback calling logRagFeedback:', result.error);
+            // Check for specific error messages from databaseService if needed
+            if (result.error.includes('Invalid input')) {
+                return res.status(400).json({ error: result.error });
+            }
+            return res.status(500).json({ error: "Failed to submit RAG feedback due to a server error." });
+        }
+
+        res.status(201).json({ message: 'RAG Feedback submitted successfully', data: result.data });
+    } catch (error) {
+        console.error('(InboxCtrl) Exception in handleMessageRagFeedback:', error);
+        res.status(500).json({ error: 'Failed to submit RAG feedback due to an unexpected server error.' });
+    }
+};

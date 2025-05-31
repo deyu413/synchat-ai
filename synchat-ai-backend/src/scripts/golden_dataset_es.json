@@ -1,0 +1,26 @@
+[
+  {
+    "test_id": "ES_FAQ_001",
+    "client_id_for_test": "00000000-0000-0000-0000-000000000000",
+    "query": "¿Cuál es el horario de atención al cliente?",
+    "expected_keywords_in_answer": ["horario", "atención", "lunes", "viernes", "9am", "6pm"],
+    "//optional_expected_source_urls": ["https://example.com/contacto", "https://example.com/faq#horarios"],
+    "//optional_notes": "Prueba de pregunta frecuente sobre horarios."
+  },
+  {
+    "test_id": "ES_PRODUCT_INFO_001",
+    "client_id_for_test": "00000000-0000-0000-0000-000000000000",
+    "query": "Háblame sobre las características del producto X",
+    "expected_keywords_in_answer": ["producto X", "característica A", "beneficio B"],
+    "//optional_expected_source_urls": ["https://example.com/productos/X"],
+    "//optional_notes": "Prueba de información de producto."
+  },
+  {
+    "test_id": "ES_NO_CONTEXT_001",
+    "client_id_for_test": "00000000-0000-0000-0000-000000000000",
+    "query": "¿Cuál es el sentido de la vida según SynChat?",
+    "expected_keywords_in_answer": ["puedo responder", "información disponible"],
+    "//optional_expected_source_urls": [],
+    "//optional_notes": "Prueba de pregunta fuera de contexto, esperando una respuesta tipo 'no sé'."
+  }
+]

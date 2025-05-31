@@ -11,9 +11,12 @@ const MIN_CHUNK_LENGTH_CHARS = 50;    // Mínimo caracteres para considerar un c
 const TARGET_CHUNK_WORDS = 200;      // Tamaño objetivo de chunk en palabras
 const MAX_CHUNK_WORDS = 300;         // Máximo absoluto antes de forzar división
 const MIN_KEYWORDS_FOR_VALIDATION = 4; // Mínimo palabras clave (largas) para validar chunk
-const EMBEDDING_BATCH_SIZE = 20;     // Lotes para generar embeddings
+const EMBEDDING_BATCH_SIZE = 20;     // Lotes para generar embeddings // General batch size for OpenAI API
 const EMBEDDING_MODEL = "text-embedding-3-small";
+const SEMANTIC_SIMILARITY_THRESHOLD = 0.85; // Threshold for keeping sentences together
+const SENTENCE_EMBEDDING_BATCH_SIZE = 50; // Batch size specific for sentence embeddings
 const USER_AGENT = 'Mozilla/5.0 (compatible; SynChatBot/1.1; +https://www.synchatai.com/bot)';
+const DEBUG_PREPROCESSING = false; // Controla el logging de preprocesamiento
 
 // --- Inicialización de Clientes ---
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -28,7 +31,105 @@ if (!supabaseUrl || !supabaseKey || !openaiApiKey) {
 const supabase = createClient(supabaseUrl, supabaseKey);
 const openai = new OpenAI({ apiKey: openaiApiKey });
 
-// --- Nuevas Funciones de Ayuda ---
+// --- Nuevas Funciones de Ayuda (Incluyendo para Chunking Semántico) ---
+
+/**
+ * Calculates the cosine similarity between two vectors.
+ * @param {number[]} vecA - The first vector.
+ * @param {number[]} vecB - The second vector.
+ * @returns {number} The cosine similarity.
+ */
+function cosineSimilarity(vecA, vecB) {
+    if (!vecA || !vecB || vecA.length !== vecB.length || vecA.length === 0) {
+        return 0; // Or throw error, depending on desired handling
+    }
+
+    let dotProduct = 0;
+    let magA = 0;
+    let magB = 0;
+    for (let i = 0; i < vecA.length; i++) {
+        dotProduct += vecA[i] * vecB[i];
+        magA += vecA[i] * vecA[i];
+        magB += vecB[i] * vecB[i];
+    }
+
+    magA = Math.sqrt(magA);
+    magB = Math.sqrt(magB);
+
+    if (magA === 0 || magB === 0) {
+        return 0; // Avoid division by zero
+    }
+
+    return dotProduct / (magA * magB);
+}
+
+/**
+ * Gets embeddings for an array of sentences.
+ * @param {string[]} sentences - Array of sentence strings.
+ * @param {number} batchSize - How many sentences to process per API call.
+ * @returns {Promise<Array<number[]|null>>} - Array of embedding vectors or null for failed ones.
+ */
+async function getSentenceEmbeddings(sentences, batchSize = SENTENCE_EMBEDDING_BATCH_SIZE) {
+    if (!sentences || sentences.length === 0) {
+        return [];
+    }
+    console.log(`(Ingestion Service) Generating sentence embeddings for ${sentences.length} sentences (batch size ${batchSize})...`);
+
+    const allEmbeddings = new Array(sentences.length).fill(null);
+    let errorsEncountered = 0;
+
+    for (let i = 0; i < sentences.length; i += batchSize) {
+        const batchSentences = sentences.slice(i, i + batchSize);
+        const inputs = batchSentences.map(s => s.replace(/\n/g, ' ')); // OpenAI recommends replacing newlines
+
+        try {
+            // console.log(`(Ingestion Service) Processing sentence embedding batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(sentences.length/batchSize)}...`);
+            const response = await openai.embeddings.create({
+                model: EMBEDDING_MODEL, // Using the same model as chunk embeddings
+                input: inputs
+            });
+
+            const batchEmbeddingsResponse = response.data;
+
+            if (!batchEmbeddingsResponse || batchEmbeddingsResponse.length !== batchSentences.length) {
+                 console.warn(`(Ingestion Service) Sentence embedding response mismatch for batch starting at index ${i}. Expected ${batchSentences.length}, got ${batchEmbeddingsResponse?.length || 0}.`);
+                 errorsEncountered += batchSentences.length; // Assume all in batch failed
+                 continue;
+            }
+
+            batchEmbeddingsResponse.forEach((embeddingObj, idx) => {
+                if (embeddingObj?.embedding) {
+                    allEmbeddings[i + idx] = embeddingObj.embedding;
+                } else {
+                     console.warn(`(Ingestion Service) Missing embedding for sentence index ${i+idx}. Text: "${batchSentences[idx].substring(0,50)}..."`);
+                     errorsEncountered++;
+                }
+            });
+             // Rate limiting: wait a bit between batches if not the last one
+             if (i + batchSize < sentences.length) {
+                await new Promise(resolve => setTimeout(resolve, 200)); // Shorter delay for sentence embeddings
+            }
+
+        } catch (error) {
+            console.error(`(Ingestion Service) Error generating sentence embeddings for batch starting at index ${i}: ${error.message || error}`, error.stack ? error.stack.substring(0,300) : '');
+            errorsEncountered += batchSentences.length; // Assume all in batch failed
+            // Continue to next batch unless it's a fatal error (e.g. auth)
+            if (error.status === 401 || error.status === 429) {
+                 console.error("(Ingestion Service) Fatal error during sentence embedding generation. Stopping this process.");
+                 // Mark all remaining as null or throw to stop entirely
+                 for (let j = i; j < sentences.length; j++) allEmbeddings[j] = null;
+                 return allEmbeddings; // Return what we have, with failures marked
+            }
+        }
+    }
+    if (errorsEncountered > 0) {
+        console.warn(`(Ingestion Service) Sentence embeddings generated with ${errorsEncountered} errors out of ${sentences.length} sentences.`);
+    } else {
+        console.log(`(Ingestion Service) Sentence embeddings generated successfully for all ${sentences.length} sentences.`);
+    }
+    return allEmbeddings;
+}
+
 
 /**
  * Updates the status of a knowledge source.
@@ -57,6 +158,69 @@ async function updateKnowledgeSourceStatus(sourceId, status, characterCount = nu
     }
 }
 
+// --- Funciones de Preprocesamiento de Texto ---
+
+const SPANISH_ABBREVIATIONS = {
+    "p. ej.": "por ejemplo",
+    "p.e.": "por ejemplo",
+    "ej.": "ejemplo",
+    "etc.": "etcétera",
+    "sr.": "señor", // Lowercase already, but good to have for consistency
+    "sra.": "señora",
+    "dr.": "doctor",
+    "dra.": "doctora",
+    "ud.": "usted",
+    "uds.": "ustedes",
+    "fig.": "figura",
+    "cap.": "capítulo",
+    "aprox.": "aproximadamente",
+    // Add more as needed
+};
+
+/**
+ * Preprocesa el texto para mejorar la calidad de los embeddings.
+ * @param {string} text - El texto original.
+ * @returns {string} - El texto preprocesado.
+ */
+function preprocessTextForEmbedding(text) {
+    if (!text) return "";
+
+    let originalTextForDebug = DEBUG_PREPROCESSING ? text.substring(0, 150) : ""; // Sample for logging
+
+    // 1. Unicode Normalization (NFC)
+    let processedText = text.normalize('NFC');
+
+    // 2. Convert to lowercase
+    processedText = processedText.toLowerCase();
+
+    // 3. Expand common Spanish abbreviations
+    // Iterate over a sorted list of keys (by length, descending) to handle nested abbreviations correctly.
+    // For example, "p. ej." should be matched before "ej." if "ej." is also a key.
+    // However, with current regex using word boundaries, direct iteration might be fine.
+    // Using word boundaries (\b) to ensure "p. ej." isn't part of another word.
+    for (const [abbr, expansion] of Object.entries(SPANISH_ABBREVIATIONS)) {
+        // Escape special characters in abbreviation for regex and ensure it's a whole word/sequence
+        const escapedAbbr = abbr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\b${escapedAbbr}\\b`, 'gi'); // Case insensitive due to prior toLowerCase
+        processedText = processedText.replace(regex, expansion);
+    }
+
+    // 4. Regex-based cleaning
+    // Collapse excessive or repeated punctuation (e.g., !!! to !, ??? to ?, multiple commas/periods to a single one)
+    processedText = processedText.replace(/([!?.,;:])\1+/g, '$1'); //  Example: !!! -> !,  .. -> .
+
+    // Normalize non-standard whitespace patterns
+    processedText = processedText.replace(/\s\s+/g, ' '); // Collapse multiple spaces/tabs to a single space
+    processedText = processedText.trim(); // Trim leading/trailing whitespace
+
+    if (DEBUG_PREPROCESSING && originalTextForDebug !== processedText.substring(0, 150)) {
+        console.log(`(Ingestion Service DEBUG) Text Preprocessing:
+Original: "${originalTextForDebug}..."
+Processed: "${processedText.substring(0, 150)}..."`);
+    }
+    return processedText;
+}
+
 
 // --- Funciones de Ayuda (Existentes y Modificadas) ---
 
@@ -72,58 +236,104 @@ function validateChunk(text) {
 }
 
 /**
- * Chunks plain text content (from PDF, TXT, or article).
+ * Chunks plain text content (from PDF, TXT, or article) using semantic similarity.
  */
-function chunkTextContent(text, baseMetadata) {
-    console.log(`(Ingestion Service) Starting text chunking for source_id: ${baseMetadata.original_source_id}, name: ${baseMetadata.source_name}`);
+async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount parameter removed
+    console.log(`(Ingestion Service) Starting SEMANTIC text chunking for source_id: ${baseMetadata.original_source_id}, name: ${baseMetadata.source_name}`);
     const chunks = [];
-    const sentences = text.split(/(?<=[.!?])\s+/); // Split by sentence-ending punctuation
-    let currentChunkLines = [];
-    let currentWordCount = 0;
+    let originalSentences = text.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 0);
+
+    if (originalSentences.length === 0) {
+        console.log("(Ingestion Service) No sentences found in text.");
+        return [];
+    }
+
+    // Preprocess sentences before embedding them - important for quality
+    const sentences = originalSentences.map(s => preprocessTextForEmbedding(s)).filter(s => s.length > MIN_CHUNK_LENGTH_CHARS / 2); // Filter out very short sentences after preprocessing
+
+    if (sentences.length === 0) {
+        console.log("(Ingestion Service) No sentences after preprocessing and filtering.");
+        return [];
+    }
+
+    const sentenceEmbeddings = await getSentenceEmbeddings(sentences);
+
+    let currentChunkSentences = [];
+    let currentChunkWordCount = 0;
     let chunkIndex = 0;
 
-    for (const sentence of sentences) {
+    for (let i = 0; i < sentences.length; i++) {
+        const sentence = sentences[i];
+        const embedding = sentenceEmbeddings[i];
+
+        if (!embedding) { // Skip sentence if embedding failed
+            console.warn(`(Ingestion Service) Skipping sentence "${sentence.substring(0,30)}..." due to missing embedding.`);
+            continue;
+        }
+
         const sentenceWordCount = sentence.split(/\s+/).length;
-        if (sentence.trim().length === 0) continue;
 
-        if (currentWordCount > 0 && (currentWordCount + sentenceWordCount) > MAX_CHUNK_WORDS) {
-            const chunkText = currentChunkLines.join(' ').trim();
-            if (validateChunk(chunkText)) {
-                chunks.push({
-                    text: chunkText,
-                    metadata: { ...baseMetadata, chunk_index: chunkIndex++ }
-                });
+        currentChunkSentences.push(sentence);
+        currentChunkWordCount += sentenceWordCount;
+
+        let splitPoint = false;
+
+        // Check for split conditions
+        if (i < sentences.length - 1) {
+            const nextSentence = sentences[i+1];
+            const nextEmbedding = sentenceEmbeddings[i+1];
+            const nextSentenceWordCount = nextSentence.split(/\s+/).length;
+
+            if (!nextEmbedding) { // If next sentence has no embedding, treat as a semantic break
+                console.warn(`(Ingestion Service) Potential split point: Next sentence "${nextSentence.substring(0,30)}..." has no embedding.`);
+                splitPoint = true;
+            } else {
+                const similarity = cosineSimilarity(embedding, nextEmbedding);
+                // console.log(`Similarity between "${sentence.substring(0,20)}..." and "${nextSentence.substring(0,20)}...": ${similarity.toFixed(3)}`);
+
+                if (similarity < SEMANTIC_SIMILARITY_THRESHOLD) {
+                    // console.log("Split: Similarity below threshold");
+                    splitPoint = true;
+                } else if (currentChunkWordCount + nextSentenceWordCount > MAX_CHUNK_WORDS) {
+                    // console.log("Split: Next sentence exceeds MAX_CHUNK_WORDS");
+                    splitPoint = true;
+                } else if (currentChunkWordCount >= TARGET_CHUNK_WORDS && similarity < (SEMANTIC_SIMILARITY_THRESHOLD + 0.05)) {
+                    // If already over target, be a bit more lenient to split even if reasonably similar
+                    // This helps prevent overly long chunks if sentences are all quite similar.
+                    // console.log("Split: Over TARGET_CHUNK_WORDS and similarity is not extremely high");
+                    splitPoint = true;
+                }
             }
-            currentChunkLines = [sentence];
-            currentWordCount = sentenceWordCount;
-        } else {
-            currentChunkLines.push(sentence);
-            currentWordCount += sentenceWordCount;
+        } else { // Last sentence, always finalize the chunk
+            splitPoint = true;
+            // console.log("Split: Last sentence");
         }
 
-        if (currentWordCount >= TARGET_CHUNK_WORDS) {
-            const chunkText = currentChunkLines.join(' ').trim();
-            if (validateChunk(chunkText)) {
-                 chunks.push({
-                    text: chunkText,
-                    metadata: { ...baseMetadata, chunk_index: chunkIndex++ }
-                });
+        if (splitPoint) {
+            let chunkText = currentChunkSentences.join(' ').trim();
+            // Note: Sentences were already preprocessed. Re-joining and trimming is fine.
+            // No need to call preprocessTextForEmbedding(chunkText) again unless joining adds new artifacts.
+            // For now, assume joining spaces is fine. If issues, consider a light final cleanup.
+
+            if (validateChunk(chunkText)) { // validateChunk uses MIN_CHUNK_LENGTH_CHARS and MIN_KEYWORDS_FOR_VALIDATION
+                const metadata = {
+                    ...baseMetadata,
+                    chunk_index: chunkIndex++,
+                    chunk_char_length: chunkText.length, // Using final chunkText length
+                    content_type_hint: "text_semantic" // New hint for semantically chunked text
+                };
+                if (baseMetadata.source_document_updated_at) {
+                    metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
+                }
+                chunks.push({ text: chunkText, metadata: metadata });
+            } else {
+                // console.log(`(Ingestion Service) Discarding chunk (failed validation): "${chunkText.substring(0, 100)}..."`);
             }
-            currentChunkLines = [];
-            currentWordCount = 0;
+            currentChunkSentences = [];
+            currentChunkWordCount = 0;
         }
     }
-
-    if (currentChunkLines.length > 0) {
-        const chunkText = currentChunkLines.join(' ').trim();
-        if (validateChunk(chunkText)) {
-            chunks.push({
-                text: chunkText,
-                metadata: { ...baseMetadata, chunk_index: chunkIndex++ }
-            });
-        }
-    }
-    console.log(`(Ingestion Service) Text chunking completed for ${baseMetadata.source_name}. Generated ${chunks.length} chunks.`);
+    console.log(`(Ingestion Service) SEMANTIC text chunking completed for ${baseMetadata.source_name}. Generated ${chunks.length} chunks.`);
     return chunks;
 }
 
@@ -132,88 +342,244 @@ function chunkTextContent(text, baseMetadata) {
  * Divide el contenido HTML en chunks jerárquicos.
  * MODIFIED: Accepts baseMetadata and incorporates it.
  */
-function chunkContent(html, url, baseMetadata) { // baseMetadata is new
-    console.log(`(Ingestion Service) Starting HTML chunking for URL: ${url}, source_id: ${baseMetadata.original_source_id}`);
+// TODO: Enhance HTML text extraction for complex, JavaScript-heavy sites.
+// The current Cheerio-based approach is suitable for static or server-rendered HTML but may struggle with client-side rendered content.
+// For more robust extraction from dynamic sites, consider using a headless browser library like Puppeteer or Playwright (via jsdom or similar if full browser automation is too heavy).
+// This would allow for:
+// 1. JavaScript execution to get the final DOM state.
+// 2. More accurate text extraction that mirrors what a user sees.
+// 3. Better handling of interactive elements or content loaded dynamically.
+// Such an enhancement would be particularly beneficial before applying semantic chunking to HTML content,
+// as the quality of extracted text directly impacts chunking and subsequent embedding quality.
+// Also, consider advanced content extraction libraries (e.g., Readability.js port) to isolate main article text.
+function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // baseMetadata is new, elementOverlapCount added
+    // TODO: Explore sentence-level semantic splitting for long text content within HTML elements.
+    console.log(`(Ingestion Service) Starting HTML chunking for URL: ${url}, source_id: ${baseMetadata.original_source_id}, elementOverlap: ${elementOverlapCount}`);
     const $ = load(html);
     const chunks = [];
-    let contextStack = [];
+    let contextStack = []; // Will store {level, text} objects
     let currentChunkLines = [];
+    let currentChunkRawElements = []; // Store raw text of elements for overlap
     let currentWordCount = 0;
-    let chunkIndex = 0; // For HTML chunks as well
+    let chunkIndex = 0;
+    let elementsToPrependForOverlap = [];
 
     // Standard noise removal
-    $('script, style, nav, footer, header, aside, form, noscript, iframe, svg, link[rel="stylesheet"], button, input, select, textarea, label, .sidebar, #sidebar, .comments, #comments, .related-posts, .share-buttons, .pagination, .breadcrumb, .modal, .popup, [aria-hidden="true"], [role="navigation"], [role="search"], .ad, .advertisement, #ad, #advertisement').remove();
+    $('.cookie-banner, #cookie-notice, .header-banner, [role="banner"], [role="contentinfo"], script, style, nav, footer, header, aside, form, noscript, iframe, svg, link[rel="stylesheet"], button, input, select, textarea, label, .sidebar, #sidebar, .comments, #comments, .related-posts, .share-buttons, .pagination, .breadcrumb, .modal, .popup, [aria-hidden="true"], [role="navigation"], [role="search"], .ad, .advertisement, #ad, #advertisement').remove();
 
-    const relevantSelectors = 'h1, h2, h3, h4, h5, h6, p, li, td, th, pre, blockquote, article'; // Added article
-    $(relevantSelectors).each((i, el) => {
+    const relevantSelectors = 'h1, h2, h3, h4, h5, h6, p, li, td, th, pre, blockquote, article';
+    const elements = $(relevantSelectors).toArray(); // Get all elements once
+
+    for (let i = 0; i < elements.length; i++) {
+        const el = elements[i];
         const $el = $(el);
         const tag = $el.prop('tagName').toLowerCase();
         let text = ($el.text() || '').replace(/\s\s+/g, ' ').trim();
 
-        if (text.length < 15 && tag !== 'article') return; // Allow article tag to be empty container initially
+        if (text.length < 15 && tag !== 'article' && !tag.match(/^h[1-6]$/)) { // Keep headers even if short
+             // If article is empty but contains relevant children, those children will be processed.
+            if (tag === 'article' && $el.children(relevantSelectors).length > 0) {
+                // Continue to process children, do not return
+            } else if (text.length === 0 && tag === 'article' && $el.children().length === 0){
+                continue; // Skip empty article tags with no children
+            } else if (text.length < 15 && tag !== 'article') {
+                continue; // Skip short non-article, non-header elements
+            }
+        }
 
-        let currentHierarchy = [...contextStack];
+        // Overlap prepending logic
+        if (currentChunkLines.length === 0 && elementsToPrependForOverlap.length > 0) {
+            currentChunkLines.push(...elementsToPrependForOverlap.map(e => e.text)); // Add text lines
+            currentChunkRawElements.push(...elementsToPrependForOverlap);
+            currentWordCount = currentChunkLines.join('\n').split(/\s+/).length; // Recalculate word count
+            elementsToPrependForOverlap = [];
+        }
+
+        let hierarchyForCurrentElement = [...contextStack]; // Default hierarchy for non-header elements
+
         if (tag.match(/^h[1-6]$/)) {
             const level = parseInt(tag[1]);
-            contextStack = contextStack.slice(0, level - 1); // Reset lower levels
-            contextStack[level - 1] = text; // Set current level
-            currentHierarchy = [...contextStack]; // Capture current hierarchy for potential chunk
-            
-            // If there was content before this header, chunk it
+            const headerObj = { level: level, text: text };
+
+            // Finalize previous chunk if this header triggers a new section
             if (currentChunkLines.length > 0) {
-                 const chunkText = currentChunkLines.join('\n').trim();
-                 if (validateChunk(chunkText)) {
-                      chunks.push({
-                          text: chunkText,
-                          // Use hierarchy before this header
-                          metadata: { ...baseMetadata, url, hierarchy: [...contextStack.slice(0, level-1)], chunk_index: chunkIndex++ } 
-                      });
-                 }
-                 currentChunkLines = [];
-                 currentWordCount = 0;
+                let chunkText = currentChunkLines.join('\n').trim();
+                if (validateChunk(chunkText)) {
+                    const processedChunkText = preprocessTextForEmbedding(chunkText);
+                    const currentHierarchy = [...contextStack];
+                    const metadata = {
+                        ...baseMetadata,
+                        url,
+                        hierarchy: currentHierarchy,
+                        chunk_index: chunkIndex++,
+                        chunk_char_length: processedChunkText.length,
+                        content_type_hint: currentHierarchy && currentHierarchy.length > 0 ? "structured_html" : "html_content"
+                    };
+                    if (baseMetadata.source_document_updated_at) {
+                        metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
+                    }
+                    chunks.push({
+                        text: processedChunkText,
+                        metadata: metadata
+                    });
+                }
+
+                if (elementOverlapCount > 0 && currentChunkRawElements.length > 0) {
+                    elementsToPrependForOverlap = currentChunkRawElements.slice(-elementOverlapCount);
+                } else {
+                    elementsToPrependForOverlap = [];
+                }
+                currentChunkLines = [];
+                currentChunkRawElements = [];
+                currentWordCount = 0;
+
+                // Prepend overlap immediately if captured
+                if (elementsToPrependForOverlap.length > 0) {
+                    currentChunkLines.push(...elementsToPrependForOverlap.map(e => e.text));
+                    currentChunkRawElements.push(...elementsToPrependForOverlap);
+                    currentWordCount = currentChunkLines.join('\n').split(/\s+/).length;
+                    elementsToPrependForOverlap = [];
+                }
             }
+
+            contextStack = contextStack.filter(h => h.level < level); // Remove deeper or same-level headers
+            contextStack.push(headerObj);
+            hierarchyForCurrentElement = [...contextStack]; // Header's own hierarchy includes itself
         }
 
         const elementWordCount = text.split(/\s+/).length;
+        const currentElementData = { text, tag, wordCount: elementWordCount, hierarchy: hierarchyForCurrentElement };
 
-        // If current chunk + new element exceeds max words, finalize current chunk
-        if (currentWordCount > 0 && (currentWordCount + elementWordCount) > MAX_CHUNK_WORDS) {
-             const chunkText = currentChunkLines.join('\n').trim();
-             if (validateChunk(chunkText)) {
-                 chunks.push({
-                     text: chunkText,
-                     metadata: { ...baseMetadata, url, hierarchy: [...currentHierarchy], chunk_index: chunkIndex++ }
-                 });
+        // Scenario 1: Adding current element EXCEEDS MAX_CHUNK_WORDS
+        if (currentWordCount > 0 && (currentWordCount + elementWordCount) > MAX_CHUNK_WORDS && text.length > 0) {
+            let chunkText = currentChunkLines.join('\n').trim();
+            if (validateChunk(chunkText)) {
+                const processedChunkText = preprocessTextForEmbedding(chunkText);
+                const lastElementInChunkHierarchy = currentChunkRawElements.length > 0 ? currentChunkRawElements[currentChunkRawElements.length-1].hierarchy : [...contextStack];
+                const metadata = {
+                    ...baseMetadata,
+                    url,
+                    hierarchy: lastElementInChunkHierarchy,
+                    chunk_index: chunkIndex++,
+                    chunk_char_length: processedChunkText.length,
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                };
+                if (baseMetadata.source_document_updated_at) {
+                    metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
+                }
+                chunks.push({ text: processedChunkText, metadata: metadata});
             }
-            currentChunkLines = [text]; // Start new chunk with current element
-            currentWordCount = elementWordCount;
-        } else {
-            currentChunkLines.push(text);
-            currentWordCount += elementWordCount;
-        }
 
-        // If current chunk meets target word count, finalize it
-        if (currentWordCount >= TARGET_CHUNK_WORDS) {
-             const chunkText = currentChunkLines.join('\n').trim();
-             if (validateChunk(chunkText)) {
-                 chunks.push({
-                     text: chunkText,
-                     metadata: { ...baseMetadata, url, hierarchy: [...currentHierarchy], chunk_index: chunkIndex++ }
-                 });
-             }
+            if (elementOverlapCount > 0 && currentChunkRawElements.length > 0) {
+                elementsToPrependForOverlap = currentChunkRawElements.slice(-elementOverlapCount);
+            } else {
+                elementsToPrependForOverlap = [];
+            }
+
+            currentChunkLines = elementsToPrependForOverlap.map(e => e.text);
+            currentChunkRawElements = [...elementsToPrependForOverlap];
+            currentWordCount = currentChunkLines.join('\n').split(/\s+/).length;
+            elementsToPrependForOverlap = []; // Consumed for this new chunk start
+
+            if (text.length > 0) { // Add current element text if it's not empty (headers might be)
+                currentChunkLines.push(text);
+                currentChunkRawElements.push(currentElementData);
+                currentWordCount += elementWordCount;
+            }
+        }
+        // Scenario 2: Adding current element MEETS/EXCEEDS TARGET_CHUNK_WORDS (but not MAX)
+        else if (text.length > 0 && (currentWordCount + elementWordCount) >= TARGET_CHUNK_WORDS) {
+            currentChunkLines.push(text);
+            currentChunkRawElements.push(currentElementData);
+            currentWordCount += elementWordCount;
+
+            let chunkText = currentChunkLines.join('\n').trim();
+            if (validateChunk(chunkText)) {
+                const processedChunkText = preprocessTextForEmbedding(chunkText);
+                const lastElementInChunkHierarchy = currentChunkRawElements.length > 0 ? currentChunkRawElements[currentChunkRawElements.length-1].hierarchy : [...contextStack];
+                const metadata = {
+                    ...baseMetadata,
+                    url,
+                    hierarchy: lastElementInChunkHierarchy,
+                    chunk_index: chunkIndex++,
+                    chunk_char_length: processedChunkText.length,
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                };
+                if (baseMetadata.source_document_updated_at) {
+                    metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
+                }
+                chunks.push({ text: processedChunkText, metadata: metadata});
+            }
+
+            if (elementOverlapCount > 0 && currentChunkRawElements.length > 0) {
+                elementsToPrependForOverlap = currentChunkRawElements.slice(-elementOverlapCount);
+            } else {
+                elementsToPrependForOverlap = [];
+            }
             currentChunkLines = [];
+            currentChunkRawElements = [];
             currentWordCount = 0;
         }
-    });
+        // Scenario 3: Adding current element DOES NOT YET meet TARGET_CHUNK_WORDS
+        else if (text.length > 0) { // Only add if there's text
+            currentChunkLines.push(text);
+            currentChunkRawElements.push(currentElementData);
+            currentWordCount += elementWordCount;
+        }
+         // If it was an 'article' tag and it was empty, it doesn't contribute to words/lines here
+         // but its context (hierarchy) is set for its children.
+    }
 
-    // Add any remaining content as the last chunk
+    // After the loop, handle any remaining content
+    if (currentChunkLines.length === 0 && elementsToPrependForOverlap.length > 0) {
+        currentChunkLines.push(...elementsToPrependForOverlap.map(e => e.text));
+        currentChunkRawElements.push(...elementsToPrependForOverlap);
+        // currentWordCount = currentChunkLines.join('\n').split(/\s+/).length; // Not strictly needed as it's the end
+    }
+
     if (currentChunkLines.length > 0) {
-        const chunkText = currentChunkLines.join('\n').trim();
+        let chunkText = currentChunkLines.join('\n').trim();
         if (validateChunk(chunkText)) {
-            chunks.push({
-                text: chunkText,
-                metadata: { ...baseMetadata, url, hierarchy: [...contextStack], chunk_index: chunkIndex++ }
-            });
+            const processedChunkText = preprocessTextForEmbedding(chunkText);
+            let isPureOverlapOfPrevious = false;
+            if (chunks.length > 0 && elementOverlapCount > 0 && currentChunkRawElements.length === elementOverlapCount) {
+                const lastChunkText = chunks[chunks.length-1].text; // This is processed text
+                // Similar to chunkTextContent, this comparison ideally needs care if preprocessing changes overlap text.
+                // currentChunkRawElements contains original text.
+                const originalOverlapText = currentChunkRawElements.map(e => e.text).join('\n');
+                const processedOriginalOverlapText = preprocessTextForEmbedding(originalOverlapText);
+
+                if (processedOriginalOverlapText === processedChunkText &&
+                    originalOverlapText.split('\n').length === elementOverlapCount && // Ensure it's only the overlap
+                    lastChunkText.endsWith(processedOriginalOverlapText) // Check if previous chunk ended with this processed overlap
+                ) {
+                   // More robust check: does the *processed* version of the raw overlap match the current processed chunk?
+                   // And does the previous chunk (which is already processed) end with this?
+                   // This is still heuristic. A perfect check is complex.
+                   if (processedChunkText === preprocessTextForEmbedding(currentChunkRawElements.map(e=>e.text).join('\n'))) {
+                        isPureOverlapOfPrevious = true;
+                   }
+                }
+            }
+
+            if (!isPureOverlapOfPrevious) {
+                const lastElementInChunkHierarchy = currentChunkRawElements.length > 0 ? currentChunkRawElements[currentChunkRawElements.length-1].hierarchy : [...contextStack];
+                const metadata = {
+                    ...baseMetadata,
+                    url,
+                    hierarchy: lastElementInChunkHierarchy,
+                    chunk_index: chunkIndex++,
+                    chunk_char_length: processedChunkText.length,
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                };
+                if (baseMetadata.source_document_updated_at) {
+                    metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
+                }
+                chunks.push({
+                    text: processedChunkText,
+                    metadata: metadata
+                });
+            }
         }
     }
     console.log(`(Ingestion Service) HTML chunking completed for ${url}. Generated ${chunks.length} chunks.`);
@@ -319,21 +685,118 @@ async function storeChunks(clientId, chunksWithEmbeddings) {
         const { data, error, count } = await supabase
             .from('knowledge_base')
             .insert(recordsToInsert)
-            .select('count'); // Request count for verification
+            .select(); // MODIFIED: Select all columns to get IDs back
 
         if (error) {
             console.error("(Ingestion Service) Error storing chunks in Supabase:", error.message);
             if (error.details) console.error("Details:", error.details);
-            return { success: false, error: error.message, details: error.details, count: 0 };
+            // Return the actual data array as empty if error, to match success structure better for caller
+            return { success: false, error: error.message, details: error.details, data: [], count: 0 };
         }
         
-        const numStored = count ?? recordsToInsert.length; // Supabase v2 might return count directly
+        // data here is an array of inserted records
+        const numStored = data ? data.length : 0;
         console.log(`(Ingestion Service) Storage complete. ${numStored} chunks saved for client ${clientId}.`);
-        return { success: true, data, count: numStored };
+        return { success: true, data: data, count: numStored }; // data contains inserted records with IDs
 
     } catch (dbError) {
         console.error("(Ingestion Service) Unexpected error during Supabase chunk storage:", dbError);
         return { success: false, error: dbError.message, count: 0 };
+    }
+}
+
+// --- Funciones para Proposiciones ---
+
+/**
+ * Extracts propositions from a text segment, generates their embeddings, and stores them.
+ * @param {string} textSegment - The text to extract propositions from.
+ * @param {string} clientId - The client ID.
+ * @param {string} originalSourceId - The ID of the original knowledge source.
+ * @param {string} sourceChunkId - The ID of the parent chunk in knowledge_base.
+ * @param {string} sourceChunkContent - The content of the source chunk (used for context if needed, currently unused directly here but good for future).
+ */
+async function extractAndStorePropositions(textSegment, clientId, originalSourceId, sourceChunkId, sourceChunkContent) {
+    console.log(`(Ingestion Service) Extracting propositions for source_chunk_id: ${sourceChunkId}`);
+    if (!textSegment || textSegment.split(/\s+/).length < 30) { // Min words for proposition extraction
+        console.log(`(Ingestion Service) Text segment too short for proposition extraction (source_chunk_id: ${sourceChunkId}). Skipping.`);
+        return { success: true, count: 0, message: "Text segment too short." };
+    }
+
+    const propositionsToStore = [];
+    try {
+        const prompt = `Extrae todas las afirmaciones factuales individuales (proposiciones) del siguiente texto. Cada proposición debe ser una declaración concisa y autocontenida. Enumera cada proposición en una nueva línea. Asegúrate de que las proposiciones estén en español. Texto:\n\n'${textSegment}'`;
+
+        const completion = await openai.chat.completions.create({
+            model: 'gpt-3.5-turbo', // Cheaper and faster model for this task
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.2, // Lower temperature for more factual and less creative output
+            max_tokens: 1000, // Adjust as needed based on typical textSegment length
+        });
+
+        const rawResult = completion.choices[0]?.message?.content;
+        if (!rawResult) {
+            console.warn(`(Ingestion Service) Proposition extraction returned no content for chunk ${sourceChunkId}.`);
+            return { success: false, count: 0, error: "No content from LLM." };
+        }
+
+        const extractedLines = rawResult.split('\n').map(p => p.trim()).filter(p => p.length > 0);
+
+        console.log(`(Ingestion Service) Extracted ${extractedLines.length} potential propositions for chunk ${sourceChunkId}.`);
+        let processedCount = 0;
+
+        for (const propText of extractedLines) {
+            if (propText.split(/\s+/).length < 5 || propText.split(/\s+/).length > 70) {
+                // console.log(`(Ingestion Service) Proposition "${propText.substring(0,30)}..." skipped due to length.`);
+                continue;
+            }
+
+            try {
+                // Generate embedding for the proposition
+                const embeddingResponse = await openai.embeddings.create({
+                    model: EMBEDDING_MODEL,
+                    input: propText.replace(/\n/g, ' '), // OpenAI recommends replacing newlines
+                });
+
+                const propositionEmbedding = embeddingResponse.data[0]?.embedding;
+
+                if (propositionEmbedding) {
+                    propositionsToStore.push({
+                        client_id: clientId,
+                        original_source_id: originalSourceId,
+                        source_chunk_id: sourceChunkId, // FK to knowledge_base.id
+                        proposition_text: propText,
+                        embedding: propositionEmbedding,
+                        // metadata can be added here if needed in future
+                    });
+                    processedCount++;
+                } else {
+                    console.warn(`(Ingestion Service) Failed to generate embedding for proposition: "${propText.substring(0,50)}..."`);
+                }
+            } catch (embedError) {
+                console.error(`(Ingestion Service) Error generating embedding for proposition "${propText.substring(0,50)}...": ${embedError.message}`);
+                // Optional: Decide if one error should stop all, or just skip this proposition
+            }
+        }
+
+        if (propositionsToStore.length > 0) {
+            console.log(`(Ingestion Service) Storing ${propositionsToStore.length} propositions for chunk ${sourceChunkId}.`);
+            const { error: insertError } = await supabase
+                .from('knowledge_propositions')
+                .insert(propositionsToStore);
+
+            if (insertError) {
+                console.error(`(Ingestion Service) Error storing propositions for chunk ${sourceChunkId}: ${insertError.message}`);
+                return { success: false, count: 0, error: `Supabase insert error: ${insertError.message}` };
+            }
+            console.log(`(Ingestion Service) Successfully stored ${propositionsToStore.length} propositions for chunk ${sourceChunkId}.`);
+        } else {
+            console.log(`(Ingestion Service) No valid propositions to store for chunk ${sourceChunkId} after processing.`);
+        }
+        return { success: true, count: propositionsToStore.length, processedPotentials: extractedLines.length };
+
+    } catch (error) {
+        console.error(`(Ingestion Service) Error during proposition extraction for chunk ${sourceChunkId}: ${error.message}`, error.stack ? error.stack.substring(0,300) : '');
+        return { success: false, count: 0, error: error.message };
     }
 }
 
@@ -351,7 +814,8 @@ export async function ingestSourceById(sourceId, clientId) {
     }
 
     console.log(`\n--- (Ingestion Service) Starting Ingestion for Source ID: ${sourceId}, Client ID: ${clientId} ---`);
-    let source;
+    console.log(`(Ingestion Service) Using chunking parameters: TARGET_CHUNK_WORDS=${TARGET_CHUNK_WORDS}, MAX_CHUNK_WORDS=${MAX_CHUNK_WORDS}`);
+    let source; // To store source details
     try {
         // 1. Fetch Source details
         const { data: sourceData, error: fetchError } = await supabase
@@ -375,7 +839,7 @@ export async function ingestSourceById(sourceId, clientId) {
         let textToProcess = "";
         let htmlContent = ""; // For URL type
         let charCount = source.character_count || 0; // Use existing if available, else 0
-        const sourceName = source.source_name || 'Unknown Source';
+        const sourceName = source.source_name || 'Unknown Source'; // Ensure sourceName is defined
 
         // 3. Content Extraction
         console.log(`(Ingestion Service) Extracting content for source type: ${source.source_type}`);
@@ -414,68 +878,155 @@ export async function ingestSourceById(sourceId, clientId) {
         await updateKnowledgeSourceStatus(sourceId, 'ingesting', charCount);
 
         // 4. Chunking
-        let chunks;
-        const baseMetadata = { original_source_id: source.source_id, source_name: sourceName };
+        let chunksForEmbedding; // Renamed to avoid confusion with chunksWithEmbeddingsAndIds
+        // Initial baseMetadata with core, non-overwritable fields
+        let baseMetadata = {
+            original_source_id: source.source_id,
+            source_name: sourceName,
+        };
 
-        if (source.source_type === 'url') {
-            chunks = chunkContent(htmlContent, source.source_name, baseMetadata); // Pass URL and baseMetadata
-        } else { // For 'pdf', 'txt', 'article'
-            chunks = chunkTextContent(textToProcess, baseMetadata);
+        // Add source_document_updated_at if it exists on the source
+        if (source.updated_at) {
+            baseMetadata.source_document_updated_at = source.updated_at;
         }
 
-        if (!chunks || chunks.length === 0) {
+        // Add category_tags if they exist on the source
+        if (source.category_tags && Array.isArray(source.category_tags) && source.category_tags.length > 0) {
+            baseMetadata.category_tags = source.category_tags;
+        }
+
+        // Merge custom_metadata from the source, allowing its properties to be added,
+        // but core properties defined above will take precedence if there are conflicts.
+        if (source.custom_metadata && typeof source.custom_metadata === 'object') {
+            baseMetadata = {
+                ...source.custom_metadata, // Custom properties first
+                ...baseMetadata            // Core properties overwrite if keys conflict
+            };
+        }
+
+        if (source.source_type === 'url') {
+            // Assuming default elementOverlapCount of 1, can be configured later
+            chunksForEmbedding = chunkContent(htmlContent, source.source_name, baseMetadata, 1); // Stays non-async
+        } else { // For 'pdf', 'txt', 'article' - now uses async semantic chunking
+            chunksForEmbedding = await chunkTextContent(textToProcess, baseMetadata); // No more sentenceOverlapCount
+        }
+
+        // Ensure chunksForEmbedding is an array even if chunking failed or returned nothing
+        if (!Array.isArray(chunksForEmbedding)) {
+            console.warn(`(Ingestion Service) Chunking returned non-array for source ${sourceId}. Defaulting to empty array.`);
+            chunksForEmbedding = [];
+        }
+
+        if (chunksForEmbedding.length === 0) {
             console.warn(`(Ingestion Service) No valid chunks generated for source ${sourceId}. Marking as completed.`);
             await updateKnowledgeSourceStatus(sourceId, 'completed', charCount, "No content chunks generated after processing.");
             return { success: true, message: "No valid content chunks found to ingest.", data: { chunksStored: 0, source_id: sourceId } };
         }
-        console.log(`(Ingestion Service) Generated ${chunks.length} chunks for source ${sourceId}.`);
+        console.log(`(Ingestion Service) Generated ${chunksForEmbedding.length} chunks for source ${sourceId}.`);
 
-        // 5. Clear Existing Chunks for this source
-        console.log(`(Ingestion Service) Clearing existing chunks for source_id: ${sourceId}`);
-        const { error: deleteError } = await supabase
+        // 5. Clear Existing Chunks for this source from knowledge_base
+        console.log(`(Ingestion Service) Clearing existing chunks from knowledge_base for source_id: ${sourceId}`);
+        const { error: deleteChunksError } = await supabase
             .from('knowledge_base')
             .delete()
             .eq('client_id', clientId) // Ensure we only delete for the correct client
             .eq('metadata->>original_source_id', sourceId); // Match the specific source
 
-        if (deleteError) {
-            // Log error but proceed. If new chunks are added, it's not ideal but not fatal.
-            // Critical error might be to fail here. For now, log and continue.
-            console.error(`(Ingestion Service) Error clearing old chunks for source ${sourceId}: ${deleteError.message}. Proceeding with ingestion.`);
-            // Potentially, update status with a warning here.
+        if (deleteChunksError) {
+            console.error(`(Ingestion Service) Error clearing old chunks from knowledge_base for source ${sourceId}: ${deleteChunksError.message}. Proceeding with ingestion.`);
         } else {
-            console.log(`(Ingestion Service) Successfully cleared old chunks for source ${sourceId}.`);
+            console.log(`(Ingestion Service) Successfully cleared old chunks from knowledge_base for source ${sourceId}.`);
         }
 
-        // 6. Generate Embeddings
-        const embeddingResult = await generateEmbeddings(chunks);
+        // 5b. Clear Existing Propositions for this source from knowledge_propositions
+        console.log(`(Ingestion Service) Clearing existing propositions from knowledge_propositions for source_id: ${sourceId}`);
+        const { error: deletePropsError } = await supabase
+            .from('knowledge_propositions')
+            .delete()
+            .eq('client_id', clientId)
+            .eq('original_source_id', sourceId);
+
+        if (deletePropsError) {
+            console.error(`(Ingestion Service) Error clearing old propositions for source ${sourceId}: ${deletePropsError.message}. Proceeding with ingestion.`);
+        } else {
+            console.log(`(Ingestion Service) Successfully cleared old propositions for source ${sourceId}.`);
+        }
+
+
+        // 6. Generate Embeddings for Chunks
+        const embeddingResult = await generateEmbeddings(chunksForEmbedding); // Pass chunksForEmbedding
         if (!embeddingResult.success || !embeddingResult.data || embeddingResult.data.length === 0) {
             const errMsg = embeddingResult.error || "Failed to generate embeddings or no embeddings produced.";
             throw new Error(errMsg + (embeddingResult.errors?.length ? ` Details: ${embeddingResult.errors.join(', ')}` : ''));
         }
         const chunksWithEmbeddings = embeddingResult.data;
 
-        // 7. Store Chunks
-        const storeResult = await storeChunks(clientId, chunksWithEmbeddings);
-        if (!storeResult.success) {
-            const errMsg = `Failed to store chunks for source ${sourceId}: ${storeResult.error}`;
-            throw new Error(errMsg + (storeResult.details ? ` Details: ${storeResult.details}` : ''));
+        // 7. Store Chunks in knowledge_base
+        // storeChunks now returns { success, data (array of stored chunks with id), count }
+        const storeChunksResult = await storeChunks(clientId, chunksWithEmbeddings);
+        if (!storeChunksResult.success || !storeChunksResult.data || storeChunksResult.data.length === 0) {
+            const errMsg = `Failed to store chunks for source ${sourceId}: ${storeChunksResult.error || 'No data returned from storeChunks'}`;
+            throw new Error(errMsg + (storeChunksResult.details ? ` Details: ${storeChunksResult.details}` : ''));
         }
         
-        // 8. Update Status to 'completed'
-        await updateKnowledgeSourceStatus(sourceId, 'completed', charCount);
-        console.log(`--- (Ingestion Service) Ingestion COMPLETED for Source ID: ${sourceId} ---`);
+        const storedChunksWithIds = storeChunksResult.data; // These are the chunks from DB, with their IDs
+        console.log(`(Ingestion Service) Successfully stored ${storedChunksWithIds.length} chunks in knowledge_base.`);
+
+        // 8. Extract and Store Propositions for each stored chunk
+        let totalPropositionsStored = 0;
+        let propositionErrors = [];
+        console.log(`(Ingestion Service) Starting proposition extraction for ${storedChunksWithIds.length} stored chunks.`);
+        for (const storedChunk of storedChunksWithIds) {
+            if (!storedChunk.id || !storedChunk.content || !storedChunk.metadata?.original_source_id) {
+                console.warn(`(Ingestion Service) Skipping proposition extraction for a chunk due to missing id, content, or original_source_id. Chunk metadata:`, storedChunk.metadata);
+                continue;
+            }
+            const propResult = await extractAndStorePropositions(
+                storedChunk.content, // textSegment
+                clientId,
+                storedChunk.metadata.original_source_id,
+                storedChunk.id,      // sourceChunkId (the ID of the chunk in knowledge_base)
+                storedChunk.content  // sourceChunkContent
+            );
+            if (propResult.success) {
+                totalPropositionsStored += propResult.count;
+            } else {
+                console.error(`(Ingestion Service) Proposition extraction failed for chunk ${storedChunk.id}: ${propResult.error}`);
+                propositionErrors.push(`Chunk ${storedChunk.id}: ${propResult.error}`);
+            }
+        }
+        console.log(`(Ingestion Service) Proposition extraction phase completed. Stored ${totalPropositionsStored} propositions in total.`);
+        if(propositionErrors.length > 0) {
+            console.warn(`(Ingestion Service) Some errors occurred during proposition extraction: ${propositionErrors.join('; ')}`);
+            // Decide if these errors should mark the ingestion as partial_success or failed_ingest
+            // For now, we'll let it proceed to 'completed' but log the errors.
+            // Consider adding a field to knowledge_sources for 'last_ingest_warnings'
+        }
+
+        // 9. Update Status based on proposition errors
+        let finalStatus = 'completed';
+        let finalErrorMessage = null;
+
+        if (propositionErrors.length > 0) {
+            finalStatus = 'completed_with_warnings';
+            finalErrorMessage = `Proposition extraction encountered ${propositionErrors.length} error(s). Details: ${propositionErrors.join('; ').substring(0, 500)}`; // Limit error message length
+            console.warn(`(Ingestion Service) Ingestion for Source ID: ${sourceId} completed with proposition warnings.`);
+        }
+
+        await updateKnowledgeSourceStatus(sourceId, finalStatus, charCount, finalErrorMessage);
+        console.log(`--- (Ingestion Service) Ingestion ${finalStatus.toUpperCase()} for Source ID: ${sourceId} ---`);
         return { 
             success: true, 
-            message: "Ingestion complete.", 
+            message: `Ingestion ${finalStatus}.` + (propositionErrors.length > 0 ? ` Proposition errors: ${propositionErrors.length}` : ""),
             data: { 
                 source_id: sourceId,
-                chunksAttempted: chunks.length,
-                chunksSuccessfullyEmbedded: chunksWithEmbeddings.length,
-                chunksStored: storeResult.count, 
-                tokensUsed: embeddingResult.totalTokens,
+                chunksAttempted: chunksForEmbedding.length,
+                chunksSuccessfullyEmbeddedAndStored: storedChunksWithIds.length,
+                propositionsStored: totalPropositionsStored,
+                tokensUsedForChunkEmbeddings: embeddingResult.totalTokens, // Note: this doesn't include proposition extraction/embedding tokens
                 characterCount: charCount,
-                embeddingGenerationErrors: embeddingResult.errors 
+                embeddingGenerationErrors: embeddingResult.errors,
+                propositionIngestionErrors: propositionErrors
             } 
         };
 
@@ -565,22 +1116,20 @@ export async function ingestWebsite(clientId, urlToIngest) {
 }
 
 
-// --- Helper function (legacy, consider removing or adapting if synchat_clients status is still needed) ---
-/*
-async function updateClientIngestStatus(clientId, status, errorMessage = null) {
-    // ... (Código legado, como estaba antes) ...
-}
-*/
+// Ensure no trailing newlines or content after this removal if it's the absolute end of the file.
 
 // --- Exports ---
 // ingestSourceById e ingestWebsite ya están exportadas en su definición.
 // Las siguientes funciones se exportan para posible uso interno o pruebas,
 // asegurándose de que no estén ya exportadas en su definición.
 export {
-    // updateKnowledgeSourceStatus, // Ya es interna o no exportada directamente antes
-    // chunkTextContent,
-    // chunkContent,
-    // generateEmbeddings,
-    // storeChunks,
-    validateChunk // Ejemplo de exportar una función de utilidad
+    // updateKnowledgeSourceStatus, // Interna
+    // cosineSimilarity, // Interna
+    // getSentenceEmbeddings, // Interna
+    // chunkTextContent, // Interna (ahora async)
+    // chunkContent, // Interna
+    // generateEmbeddings, // Interna
+    // storeChunks, // Interna
+    // extractAndStorePropositions, // Interna
+    validateChunk // Exportada utilidad
 };

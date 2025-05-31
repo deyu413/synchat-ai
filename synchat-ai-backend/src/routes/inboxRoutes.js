@@ -16,4 +16,14 @@ router.post('/conversations/:conversation_id/messages', authMiddleware, inboxCon
 // Route to change the status of a conversation
 router.put('/conversations/:conversation_id/status', authMiddleware, inboxController.changeConversationStatus);
 
+// Route to submit feedback for a specific message within a conversation
+router.post('/conversations/:conversation_id/messages/:message_id/feedback', authMiddleware, inboxController.submitMessageFeedback);
+
+// Route for submitting RAG feedback on a message
+router.post(
+    '/conversations/:conversation_id/messages/:message_id/rag_feedback',
+    authMiddleware, // Protect the route
+    inboxController.handleMessageRagFeedback // New controller function
+);
+
 export default router;
