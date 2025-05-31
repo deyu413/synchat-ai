@@ -28,25 +28,40 @@ export const listConversations = async (req, res) => {
     const { status, page: pageQuery, pageSize: pageSizeQuery } = req.query;
 
     let statusFiltersArray = [];
+    const knownConversationStatuses = ['open', 'awaiting_agent_reply', 'agent_replied', 'closed_by_agent', 'escalated_to_human', 'bot_active', 'closed_by_user', 'resolved_by_ia'];
+
     if (status && typeof status === 'string') {
         statusFiltersArray = status.split(',').map(s => s.trim()).filter(s => s);
-    } else if (Array.isArray(status)) { // If query parser somehow produces an array
+    } else if (Array.isArray(status)) {
         statusFiltersArray = status.map(s => String(s).trim()).filter(s => s);
     }
-    
-    // Default to ['escalated_to_human'] if no specific filters are provided for MVP
-    if (statusFiltersArray.length === 0) {
+
+    if (statusFiltersArray.length > 0) {
+        for (const s of statusFiltersArray) {
+            if (!knownConversationStatuses.includes(s)) {
+                return res.status(400).json({ error: `Invalid status filter: '${s}'. Allowed statuses are: ${knownConversationStatuses.join(', ')}` });
+            }
+        }
+    } else {
+        // Default to a set of active statuses if no specific filters are provided
         statusFiltersArray = ['escalated_to_human', 'awaiting_agent_reply', 'agent_replied', 'open'];
     }
 
-    const page = parseInt(pageQuery, 10) || 1;
-    const pageSize = parseInt(pageSizeQuery, 10) || 20;
+    const parsedPage = pageQuery ? parseInt(pageQuery, 10) : 1;
+    const parsedPageSize = pageSizeQuery ? parseInt(pageSizeQuery, 10) : 20;
+
+    if (pageQuery && (isNaN(parsedPage) || parsedPage < 0)) {
+        return res.status(400).json({ error: 'Invalid page value. Must be a non-negative integer.' });
+    }
+    if (pageSizeQuery && (isNaN(parsedPageSize) || parsedPageSize < 0)) {
+        return res.status(400).json({ error: 'Invalid pageSize value. Must be a non-negative integer.' });
+    }
 
     try {
-        console.log(`(InboxCtrl) Listing conversations for client ${clientId}, page ${page}, size ${pageSize}, statuses: ${statusFiltersArray.join(', ')}`);
-        const result = await getClientConversations(clientId, statusFiltersArray, page, pageSize);
+        console.log(`(InboxCtrl) Listing conversations for client ${clientId}, page ${parsedPage}, size ${parsedPageSize}, statuses: ${statusFiltersArray.join(', ')}`);
+        const result = await getClientConversations(clientId, statusFiltersArray, parsedPage, parsedPageSize);
         
-        if (result.error) { // Handle errors returned by the service itself (e.g. DB connection issues)
+        if (result.error) {
              console.error(`(InboxCtrl) Error from getClientConversations service:`, result.error);
              return res.status(500).json({ message: "Error retrieving conversations.", error: result.error });
         }
@@ -106,6 +121,9 @@ export const postAgentMessage = async (req, res) => {
     }
     if (!content || typeof content !== 'string' || content.trim() === '') {
         return res.status(400).json({ message: 'Message content is required and cannot be empty.' });
+    }
+    if (content.length > 5000) {
+        return res.status(400).json({ error: 'Message content exceeds maximum length of 5000 characters.' });
     }
     
     // We need the client_id associated with the user/agent to pass to the service for ownership check.
@@ -227,11 +245,11 @@ export const submitMessageFeedback = async (req, res) => {
     if (!POSITIVE_INT_REGEX.test(message_id)) {
         return res.status(400).json({ error: 'message_id must be a positive integer string.' });
     }
-    if (rating === undefined || ![-1, 1].includes(Number(rating))) {
+    if (rating === undefined || ![-1, 1].includes(Number(rating))) { // Assuming 0 is not a valid rating for this specific feedback type
         return res.status(400).json({ message: 'Rating is required and must be 1 (positive) or -1 (negative).' });
     }
-    if (comment && typeof comment !== 'string') {
-        return res.status(400).json({ message: 'Comment must be a string.' });
+    if (comment && (typeof comment !== 'string' || comment.length > 1000)) {
+        return res.status(400).json({ message: 'Comment must be a string and not exceed 1000 characters.' });
     }
 
     try {
@@ -279,11 +297,14 @@ export const handleMessageRagFeedback = async (req, res) => {
     const client_id = req.user.id; // Assuming Supabase user UID is the client_id for 'synchat_clients'
 
     // Validate critical inputs
-    if (typeof rating !== 'number') {
-        return res.status(400).json({ error: 'Rating must be a number.' });
+    if (typeof rating !== 'number' || ![-1, 0, 1].includes(rating)) {
+        return res.status(400).json({ error: 'Rating must be a number: -1, 0, or 1.' });
     }
+    if (comment && (typeof comment !== 'string' || comment.length > 1000)) {
+        return res.status(400).json({ error: 'Comment, if provided, must be a string and not exceed 1000 characters.' });
+    }
+
     if (!client_id) {
-        // This case should ideally be prevented by auth or earlier checks if client_id is essential for all user ops
         console.error('(InboxCtrl) Critical: Client ID not found for authenticated user in handleMessageRagFeedback. User ID:', user_id);
         return res.status(500).json({ error: 'Could not determine client ID for feedback. Ensure user is correctly associated with a client.' });
     }
@@ -300,6 +321,10 @@ export const handleMessageRagFeedback = async (req, res) => {
     // Validate rag_interaction_log_id if provided
     if (rag_interaction_log_id && !UUID_REGEX.test(rag_interaction_log_id)) {
         return res.status(400).json({ error: 'rag_interaction_log_id has an invalid format.' });
+    }
+     // Validate feedback_context (optional, but if present must be an object)
+    if (feedback_context !== undefined && typeof feedback_context !== 'object') {
+        return res.status(400).json({ error: 'feedback_context, if provided, must be an object.' });
     }
 
     const feedbackData = {

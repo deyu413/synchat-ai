@@ -279,11 +279,26 @@ Responde ÚNICAMENTE con la etiqueta del tema, sin ninguna explicación adiciona
 
 export const triggerRagFeedbackAnalysis = async (req, res) => {
     console.log('(InternalCtrl) Received request to trigger RAG feedback analysis.');
-    const { client_id: clientId, period_days: periodDays = 30 } = req.body; // Or req.query
+    const { client_id: clientId, period_days: periodDaysQuery } = req.body; // Or req.query
+
+    const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+    if (clientId && !UUID_REGEX.test(clientId)) {
+        return res.status(400).json({ error: 'Invalid client_id format. Must be a UUID.' });
+    }
+
+    let periodDays = 30; // Default
+    if (periodDaysQuery) {
+        const parsedPeriodDays = parseInt(periodDaysQuery, 10);
+        if (isNaN(parsedPeriodDays) || parsedPeriodDays <= 0) {
+            return res.status(400).json({ error: 'Invalid period_days. Must be a positive integer.' });
+        }
+        periodDays = parsedPeriodDays;
+    }
 
     const endDate = new Date();
     const startDate = new Date();
-    startDate.setDate(endDate.getDate() - parseInt(periodDays, 10));
+    startDate.setDate(endDate.getDate() - periodDays);
     const periodOptions = {
         startDate: startDate.toISOString().split('T')[0],
         endDate: endDate.toISOString().split('T')[0]

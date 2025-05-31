@@ -39,8 +39,34 @@ export const getClientConfig = async (req, res) => {
 export const getKnowledgeSuggestions = async (req, res) => {
     const clientId = req.user?.id;
     if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
-    const { status = 'new', type, limit = 20, offset = 0 } = req.query;
-    const options = { status, type, limit: parseInt(limit, 10), offset: parseInt(offset, 10) };
+    const { status, type, limit, offset } = req.query;
+
+    const parsedLimit = limit ? parseInt(limit, 10) : 20;
+    const parsedOffset = offset ? parseInt(offset, 10) : 0;
+
+    if (limit && (isNaN(parsedLimit) || parsedLimit < 0)) {
+        return res.status(400).json({ error: 'Invalid limit value. Must be a non-negative integer.' });
+    }
+    if (offset && (isNaN(parsedOffset) || parsedOffset < 0)) {
+        return res.status(400).json({ error: 'Invalid offset value. Must be a non-negative integer.' });
+    }
+
+    const validStatuses = ['new', 'reviewed_pending_action', 'action_taken', 'dismissed'];
+    if (status && !validStatuses.includes(status)) {
+        return res.status(400).json({ error: `Invalid status value. Must be one of: ${validStatuses.join(', ')}` });
+    }
+
+    const validTypes = ['content_gap', 'new_faq_from_escalation', 'new_faq_from_success'];
+    if (type && !validTypes.includes(type)) {
+        return res.status(400).json({ error: `Invalid type value. Must be one of: ${validTypes.join(', ')}` });
+    }
+
+    const options = {
+        status: status || 'new', // Default to 'new' if not provided
+        type,
+        limit: parsedLimit,
+        offset: parsedOffset
+    };
     console.log(`(ClientDashboardCtrl) Fetching knowledge suggestions for client ${clientId}, options:`, options);
     try {
         const suggestions = await db.fetchKnowledgeSuggestions(clientId, options);
@@ -80,7 +106,12 @@ export const testKnowledgeQuery = async (req, res) => {
     const clientId = req.user?.id;
     const { queryText } = req.body;
     if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
-    if (!queryText || typeof queryText !== 'string' || queryText.trim() === '') { return res.status(400).json({ message: 'queryText is required in the request body and must be a non-empty string.' }); }
+    if (!queryText || typeof queryText !== 'string' || queryText.trim() === '') {
+        return res.status(400).json({ message: 'queryText is required in the request body and must be a non-empty string.' });
+    }
+    if (queryText.length > 1000) {
+        return res.status(400).json({ error: 'queryText exceeds maximum length of 1000 characters.' });
+    }
     console.log(`(ClientDashboardCtrl) Testing knowledge query for client ${clientId}: "${queryText.substring(0, 100)}..."`);
     try {
         const searchResult = await db.hybridSearch(clientId, queryText, null, {});
@@ -105,10 +136,33 @@ export const getChatbotAnalyticsSummary = async (req, res) => {
     const clientId = req.user?.id;
     if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
     const { period = '30d', startDate, endDate } = req.query;
-    // TODO: Add more robust validation for 'period' against allowed enum values (e.g., '7d', '30d', '90d', 'custom').
-    // TODO: If 'period' is 'custom', ensure 'startDate' and 'endDate' are provided and valid.
-    // TODO: Validate 'startDate' and 'endDate' formats (e.g., YYYY-MM-DD) and ensure endDate is not before startDate.
-    // Basic check is present in some analytics functions, but can be standardized here.
+
+    const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+    const validPeriods = ['7d', '30d', '90d', 'custom', 'all_time'];
+    if (period && !validPeriods.includes(period)) {
+        return res.status(400).json({ error: `Invalid period. Must be one of: ${validPeriods.join(', ')}` });
+    }
+
+    if (period === 'custom') {
+        if (!startDate || !endDate) {
+            return res.status(400).json({ error: 'startDate and endDate are required when period is "custom".' });
+        }
+    }
+
+    if (startDate) {
+        if (!DATE_REGEX.test(startDate) || isNaN(new Date(startDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid startDate format. Expected YYYY-MM-DD.' });
+        }
+    }
+    if (endDate) {
+        if (!DATE_REGEX.test(endDate) || isNaN(new Date(endDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid endDate format. Expected YYYY-MM-DD.' });
+        }
+    }
+    if (startDate && endDate && new Date(endDate) < new Date(startDate)) {
+        return res.status(400).json({ error: 'endDate cannot be before startDate.' });
+    }
+
     const periodOptions = { period, startDate, endDate };
     console.log(`(ClientDashboardCtrl) Fetching analytics summary for client ${clientId}, options:`, periodOptions);
     try {
@@ -125,12 +179,42 @@ export const getUnansweredQuerySuggestions = async (req, res) => {
     const clientId = req.user?.id;
     if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
     const { period = '30d', startDate, endDate, limit: limitQuery } = req.query;
-    // TODO: Add robust date/period validation similar to getChatbotAnalyticsSummary.
+
+    const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+    const validPeriods = ['7d', '30d', '90d', 'custom', 'all_time']; // Same as getChatbotAnalyticsSummary
+    if (period && !validPeriods.includes(period)) {
+        return res.status(400).json({ error: `Invalid period. Must be one of: ${validPeriods.join(', ')}` });
+    }
+
+    if (period === 'custom') {
+        if (!startDate || !endDate) {
+            return res.status(400).json({ error: 'startDate and endDate are required when period is "custom".' });
+        }
+    }
+
+    if (startDate) {
+        if (!DATE_REGEX.test(startDate) || isNaN(new Date(startDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid startDate format. Expected YYYY-MM-DD.' });
+        }
+    }
+    if (endDate) {
+        if (!DATE_REGEX.test(endDate) || isNaN(new Date(endDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid endDate format. Expected YYYY-MM-DD.' });
+        }
+    }
+    if (startDate && endDate && new Date(endDate) < new Date(startDate)) {
+        return res.status(400).json({ error: 'endDate cannot be before startDate.' });
+    }
+
+    const parsedLimit = limitQuery ? parseInt(limitQuery, 10) : 10;
+    if (limitQuery && (isNaN(parsedLimit) || parsedLimit < 0)) {
+        return res.status(400).json({ error: 'Invalid limit value. Must be a non-negative integer.' });
+    }
+
     const periodOptions = { period, startDate, endDate };
-    const limit = parseInt(limitQuery, 10) || 10;
-    console.log(`(ClientDashboardCtrl) Fetching unanswered queries for client ${clientId}, options:`, periodOptions, `limit: ${limit}`);
+    console.log(`(ClientDashboardCtrl) Fetching unanswered queries for client ${clientId}, options:`, periodOptions, `limit: ${parsedLimit}`);
     try {
-        const suggestions = await db.fetchUnansweredQueries(clientId, periodOptions, limit);
+        const suggestions = await db.fetchUnansweredQueries(clientId, periodOptions, parsedLimit);
         res.status(200).json(suggestions);
     } catch (error) {
         console.error(`(ClientDashboardCtrl) Error fetching unanswered query suggestions for client ${clientId}:`, error);
@@ -143,19 +227,54 @@ export const updateClientConfig = async (req, res) => {
     const clientId = req.user?.id;
     if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' }); }
     const { widget_config: newWidgetConfigData, knowledge_source_url } = req.body;
-    if (newWidgetConfigData === undefined && knowledge_source_url === undefined) { return res.status(400).json({ message: 'No valid fields provided for update. Provide widget_config or knowledge_source_url.' }); }
+
+    if (newWidgetConfigData === undefined && knowledge_source_url === undefined) {
+        return res.status(400).json({ message: 'No valid fields provided for update. Provide widget_config or knowledge_source_url.' });
+    }
+
     const updateFields = {};
     try {
         if (newWidgetConfigData !== undefined) {
-            if (typeof newWidgetConfigData !== 'object' || newWidgetConfigData === null) { return res.status(400).json({ message: 'Invalid widget_config format. It must be an object.' }); }
+            if (typeof newWidgetConfigData !== 'object' || newWidgetConfigData === null) {
+                return res.status(400).json({ message: 'Invalid widget_config format. It must be an object.' });
+            }
+
+            // Validate botName and welcomeMessage within widget_config
+            if (newWidgetConfigData.hasOwnProperty('botName')) {
+                if (typeof newWidgetConfigData.botName !== 'string') {
+                    return res.status(400).json({ error: 'widget_config.botName must be a string.' });
+                }
+                if (newWidgetConfigData.botName.length > 100) {
+                    return res.status(400).json({ error: 'widget_config.botName exceeds maximum length of 100 characters.' });
+                }
+            }
+            if (newWidgetConfigData.hasOwnProperty('welcomeMessage')) {
+                if (typeof newWidgetConfigData.welcomeMessage !== 'string') {
+                    return res.status(400).json({ error: 'widget_config.welcomeMessage must be a string.' });
+                }
+                if (newWidgetConfigData.welcomeMessage.length > 500) {
+                    return res.status(400).json({ error: 'widget_config.welcomeMessage exceeds maximum length of 500 characters.' });
+                }
+            }
+
             let currentWidgetConfig = {};
             const { data: clientRecord, error: fetchError } = await supabase.from('synchat_clients').select('widget_config').eq('client_id', clientId).single();
-            if (fetchError && fetchError.code !== 'PGRST116') { console.error('Error fetching current widget_config:', fetchError.message); return res.status(500).json({ message: 'Error fetching current configuration for update.', error: fetchError.message }); }
+            if (fetchError && fetchError.code !== 'PGRST116') {
+                console.error('Error fetching current widget_config:', fetchError.message);
+                return res.status(500).json({ message: 'Error fetching current configuration for update.', error: fetchError.message });
+            }
             currentWidgetConfig = clientRecord?.widget_config || {};
             updateFields.widget_config = { ...currentWidgetConfig, ...newWidgetConfigData };
         }
+
         if (knowledge_source_url !== undefined) {
-            try { if (knowledge_source_url !== '') { new URL(knowledge_source_url); } }
+            // Allow empty string to clear the URL, otherwise validate format
+            if (knowledge_source_url !== '' && typeof knowledge_source_url !== 'string') {
+                 return res.status(400).json({ message: 'knowledge_source_url must be a string.' });
+            }
+            try {
+                if (knowledge_source_url !== '') { new URL(knowledge_source_url); }
+            }
             catch (urlError) { return res.status(400).json({ message: 'Invalid knowledge_source_url format.' }); }
             updateFields.knowledge_source_url = knowledge_source_url;
         }
@@ -197,8 +316,21 @@ export const getClientUsageResolutions = async (req, res) => {
     const clientId = req.user?.id;
     if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' }); }
     let { billing_cycle_id } = req.query;
-    // TODO: Validate billing_cycle_id format if specific (e.g., YYYY-MM).
-    if (!billing_cycle_id) { const now = new Date(); const year = now.getFullYear(); const month = (now.getMonth() + 1).toString().padStart(2, '0'); billing_cycle_id = `${year}-${month}`; console.log(`No billing_cycle_id provided, defaulting to current month: ${billing_cycle_id}`); }
+
+    const BILLING_CYCLE_REGEX = /^\d{4}-\d{2}$/;
+
+    if (billing_cycle_id && !BILLING_CYCLE_REGEX.test(billing_cycle_id)) {
+        return res.status(400).json({ error: 'Invalid billing_cycle_id format. Expected YYYY-MM.' });
+    }
+
+    if (!billing_cycle_id) {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = (now.getMonth() + 1).toString().padStart(2, '0');
+        billing_cycle_id = `${year}-${month}`;
+        console.log(`No billing_cycle_id provided, defaulting to current month: ${billing_cycle_id}`);
+    }
+
     try {
         let query = supabase.from('ia_resolutions_log').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('billing_cycle_id', billing_cycle_id);
         const { count, error } = await query;
@@ -225,6 +357,9 @@ export const runRagPlaygroundQuery = async (req, res, next) => {
 
     if (!queryText || typeof queryText !== 'string' || queryText.trim() === '') {
         return res.status(400).json({ error: 'queryText is required and must be a non-empty string.' });
+    }
+    if (queryText.length > 1000) {
+        return res.status(400).json({ error: 'queryText exceeds maximum length of 1000 characters.' });
     }
 
     console.log(`(ClientDashboardCtrl) RAG Playground query for client ${clientId}: "${queryText.substring(0, 100)}..."`);
@@ -396,11 +531,21 @@ export const handlePlaygroundRagFeedback = async (req, res) => {
     } = req.body;
 
     // Validate required fields
-    if (typeof rating !== 'number') {
-        return res.status(400).json({ error: 'Rating (number) is required.' });
+    if (typeof rating !== 'number' || ![-1, 0, 1].includes(rating)) {
+        return res.status(400).json({ error: 'Rating is required and must be -1, 0, or 1.' });
     }
     if (typeof feedback_type !== 'string' || feedback_type.trim() === '') {
         return res.status(400).json({ error: 'feedback_type (string) is required.' });
+    }
+
+    // Validate comment
+    if (comment && (typeof comment !== 'string' || comment.length > 2000)) {
+        return res.status(400).json({ error: 'Comment must be a string and not exceed 2000 characters.' });
+    }
+
+    // Validate feedback_context
+    if (feedback_context && typeof feedback_context !== 'object') {
+        return res.status(400).json({ error: 'feedback_context must be an object.' });
     }
 
     // Validate rag_interaction_log_id if provided
@@ -473,20 +618,22 @@ export const getSentimentDistributionAnalytics = async (req, res) => {
         const clientId = req.user?.id;
 
         if (!clientId) {
-            // This should ideally be caught by authMiddleware if user is not found,
-            // but as a safeguard for client_id derivation:
             console.error('(ClientDashboardCtrl) Client ID not found in req.user for getSentimentDistributionAnalytics.');
             return res.status(401).json({ error: 'Unauthorized or Client ID not determinable.' });
         }
-        // TODO: Add more robust validation for 'startDate' and 'endDate' formats (e.g., YYYY-MM-DD) and ensure endDate is not before startDate.
-        // The existing isNaN check is a basic validation.
+
+        const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
         if (!startDate || !endDate) {
             return res.status(400).json({ error: 'startDate and endDate query parameters are required.' });
         }
-
-        // Basic date validation (can be more sophisticated)
-        if (isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())) {
-            return res.status(400).json({ error: 'Invalid date format for startDate or endDate.' });
+        if (!DATE_REGEX.test(startDate) || isNaN(new Date(startDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid startDate format. Expected YYYY-MM-DD.' });
+        }
+        if (!DATE_REGEX.test(endDate) || isNaN(new Date(endDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid endDate format. Expected YYYY-MM-DD.' });
+        }
+        if (new Date(endDate) < new Date(startDate)) {
+            return res.status(400).json({ error: 'endDate cannot be before startDate.' });
         }
 
         const result = await db.getSentimentDistribution(clientId, { startDate, endDate });
@@ -511,13 +658,19 @@ export const getTopicAnalyticsData = async (req, res) => {
             console.error('(ClientDashboardCtrl) Client ID not found in req.user for getTopicAnalyticsData.');
             return res.status(401).json({ error: 'Unauthorized or Client ID not determinable.' });
         }
-        // TODO: Add more robust validation for 'startDate' and 'endDate' formats (e.g., YYYY-MM-DD) and ensure endDate is not before startDate.
-        // The existing isNaN check is a basic validation.
-        if (!startDate || !endDate) { // Basic validation, can be expanded
+
+        const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+        if (!startDate || !endDate) {
             return res.status(400).json({ error: 'startDate and endDate query parameters are required for topic analytics.' });
         }
-        if (isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())) {
-            return res.status(400).json({ error: 'Invalid date format for startDate or endDate.' });
+        if (!DATE_REGEX.test(startDate) || isNaN(new Date(startDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid startDate format. Expected YYYY-MM-DD.' });
+        }
+        if (!DATE_REGEX.test(endDate) || isNaN(new Date(endDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid endDate format. Expected YYYY-MM-DD.' });
+        }
+        if (new Date(endDate) < new Date(startDate)) {
+            return res.status(400).json({ error: 'endDate cannot be before startDate.' });
         }
 
         const result = await db.getTopicAnalytics(clientId, { startDate, endDate });
@@ -542,13 +695,19 @@ export const getKnowledgeSourcePerformanceAnalytics = async (req, res) => {
             console.error('(ClientDashboardCtrl) Client ID not found in req.user for getKnowledgeSourcePerformanceAnalytics.');
             return res.status(401).json({ error: 'Unauthorized or Client ID not determinable.' });
         }
-        // TODO: Add more robust validation for 'startDate' and 'endDate' formats (e.g., YYYY-MM-DD) and ensure endDate is not before startDate.
-        // The existing isNaN check is a basic validation.
-        if (!startDate || !endDate) { // Basic validation
+
+        const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+        if (!startDate || !endDate) {
             return res.status(400).json({ error: 'startDate and endDate query parameters are required for source performance analytics.' });
         }
-         if (isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())) {
-            return res.status(400).json({ error: 'Invalid date format for startDate or endDate.' });
+        if (!DATE_REGEX.test(startDate) || isNaN(new Date(startDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid startDate format. Expected YYYY-MM-DD.' });
+        }
+        if (!DATE_REGEX.test(endDate) || isNaN(new Date(endDate).getTime())) {
+            return res.status(400).json({ error: 'Invalid endDate format. Expected YYYY-MM-DD.' });
+        }
+        if (new Date(endDate) < new Date(startDate)) {
+            return res.status(400).json({ error: 'endDate cannot be before startDate.' });
         }
 
         const result = await db.getKnowledgeSourcePerformance(clientId, { startDate, endDate });

@@ -30,7 +30,19 @@ export const uploadFile = [
     }
 
     const client_id = req.user.id;
-    const original_filename = req.file.originalname; // TODO: Potential future validation for filename length, characters, etc.
+    const original_filename = req.file.originalname;
+
+    // Validate original_filename
+    if (!original_filename || typeof original_filename !== 'string') {
+        return res.status(400).json({ message: 'Invalid filename.' });
+    }
+    if (original_filename.length > 255) {
+        return res.status(400).json({ message: 'Filename exceeds maximum length of 255 characters.' });
+    }
+    if (/[/\\]|\.\./.test(original_filename)) { // Checks for / or \ or ..
+        return res.status(400).json({ message: 'Filename contains invalid characters (/, \\, ..).' });
+    }
+
     const storagePath = `knowledge_files/${client_id}/${original_filename}`;
     const fileMimeType = req.file.mimetype;
 
@@ -349,23 +361,32 @@ export const updateSourceMetadata = async (req, res) => {
   // Whitelist fields that can be updated from the request body
   const { reingest_frequency, custom_title, category_tags } = req.body; // Added category_tags
   const metadataUpdates = {};
+  const allowedReingestFrequencies = ['daily', 'weekly', 'monthly', 'manual', null];
 
   if (reingest_frequency !== undefined) {
+    if (!allowedReingestFrequencies.includes(reingest_frequency)) {
+        return res.status(400).json({ message: `Invalid reingest_frequency. Must be one of: ${allowedReingestFrequencies.join(', ')} or null.` });
+    }
     metadataUpdates.reingest_frequency = reingest_frequency;
   }
+
   if (custom_title !== undefined) {
-    metadataUpdates.custom_title = custom_title;
+    if (custom_title === null) { // Allow null to clear it
+        metadataUpdates.custom_title = null;
+    } else if (typeof custom_title !== 'string') {
+        return res.status(400).json({ message: 'custom_title must be a string or null.' });
+    } else if (custom_title.length > 255) {
+        return res.status(400).json({ message: 'custom_title exceeds maximum length of 255 characters.' });
+    } else {
+        metadataUpdates.custom_title = custom_title;
+    }
   }
+
   if (category_tags !== undefined) {
-    // category_tags can be an empty array [] to clear them, or null
     if (category_tags === null || (Array.isArray(category_tags) && category_tags.every(tag => typeof tag === 'string'))) {
         metadataUpdates.category_tags = category_tags;
     } else {
-        // Optional: return a 400 error if category_tags is present but not in a valid format
-        // For now, we simply won't add it to metadataUpdates if it's invalid and not null.
-        // If stricter validation is needed, uncomment the line below:
-        // return res.status(400).json({ message: 'Invalid category_tags format. Must be an array of strings or null.' });
-        console.warn(`(Controller) Invalid category_tags format received for source ${source_id}. It was ignored. Received:`, category_tags);
+        return res.status(400).json({ message: 'Invalid category_tags format. Must be an array of strings or null.' });
     }
   }
   // Add any other allowed fields here

@@ -30,13 +30,47 @@ const BOT_CANNOT_ANSWER_MSG = "Lo siento, no tengo información específica sobr
 const BOT_ESCALATION_NOTIFICATION_MSG = "Un momento, por favor. Voy a transferirte con un agente humano para que pueda ayudarte con tu consulta.";
 
 export const handleChatMessage = async (req, res, next) => {
-    const { message, conversationId, clientId, clarification_response_details } = req.body;
+    const { message, conversationId, clientId, clarification_response_details, intent } = req.body; // Added intent
     let userMessageInput = message; // The actual text sent by the user in this turn
 
-    if (!userMessageInput || !conversationId || !clientId) {
-        console.warn('Petición inválida a /message:', req.body);
-        return res.status(400).json({ error: 'Faltan datos requeridos (message, conversationId, clientId).' });
+    // Base checks for essential parameters
+    if (!conversationId || !clientId) {
+        console.warn('Petición inválida a /message: Missing conversationId or clientId.', req.body);
+        return res.status(400).json({ error: 'Faltan datos requeridos (conversationId, clientId).' });
     }
+     // Check if there's any form of input or valid intent
+    if (!userMessageInput && !clarification_response_details && !(intent && intent === 'request_human_escalation')) {
+        return res.status(400).json({ error: 'Missing message, clarification_response_details, or valid intent for escalation.' });
+    }
+
+    // Input Validation for message
+    if (userMessageInput && typeof userMessageInput !== 'string') {
+        return res.status(400).json({ error: 'Invalid message format. Must be a string.' });
+    }
+    if (userMessageInput && userMessageInput.length > 2000) {
+        return res.status(400).json({ error: 'Message exceeds maximum length of 2000 characters.' });
+    }
+
+    // Input Validation for clarification_response_details
+    if (clarification_response_details) {
+        if (typeof clarification_response_details !== 'object' || clarification_response_details === null) {
+            return res.status(400).json({ error: 'Invalid clarification_response_details format. Must be an object.' });
+        }
+        if (clarification_response_details.hasOwnProperty('original_query') &&
+            (typeof clarification_response_details.original_query !== 'string' || clarification_response_details.original_query.trim() === '')) {
+            return res.status(400).json({ error: 'Invalid original_query in clarification_response_details. Must be a non-empty string.' });
+        }
+        if (clarification_response_details.hasOwnProperty('original_chunks') &&
+            !Array.isArray(clarification_response_details.original_chunks)) {
+            return res.status(400).json({ error: 'Invalid original_chunks in clarification_response_details. Must be an array.' });
+        }
+    }
+
+    // Input Validation for intent
+    if (intent && typeof intent !== 'string') {
+        return res.status(400).json({ error: 'Invalid intent format. Must be a string.' });
+    }
+    // Specific handling for 'request_human_escalation' is done later based on intent value
 
     // Validate conversationId format
     if (!UUID_REGEX.test(conversationId)) {
@@ -60,15 +94,21 @@ export const handleChatMessage = async (req, res, next) => {
         console.log(`(Controller) Using refined query for RAG: "${effectiveQuery}"`);
         // `clarification_response_details.original_chunks` are available if needed, but current strategy is to re-search.
     }
+    // Ensure that userMessageInput is not null if intent is not 'request_human_escalation' and no clarification_response_details
+    if (!clarification_response_details && !(intent && intent === 'request_human_escalation') && !userMessageInput) {
+        return res.status(400).json({ error: 'Message input is required when not providing clarification details or requesting escalation.' });
+    }
 
 
-    if (req.body.intent && req.body.intent === 'request_human_escalation') {
+    if (intent && intent === 'request_human_escalation') { // Use validated intent variable
         console.log(`(Controller) User initiated escalation for CV:${conversationId}, C:${clientId}`);
         try {
-            await db.saveMessage(conversationId, 'user', 'El usuario ha solicitado hablar con un agente humano.');
+            // Even if userMessageInput is empty, we log a generic escalation message.
+            const escalationMessage = userMessageInput ? `El usuario ha solicitado hablar con un agente humano. Mensaje: "${userMessageInput}"` : 'El usuario ha solicitado hablar con un agente humano.';
+            await db.saveMessage(conversationId, 'user', escalationMessage);
             db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => console.error(`Analytics: Failed to increment user message count for CV:${conversationId}`, err));
             await db.updateConversationStatusByAgent(conversationId, clientId, null, 'escalated_to_human');
-            db.updateAnalyticOnEscalation(conversationId, new Date(), `User explicitly requested human escalation. Associated message: "${userMessageInput}"`) // Use userMessageInput here
+            db.updateAnalyticOnEscalation(conversationId, new Date(), `User explicitly requested human escalation. Associated message: "${userMessageInput || ''}"`)
                 .catch(err => console.error(`Analytics: Failed to update escalation data for CV:${conversationId}`, err));
             return res.status(200).json({ status: "escalation_requested", reply: "Tu solicitud para hablar con un agente ha sido recibida. Alguien se pondrá en contacto contigo pronto." });
         } catch (escalationError) {
@@ -76,6 +116,18 @@ export const handleChatMessage = async (req, res, next) => {
             return res.status(500).json({ error: "No se pudo procesar tu solicitud de escalación en este momento." });
         }
     }
+    // If we reach here and userMessageInput is still null/empty (e.g. intent was something else but message was empty), it's an error.
+    // This case should ideally be caught by the initial check:
+    // `if (!userMessageInput && !clarification_response_details && !(intent && intent === 'request_human_escalation'))`
+    // However, as a safeguard:
+    if (!userMessageInput && !clarification_response_details) {
+        // This implies intent was present but not 'request_human_escalation', and message was empty.
+        // This situation should be clarified based on product requirements if other intents can have empty messages.
+        // For now, assuming any other intent path requires a message if no clarification is given.
+        logger.warn(`(ChatCtrl) handleChatMessage: Potentially unhandled case - intent provided ('${intent}') without a message for CV ${conversationId}.`);
+        return res.status(400).json({ error: 'Message input is required for the provided intent.' });
+    }
+
 
     console.log(`(Controller) Mensaje (effectiveQuery) recibido C:${clientId}, CV:${conversationId}: "${effectiveQuery.substring(0, 100)}..."`);
 

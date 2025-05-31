@@ -833,7 +833,7 @@ export const updateKnowledgeSourceMetadata = async (clientId, sourceId, metadata
         const { data, error } = await supabase
             .from('knowledge_sources')
             .update(updateObject)
-            .eq('id', sourceId)
+            .eq('source_id', sourceId)
             .eq('client_id', clientId) // Ensure client owns this source
             .select()
             .single();
