@@ -53,7 +53,7 @@ ON public.knowledge_suggestions FOR SELECT
 USING (
     EXISTS (
         SELECT 1 FROM public.synchat_clients sc
-        WHERE sc.client_id = public.knowledge_suggestions.client_id AND sc.user_id = auth.uid()
+        WHERE sc.client_id = public.knowledge_suggestions.client_id AND sc.client_id = auth.uid()
     )
 );
 
@@ -63,13 +63,13 @@ ON public.knowledge_suggestions FOR UPDATE
 USING (
     EXISTS (
         SELECT 1 FROM public.synchat_clients sc
-        WHERE sc.client_id = public.knowledge_suggestions.client_id AND sc.user_id = auth.uid()
+        WHERE sc.client_id = public.knowledge_suggestions.client_id AND sc.client_id = auth.uid()
     )
 )
 WITH CHECK (
     EXISTS (
         SELECT 1 FROM public.synchat_clients sc
-        WHERE sc.client_id = public.knowledge_suggestions.client_id AND sc.user_id = auth.uid()
+        WHERE sc.client_id = public.knowledge_suggestions.client_id AND sc.client_id = auth.uid()
     )
     AND (NEW.status IS NOT NULL) -- Client can only update status; other fields protected.
     -- To allow updating only specific columns like status:

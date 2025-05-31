@@ -38,18 +38,11 @@ TO service_role
 USING (true)
 WITH CHECK (true);
 
--- CREATE POLICY "Allow client admins to view feedback for their client_id"
--- ON public.rag_feedback_log
--- FOR SELECT
--- TO authenticated
--- USING (
---     EXISTS (
---         SELECT 1
---         FROM client_users cu -- This table does not exist in the current schema
---         JOIN synchat_clients sc ON cu.client_id = sc.client_id
---         WHERE cu.user_id = auth.uid() AND sc.client_id = rag_feedback_log.client_id AND cu.role = 'admin'
---     )
--- );
+CREATE POLICY "Allow client admins to view feedback for their client_id"
+ON public.rag_feedback_log
+FOR SELECT
+TO authenticated
+USING (client_id = auth.uid());
 
 COMMENT ON TABLE public.rag_feedback_log IS 'Stores feedback on RAG interactions and responses.';
 COMMENT ON COLUMN public.rag_feedback_log.feedback_id IS 'Unique identifier for the feedback entry.';

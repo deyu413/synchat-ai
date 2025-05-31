@@ -37,20 +37,7 @@ CREATE POLICY "Allow client admins to read their topics"
 ON public.analyzed_conversation_topics
 FOR SELECT
 TO authenticated
-USING (
-    EXISTS (
-        SELECT 1
-        FROM public.synchat_clients sc -- Assuming direct link or via a client_users table
-        WHERE sc.client_id = analyzed_conversation_topics.client_id
-        -- AND sc.admin_user_id = auth.uid() -- This is a guess, depends on synchat_clients schema
-        -- OR EXISTS ( SELECT 1 FROM client_users cu WHERE cu.client_id = analyzed_conversation_topics.client_id AND cu.user_id = auth.uid() AND cu.role = 'admin')
-        -- For simplicity, if req.user.client_id is primary identifier from middleware:
-        AND analyzed_conversation_topics.client_id = (SELECT u.raw_user_meta_data->>'client_id' FROM auth.users u WHERE u.id = auth.uid())::uuid
-        -- The above line is an example if client_id is stored in auth.users.raw_user_meta_data
-        -- This RLS will likely be primarily for service roles and backend access rather than direct client queries.
-        -- The API itself will enforce client access.
-    )
-);
+USING (client_id = auth.uid());
 
 COMMENT ON TABLE public.analyzed_conversation_topics IS 'Stores topics identified from conversation analysis, typically via query clustering and LLM labeling.';
 COMMENT ON COLUMN public.analyzed_conversation_topics.topic_id IS 'Unique identifier for the topic.';
