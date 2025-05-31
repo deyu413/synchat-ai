@@ -111,8 +111,9 @@ Descripción: [Tu descripción aquí]`;
                 .limit(1);
 
             if (checkError) {
-                console.error(`(SuggestionService) Error checking for existing suggestions:`, checkError.message);
-                // Decide whether to proceed or skip; for now, proceed cautiously
+                console.error(`(SuggestionService) Error checking for existing suggestions for title "${suggestionDetails.title}":`, checkError.message);
+                // Skip this queryData if the check failed, to avoid potential duplicates or errors.
+                continue;
             }
 
             if (existingSuggestions && existingSuggestions.length > 0) {
@@ -245,7 +246,9 @@ Descripción: [Tu descripción aquí]`;
                 .limit(1);
 
             if (checkFaqError) {
-                console.error(`(SuggestionService) Error checking for existing FAQ suggestions:`, checkFaqError.message);
+                console.error(`(SuggestionService) Error checking for existing FAQ suggestions for title "${suggestionDetails.title}":`, checkFaqError.message);
+                // Skip this convo if the check failed, to avoid potential duplicates or errors.
+                continue;
             }
             if (existingFaqSuggestions && existingFaqSuggestions.length > 0) {
                 console.log(`(SuggestionService) Similar 'new_faq_from_escalation' suggestion already exists for title: "${suggestionDetails.title}". Skipping.`);

@@ -342,6 +342,16 @@ async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount pa
  * Divide el contenido HTML en chunks jerárquicos.
  * MODIFIED: Accepts baseMetadata and incorporates it.
  */
+// TODO: Enhance HTML text extraction for complex, JavaScript-heavy sites.
+// The current Cheerio-based approach is suitable for static or server-rendered HTML but may struggle with client-side rendered content.
+// For more robust extraction from dynamic sites, consider using a headless browser library like Puppeteer or Playwright (via jsdom or similar if full browser automation is too heavy).
+// This would allow for:
+// 1. JavaScript execution to get the final DOM state.
+// 2. More accurate text extraction that mirrors what a user sees.
+// 3. Better handling of interactive elements or content loaded dynamically.
+// Such an enhancement would be particularly beneficial before applying semantic chunking to HTML content,
+// as the quality of extracted text directly impacts chunking and subsequent embedding quality.
+// Also, consider advanced content extraction libraries (e.g., Readability.js port) to isolate main article text.
 function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // baseMetadata is new, elementOverlapCount added
     // TODO: Explore sentence-level semantic splitting for long text content within HTML elements.
     console.log(`(Ingestion Service) Starting HTML chunking for URL: ${url}, source_id: ${baseMetadata.original_source_id}, elementOverlap: ${elementOverlapCount}`);
@@ -355,7 +365,7 @@ function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // bas
     let elementsToPrependForOverlap = [];
 
     // Standard noise removal
-    $('script, style, nav, footer, header, aside, form, noscript, iframe, svg, link[rel="stylesheet"], button, input, select, textarea, label, .sidebar, #sidebar, .comments, #comments, .related-posts, .share-buttons, .pagination, .breadcrumb, .modal, .popup, [aria-hidden="true"], [role="navigation"], [role="search"], .ad, .advertisement, #ad, #advertisement').remove();
+    $('.cookie-banner, #cookie-notice, .header-banner, [role="banner"], [role="contentinfo"], script, style, nav, footer, header, aside, form, noscript, iframe, svg, link[rel="stylesheet"], button, input, select, textarea, label, .sidebar, #sidebar, .comments, #comments, .related-posts, .share-buttons, .pagination, .breadcrumb, .modal, .popup, [aria-hidden="true"], [role="navigation"], [role="search"], .ad, .advertisement, #ad, #advertisement').remove();
 
     const relevantSelectors = 'h1, h2, h3, h4, h5, h6, p, li, td, th, pre, blockquote, article';
     const elements = $(relevantSelectors).toArray(); // Get all elements once
@@ -993,12 +1003,21 @@ export async function ingestSourceById(sourceId, clientId) {
             // Consider adding a field to knowledge_sources for 'last_ingest_warnings'
         }
 
-        // 9. Update Status to 'completed'
-        await updateKnowledgeSourceStatus(sourceId, 'completed', charCount, propositionErrors.length > 0 ? `Completed with ${propositionErrors.length} proposition errors.` : null);
-        console.log(`--- (Ingestion Service) Ingestion COMPLETED for Source ID: ${sourceId} ---`);
+        // 9. Update Status based on proposition errors
+        let finalStatus = 'completed';
+        let finalErrorMessage = null;
+
+        if (propositionErrors.length > 0) {
+            finalStatus = 'completed_with_warnings';
+            finalErrorMessage = `Proposition extraction encountered ${propositionErrors.length} error(s). Details: ${propositionErrors.join('; ').substring(0, 500)}`; // Limit error message length
+            console.warn(`(Ingestion Service) Ingestion for Source ID: ${sourceId} completed with proposition warnings.`);
+        }
+
+        await updateKnowledgeSourceStatus(sourceId, finalStatus, charCount, finalErrorMessage);
+        console.log(`--- (Ingestion Service) Ingestion ${finalStatus.toUpperCase()} for Source ID: ${sourceId} ---`);
         return { 
             success: true, 
-            message: "Ingestion complete." + (propositionErrors.length > 0 ? ` Some proposition errors occurred.` : ""),
+            message: `Ingestion ${finalStatus}.` + (propositionErrors.length > 0 ? ` Proposition errors: ${propositionErrors.length}` : ""),
             data: { 
                 source_id: sourceId,
                 chunksAttempted: chunksForEmbedding.length,

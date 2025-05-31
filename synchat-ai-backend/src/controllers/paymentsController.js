@@ -2,6 +2,10 @@
 // Controller for handling Stripe payment processing.
 
 import logger from '../utils/logger.js';
+
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/; // For consistency, not used here yet
+const STRIPE_PRICE_ID_REGEX = /^price_[a-zA-Z0-9_]+$/; // Basic regex for Stripe Price IDs
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; // Common email regex
 import 'dotenv/config'; // Ensure environment variables are loaded
 import Stripe from 'stripe';
 import { supabase } from '../services/supabaseClient.js'; // Added for idempotency
@@ -24,12 +28,22 @@ export const createCheckoutSession = async (req, res) => {
     if (!priceId) {
         return res.status(400).json({ error: 'Price ID is required.' });
     }
+    // Validate priceId format
+    if (!STRIPE_PRICE_ID_REGEX.test(priceId)) {
+        // Note: A more specific regex might be needed depending on exact Stripe Price ID format variations.
+        // This basic one checks for 'price_' prefix and common characters.
+        return res.status(400).json({ error: 'Price ID has an invalid format.' });
+    }
+
     if (!clientId) {
         // Should be caught by protectRoute, but good to double check
         return res.status(401).json({ error: 'User not authenticated.' });
     }
     
     const finalCustomerEmail = customerEmail || req.user?.email; 
+    if (finalCustomerEmail && !EMAIL_REGEX.test(finalCustomerEmail)) {
+        return res.status(400).json({ error: 'Customer email has an invalid format.' });
+    }
     if (!finalCustomerEmail) {
         logger.warn('(Payments) Customer email not provided and not found in user token.');
     }

@@ -1,6 +1,9 @@
 // synchat-ai-backend/src/controllers/clientDashboardController.js
 import { supabase } from '../services/supabaseClient.js';
 import { ingestWebsite } from '../services/ingestionService.js';
+
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const POSITIVE_INT_REGEX = /^[1-9]\d*$/;
 import * as db from '../services/databaseService.js';
 import * as openaiService from '../services/openaiService.js'; // For LLM filtering/summarization
 import { encode } from 'gpt-tokenizer'; // For token counting if needed for summarization logic
@@ -54,6 +57,10 @@ export const updateKnowledgeSuggestionStatus = async (req, res) => {
     const { status: newStatus } = req.body;
     if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
     if (!suggestion_id) { return res.status(400).json({ message: 'Suggestion ID is required in URL parameters.' }); }
+    // Validate suggestion_id format
+    if (!UUID_REGEX.test(suggestion_id)) {
+        return res.status(400).json({ error: 'suggestion_id has an invalid format.' });
+    }
     if (!newStatus) { return res.status(400).json({ message: 'New status is required in request body.' }); }
     const validStatuses = ['new', 'reviewed_pending_action', 'action_taken', 'dismissed'];
     if (!validStatuses.includes(newStatus)) { return res.status(400).json({ message: `Invalid status value: ${newStatus}. Must be one of: ${validStatuses.join(', ')}` }); }
@@ -98,6 +105,10 @@ export const getChatbotAnalyticsSummary = async (req, res) => {
     const clientId = req.user?.id;
     if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
     const { period = '30d', startDate, endDate } = req.query;
+    // TODO: Add more robust validation for 'period' against allowed enum values (e.g., '7d', '30d', '90d', 'custom').
+    // TODO: If 'period' is 'custom', ensure 'startDate' and 'endDate' are provided and valid.
+    // TODO: Validate 'startDate' and 'endDate' formats (e.g., YYYY-MM-DD) and ensure endDate is not before startDate.
+    // Basic check is present in some analytics functions, but can be standardized here.
     const periodOptions = { period, startDate, endDate };
     console.log(`(ClientDashboardCtrl) Fetching analytics summary for client ${clientId}, options:`, periodOptions);
     try {
@@ -114,6 +125,7 @@ export const getUnansweredQuerySuggestions = async (req, res) => {
     const clientId = req.user?.id;
     if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
     const { period = '30d', startDate, endDate, limit: limitQuery } = req.query;
+    // TODO: Add robust date/period validation similar to getChatbotAnalyticsSummary.
     const periodOptions = { period, startDate, endDate };
     const limit = parseInt(limitQuery, 10) || 10;
     console.log(`(ClientDashboardCtrl) Fetching unanswered queries for client ${clientId}, options:`, periodOptions, `limit: ${limit}`);
@@ -185,6 +197,7 @@ export const getClientUsageResolutions = async (req, res) => {
     const clientId = req.user?.id;
     if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' }); }
     let { billing_cycle_id } = req.query;
+    // TODO: Validate billing_cycle_id format if specific (e.g., YYYY-MM).
     if (!billing_cycle_id) { const now = new Date(); const year = now.getFullYear(); const month = (now.getMonth() + 1).toString().padStart(2, '0'); billing_cycle_id = `${year}-${month}`; console.log(`No billing_cycle_id provided, defaulting to current month: ${billing_cycle_id}`); }
     try {
         let query = supabase.from('ia_resolutions_log').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('billing_cycle_id', billing_cycle_id);
@@ -390,6 +403,16 @@ export const handlePlaygroundRagFeedback = async (req, res) => {
         return res.status(400).json({ error: 'feedback_type (string) is required.' });
     }
 
+    // Validate rag_interaction_log_id if provided
+    if (rag_interaction_log_id && !UUID_REGEX.test(rag_interaction_log_id)) {
+        return res.status(400).json({ error: 'rag_interaction_log_id has an invalid format.' });
+    }
+
+    // Validate knowledge_base_chunk_id if provided (as positive integer string)
+    if (knowledge_base_chunk_id && !POSITIVE_INT_REGEX.test(String(knowledge_base_chunk_id))) {
+        return res.status(400).json({ error: 'knowledge_base_chunk_id must be a positive integer.' });
+    }
+
     // Specific validation based on feedback_type
     if (feedback_type === 'chunk_relevance' && !knowledge_base_chunk_id) {
         return res.status(400).json({ error: 'knowledge_base_chunk_id is required when feedback_type is "chunk_relevance".' });
@@ -455,6 +478,8 @@ export const getSentimentDistributionAnalytics = async (req, res) => {
             console.error('(ClientDashboardCtrl) Client ID not found in req.user for getSentimentDistributionAnalytics.');
             return res.status(401).json({ error: 'Unauthorized or Client ID not determinable.' });
         }
+        // TODO: Add more robust validation for 'startDate' and 'endDate' formats (e.g., YYYY-MM-DD) and ensure endDate is not before startDate.
+        // The existing isNaN check is a basic validation.
         if (!startDate || !endDate) {
             return res.status(400).json({ error: 'startDate and endDate query parameters are required.' });
         }
@@ -486,6 +511,8 @@ export const getTopicAnalyticsData = async (req, res) => {
             console.error('(ClientDashboardCtrl) Client ID not found in req.user for getTopicAnalyticsData.');
             return res.status(401).json({ error: 'Unauthorized or Client ID not determinable.' });
         }
+        // TODO: Add more robust validation for 'startDate' and 'endDate' formats (e.g., YYYY-MM-DD) and ensure endDate is not before startDate.
+        // The existing isNaN check is a basic validation.
         if (!startDate || !endDate) { // Basic validation, can be expanded
             return res.status(400).json({ error: 'startDate and endDate query parameters are required for topic analytics.' });
         }
@@ -515,6 +542,8 @@ export const getKnowledgeSourcePerformanceAnalytics = async (req, res) => {
             console.error('(ClientDashboardCtrl) Client ID not found in req.user for getKnowledgeSourcePerformanceAnalytics.');
             return res.status(401).json({ error: 'Unauthorized or Client ID not determinable.' });
         }
+        // TODO: Add more robust validation for 'startDate' and 'endDate' formats (e.g., YYYY-MM-DD) and ensure endDate is not before startDate.
+        // The existing isNaN check is a basic validation.
         if (!startDate || !endDate) { // Basic validation
             return res.status(400).json({ error: 'startDate and endDate query parameters are required for source performance analytics.' });
         }

@@ -4,6 +4,8 @@ import * as db from '../services/databaseService.js';
 import { encode } from 'gpt-tokenizer';
 import { supabase } from '../services/supabaseClient.js';
 
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 // Modelo de IA a usar y Temperatura
 const CHAT_MODEL = "gpt-3.5-turbo";
 const MAX_CONTEXT_TOKENS_FOR_LLM = 3000;
@@ -34,6 +36,16 @@ export const handleChatMessage = async (req, res, next) => {
     if (!userMessageInput || !conversationId || !clientId) {
         console.warn('Petición inválida a /message:', req.body);
         return res.status(400).json({ error: 'Faltan datos requeridos (message, conversationId, clientId).' });
+    }
+
+    // Validate conversationId format
+    if (!UUID_REGEX.test(conversationId)) {
+        return res.status(400).json({ error: 'conversationId has an invalid format.' });
+    }
+
+    // Validate clientId format
+    if (!UUID_REGEX.test(clientId)) {
+        return res.status(400).json({ error: 'clientId has an invalid format.' });
     }
 
     let effectiveQuery = userMessageInput;
@@ -255,6 +267,11 @@ export const startConversation = async (req, res, next) => { /* ... existing ...
     if (!clientId) {
         console.warn('Petición inválida a /start. Falta clientId.');
         return res.status(400).json({ error: 'Falta clientId.' });
+    }
+
+    // Validate clientId format
+    if (!UUID_REGEX.test(clientId)) {
+        return res.status(400).json({ error: 'clientId has an invalid format.' });
     }
     try {
         const clientExists = await db.getClientConfig(clientId);

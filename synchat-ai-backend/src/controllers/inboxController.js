@@ -1,4 +1,7 @@
 // src/controllers/inboxController.js
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const POSITIVE_INT_REGEX = /^[1-9]\d*$/;
+
 import {
     getClientConversations,
     getMessagesForConversation,
@@ -63,6 +66,9 @@ export const getConversationMessages = async (req, res) => {
     if (!conversation_id) {
         return res.status(400).json({ message: 'Conversation ID is required.' });
     }
+    if (!UUID_REGEX.test(conversation_id)) {
+        return res.status(400).json({ error: 'conversation_id has an invalid format.' });
+    }
 
     try {
         console.log(`(InboxCtrl) Getting messages for conversation ${conversation_id}, client ${clientId}`);
@@ -94,6 +100,9 @@ export const postAgentMessage = async (req, res) => {
 
     if (!conversation_id) {
         return res.status(400).json({ message: 'Conversation ID is required.' });
+    }
+    if (!UUID_REGEX.test(conversation_id)) {
+        return res.status(400).json({ error: 'conversation_id has an invalid format.' });
     }
     if (!content || typeof content !== 'string' || content.trim() === '') {
         return res.status(400).json({ message: 'Message content is required and cannot be empty.' });
@@ -158,6 +167,9 @@ export const changeConversationStatus = async (req, res) => {
     if (!conversation_id) {
         return res.status(400).json({ message: 'Conversation ID is required.' });
     }
+    if (!UUID_REGEX.test(conversation_id)) {
+        return res.status(400).json({ error: 'conversation_id has an invalid format.' });
+    }
     if (!newStatus || typeof newStatus !== 'string' || newStatus.trim() === '') {
         return res.status(400).json({ message: 'New status is required.' });
     }
@@ -208,6 +220,12 @@ export const submitMessageFeedback = async (req, res) => {
 
     if (!conversation_id || !message_id) {
         return res.status(400).json({ message: 'Conversation ID and Message ID are required.' });
+    }
+    if (!UUID_REGEX.test(conversation_id)) {
+        return res.status(400).json({ error: 'conversation_id has an invalid format.' });
+    }
+    if (!POSITIVE_INT_REGEX.test(message_id)) {
+        return res.status(400).json({ error: 'message_id must be a positive integer string.' });
     }
     if (rating === undefined || ![-1, 1].includes(Number(rating))) {
         return res.status(400).json({ message: 'Rating is required and must be 1 (positive) or -1 (negative).' });
@@ -271,6 +289,17 @@ export const handleMessageRagFeedback = async (req, res) => {
     }
     if (!conversation_id || !message_id) {
         return res.status(400).json({ error: 'Conversation ID and Message ID are required in path parameters.' });
+    }
+    if (!UUID_REGEX.test(conversation_id)) {
+        return res.status(400).json({ error: 'conversation_id has an invalid format.' });
+    }
+    if (!POSITIVE_INT_REGEX.test(message_id)) {
+        return res.status(400).json({ error: 'message_id must be a positive integer string.' });
+    }
+
+    // Validate rag_interaction_log_id if provided
+    if (rag_interaction_log_id && !UUID_REGEX.test(rag_interaction_log_id)) {
+        return res.status(400).json({ error: 'rag_interaction_log_id has an invalid format.' });
     }
 
     const feedbackData = {

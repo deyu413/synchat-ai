@@ -12,12 +12,22 @@ const USER_AGENT = 'Mozilla/5.0 (compatible; SynChatMonitor/1.0; +https://www.sy
  * @param {string} htmlContent - The HTML string.
  * @returns {string} - The extracted plain text.
  */
+// TODO: Enhance HTML text extraction for complex, JavaScript-heavy sites.
+// The current Cheerio-based approach is suitable for static or server-rendered HTML but may struggle with client-side rendered content
+// or accurately identifying the "main" textual content versus boilerplate, ads, etc.
+// For more robust extraction from dynamic sites for change detection, consider:
+// 1. Using a headless browser library like Puppeteer or Playwright (via jsdom or similar for lighter execution if full browser not needed)
+//    to get the fully rendered DOM after JavaScript execution.
+// 2. Implementing more sophisticated content extraction algorithms, potentially adapting libraries like Readability.js,
+//    to better isolate the primary content from surrounding noise (menus, ads, footers, etc.).
+// This would lead to more accurate change detection based on meaningful content updates.
 function extractTextFromHTML(htmlContent) {
     if (!htmlContent) return "";
     try {
         const $ = load(htmlContent);
         // Remove script, style, nav, footer, header, aside, form, etc.
-        $('script, style, nav, footer, header, aside, form, noscript, iframe, svg, link[rel="stylesheet"], button, input, select, textarea, label, .sidebar, #sidebar, .comments, #comments, .related-posts, .share-buttons, .pagination, .breadcrumb, .modal, .popup, [aria-hidden="true"], [role="navigation"], [role="search"], .ad, .advertisement, #ad, #advertisement').remove();
+        // Added .cookie-banner, #cookie-notice, .header-banner, [role="banner"], [role="contentinfo"]
+        $('.cookie-banner, #cookie-notice, .header-banner, [role="banner"], [role="contentinfo"], script, style, nav, footer, header, aside, form, noscript, iframe, svg, link[rel="stylesheet"], button, input, select, textarea, label, .sidebar, #sidebar, .comments, #comments, .related-posts, .share-buttons, .pagination, .breadcrumb, .modal, .popup, [aria-hidden="true"], [role="navigation"], [role="search"], .ad, .advertisement, #ad, #advertisement').remove();
 
         // Get text from common content tags, trying to respect some block structure with newlines.
         let text = '';

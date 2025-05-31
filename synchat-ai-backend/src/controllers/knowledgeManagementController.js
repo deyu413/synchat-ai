@@ -1,6 +1,8 @@
 import { supabase } from '../services/supabaseClient.js';
 import multer from 'multer';
 import path from 'path';
+
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 import * as ingestionService from '../services/ingestionService.js';
 import * as db from '../services/databaseService.js'; // Import databaseService
 
@@ -28,7 +30,7 @@ export const uploadFile = [
     }
 
     const client_id = req.user.id;
-    const original_filename = req.file.originalname;
+    const original_filename = req.file.originalname; // TODO: Potential future validation for filename length, characters, etc.
     const storagePath = `knowledge_files/${client_id}/${original_filename}`;
     const fileMimeType = req.file.mimetype;
 
@@ -161,6 +163,9 @@ export const ingestSource = async (req, res) => {
   if (!source_id) {
     return res.status(400).json({ message: 'Source ID is required.' });
   }
+  if (source_id !== 'main_url' && !UUID_REGEX.test(source_id)) {
+    return res.status(400).json({ error: 'source_id has an invalid format.' });
+  }
 
   console.log(`(Controller) Received request to ingest source_id: ${source_id} for client_id: ${client_id}`);
 
@@ -213,6 +218,9 @@ export const getSourceChunkSample = async (req, res) => {
   if (!source_id) {
     return res.status(400).json({ message: 'Source ID is required.' });
   }
+  if (source_id !== 'main_url' && !UUID_REGEX.test(source_id)) { // 'main_url' is a special case
+    return res.status(400).json({ error: 'source_id has an invalid format.' });
+  }
 
   console.log(`(Controller) Received request for chunk sample for source_id: ${source_id} for client_id: ${client_id}`);
 
@@ -243,6 +251,10 @@ export const deleteSource = async (req, res) => {
 
   if (!source_id) {
     return res.status(400).json({ message: 'Source ID is required.' });
+  }
+  // 'main_url' is a special case handled below, other source_ids must be UUIDs.
+  if (source_id !== 'main_url' && !UUID_REGEX.test(source_id)) {
+    return res.status(400).json({ error: 'source_id has an invalid format.' });
   }
 
   if (source_id === 'main_url') {
@@ -326,6 +338,9 @@ export const updateSourceMetadata = async (req, res) => {
   if (!source_id) {
     return res.status(400).json({ message: 'Source ID is required in URL parameters.' });
   }
+  if (source_id !== 'main_url' && !UUID_REGEX.test(source_id)) { // 'main_url' is not a UUID
+      return res.status(400).json({ error: 'source_id has an invalid format.'});
+  }
   if (!clientId) {
     // This should ideally be caught by authMiddleware
     return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
@@ -397,6 +412,9 @@ export const getKnowledgeSourceChunks = async (req, res) => {
 
   if (!source_id) {
     return res.status(400).json({ message: 'Source ID is required in URL parameters.' });
+  }
+  if (source_id !== 'main_url' && !UUID_REGEX.test(source_id)) { // 'main_url' is not a UUID
+      return res.status(400).json({ error: 'source_id has an invalid format.'});
   }
   if (!clientId) {
     return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });

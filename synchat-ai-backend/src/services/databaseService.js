@@ -645,47 +645,40 @@ export const logRagInteraction = async (logData) => {
         }
 
         const log_id = insertedData.log_id;
-        let embeddingStatus = 'skipped'; // Possible values: 'success', 'failed', 'skipped'
 
+        // Now, generate and update the query_embedding (non-blocking for the return)
         if (logEntry.user_query) {
-            try {
-                logger.debug(`(DB Service) Generating embedding for user_query (log_id: ${log_id}): "${logEntry.user_query.substring(0, 50)}..."`);
-                // getEmbedding is imported from './embeddingService.js'
-                const embedding = await getEmbedding(logEntry.user_query);
+            // Fire-and-forget style for embedding update
+            (async () => {
+                try {
+                    logger.debug(`(DB Service) Generating embedding for user_query (log_id: ${log_id}): "${logEntry.user_query.substring(0, 50)}..."`);
+                    // getEmbedding is imported from './embeddingService.js'
+                    const embedding = await getEmbedding(logEntry.user_query);
+                    // embeddingService.getEmbedding returns the vector directly or throws an error.
 
-                if (embedding) {
-                    const { error: updateError } = await supabase
-                        .from('rag_interaction_logs')
-                        .update({ query_embedding: embedding })
-                        .eq('log_id', log_id);
+                    if (embedding) {
+                        const { error: updateError } = await supabase
+                            .from('rag_interaction_logs')
+                            .update({ query_embedding: embedding })
+                            .eq('log_id', log_id);
 
-                    if (updateError) {
-                        logger.error(`(DB Service) Error updating rag_interaction_logs with query_embedding for log_id ${log_id}:`, updateError);
-                        embeddingStatus = 'failed_update';
+                        if (updateError) {
+                            logger.error(`(DB Service) Error updating rag_interaction_logs with query_embedding for log_id ${log_id}:`, updateError);
+                        } else {
+                            logger.info(`(DB Service) Successfully updated log_id ${log_id} with query_embedding.`);
+                        }
                     } else {
-                        logger.info(`(DB Service) Successfully updated log_id ${log_id} with query_embedding.`);
-                        embeddingStatus = 'success';
+                        // This case might not be reachable if getEmbedding throws on failure,
+                        // but included for robustness if it could return null/undefined.
+                        logger.error(`(DB Service) Failed to generate query embedding for log_id ${log_id} (embedding was null/undefined).`);
                     }
-                } else {
-                    // This case might not be reachable if getEmbedding throws on failure,
-                    // but included for robustness if it could return null/undefined.
-                    logger.error(`(DB Service) Failed to generate query embedding for log_id ${log_id} (embedding was null/undefined).`);
-                    embeddingStatus = 'failed_generation';
+                } catch (embeddingError) {
+                    logger.error(`(DB Service) Exception during query embedding or update for log_id ${log_id}:`, embeddingError);
                 }
-            } catch (embeddingError) {
-                logger.error(`(DB Service) Exception during query embedding or update for log_id ${log_id}:`, { message: embeddingError.message, stack: embeddingError.stack });
-                embeddingStatus = 'failed_exception';
-            }
-        } else {
-            logger.debug(`(DB Service) No user_query provided for log_id: ${log_id}, skipping embedding generation.`);
-            // embeddingStatus remains 'skipped'
+            })();
         }
-
-        return {
-            data: insertedData,
-            rag_interaction_log_id: log_id,
-            embedding_status: embeddingStatus
-        };
+        // Return the initially inserted data (without waiting for embedding update)
+        return { data: insertedData, rag_interaction_log_id: log_id };
 
     } catch (err) {
         logger.error('(DB Service) General exception in logRagInteraction:', err);
@@ -949,7 +942,7 @@ export const getClientConversations = async (clientId, statusFilters = [], page 
 export const getMessagesForConversation = async (conversationId, clientId) => {
     if (!conversationId || !clientId) {
         logger.warn('(DB Service) Invalid params for getMessagesForConversation: conversationId and clientId are required.');
-        return { error: 'conversationId and clientId are required.' };
+        return { data: null, error: 'conversationId and clientId are required.' };
     }
     try {
         const { data: conversation, error: convError } = await supabase
@@ -959,26 +952,30 @@ export const getMessagesForConversation = async (conversationId, clientId) => {
             .eq('client_id', clientId) // Verify ownership
             .single();
 
-        if (convError || !conversation) {
-            logger.error(`(DB Service) Error fetching conversation or ownership verification failed for conv ${conversationId}, client ${clientId}:`, convError);
-            throw new Error('Conversation not found or access denied.');
+        if (convError) {
+            logger.error(`(DB Service) Error fetching conversation (DB error) for conv ${conversationId}, client ${clientId}:`, convError);
+            const errorMessage = convError.code === 'PGRST116' ? 'Conversation not found or access denied.' : convError.message;
+            return { data: null, error: errorMessage };
+        }
+        if (!conversation) {
+             logger.warn(`(DB Service) Conversation not found or client ${clientId} does not own conv ${conversationId} (no data returned).`);
+            return { data: null, error: 'Conversation not found or access denied.' };
         }
 
         const { data, error } = await supabase
             .from('messages')
-            .select('message_id, conversation_id, sender, content, timestamp, sentiment, rag_interaction_ref') // Added rag_interaction_ref
+            .select('message_id, conversation_id, sender, content, timestamp, sentiment, rag_interaction_ref')
             .eq('conversation_id', conversationId)
             .order('timestamp', { ascending: true });
 
         if (error) {
             logger.error(`(DB Service) Error fetching messages for conv ${conversationId}:`, error);
-            return { error: error.message };
+            return { data: null, error: error.message };
         }
-        return { data };
+        return { data, error: null };
     } catch (err) {
-        logger.error(`(DB Service) Exception in getMessagesForConversation for conv ${conversationId}:`, err);
-        // Ensure error message is passed through if it's a custom error like "Conversation not found..."
-        return { error: err.message || 'An unexpected error occurred while fetching messages.' };
+        logger.error(`(DB Service) Unexpected exception in getMessagesForConversation for conv ${conversationId}:`, err);
+        return { data: null, error: 'An unexpected server error occurred while fetching messages.' };
     }
 };
 
