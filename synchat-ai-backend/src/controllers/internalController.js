@@ -4,26 +4,27 @@ import * as db from '../services/databaseService.js';
 import { supabase } from '../services/supabaseClient.js'; // For direct Supabase calls if needed
 import * as openaiService from '../services/openaiService.js'; // Corrected import
 
-// Spanish Stop Words (can be shared or redefined here if not easily importable from db service for this controller)
-const SPANISH_STOP_WORDS = new Set([
-  "de", "la", "el", "en", "y", "a", "los", "las", "del", "un", "una", "unos", "unas",
-  "ser", "estar", "haber", "tener", "con", "por", "para", "como", "más", "pero", "si",
-  "no", "o", "qué", "que", "cuál", "cuando", "dónde", "quién", "cómo", "desde", "hasta",
-  "sobre", "este", "ese", "aquel", "esto", "eso", "aquello", "mi", "tu", "su", "yo", "tú", "él", "ella",
-  "nosotros", "vosotros", "ellos", "ellas", "me", "te", "se", "le", "les", "nos", "os",
-  "al", "del", "lo", "les", "sus", "tus", "mis" // Added some more
-]);
+import { kmeans } from 'ml-kmeans'; // K-Means library
 
-function normalizeQueryText(query) {
-    if (!query || typeof query !== 'string') return '';
-    let normalized = query.toLowerCase();
-    // Remove punctuation - extend this list as needed
-    normalized = normalized.replace(/[¿?¡!.,;:"()\[\]{}]/g, '');
-    // Optional: remove stop words (consider impact on short queries)
-    // normalized = normalized.split(/\s+/).filter(word => !SPANISH_STOP_WORDS.has(word)).join(' ');
-    normalized = normalized.replace(/\s+/g, ' ').trim(); // Normalize whitespace
-    return normalized;
-}
+// Spanish Stop Words (can be shared or redefined here if not easily importable from db service for this controller)
+// This can be removed if normalizeQueryText is also removed (as it's not used by k-means version)
+// const SPANISH_STOP_WORDS = new Set([
+//   "de", "la", "el", "en", "y", "a", "los", "las", "del", "un", "una", "unos", "unas",
+//   "ser", "estar", "haber", "tener", "con", "por", "para", "como", "más", "pero", "si",
+//   "no", "o", "qué", "que", "cuál", "cuando", "dónde", "quién", "cómo", "desde", "hasta",
+//   "sobre", "este", "ese", "aquel", "esto", "eso", "aquello", "mi", "tu", "su", "yo", "tú", "él", "ella",
+//   "nosotros", "vosotros", "ellos", "ellas", "me", "te", "se", "le", "les", "nos", "os",
+//   "al", "del", "lo", "les", "sus", "tus", "mis"
+// ]);
+
+// function normalizeQueryText(query) { // This function might not be needed if clustering is purely by embedding
+//     if (!query || typeof query !== 'string') return '';
+//     let normalized = query.toLowerCase();
+//     normalized = normalized.replace(/[¿?¡!.,;:"()\[\]{}]/g, '');
+//     // normalized = normalized.split(/\s+/).filter(word => !SPANISH_STOP_WORDS.has(word)).join(' ');
+//     normalized = normalized.replace(/\s+/g, ' ').trim();
+//     return normalized;
+// }
 
 /**
  * Triggers suggestion generation for all active clients.
@@ -88,10 +89,13 @@ export const triggerAllClientsSuggestionGeneration = async (req, res) => {
 };
 
 export const triggerProcessQueryClusters = async (req, res) => {
-    console.log('(InternalCtrl) Received request to trigger process query clusters.');
-    const BATCH_SIZE_RAG_LOGS = 500; // Process RAG logs in batches for each client
-    const MIN_QUERY_GROUP_SIZE_FOR_LLM_LABELING = 3; // Min number of unique queries in a group to get an LLM label
-    const MAX_QUERIES_FOR_LLM_PROMPT = 10; // Max unique queries to send to LLM for labeling a topic
+    console.log('(InternalCtrl) Received request to trigger process query clusters (K-Means).');
+    const BATCH_SIZE_RAG_LOGS = 1000; // How many logs to fetch from DB at a time
+    const MIN_CLUSTERS_PER_CLIENT = 3;
+    const MAX_CLUSTERS_PER_CLIENT = 30;
+    const TARGET_LOGS_PER_CLUSTER = 10;
+    const MIN_LOGS_FOR_CLUSTERING = 10;
+    const MAX_QUERIES_FOR_LLM_PROMPT = 10; // For representative queries for LLM labeling
 
     try {
         const activeClientIds = await db.getAllActiveClientIds();
@@ -100,61 +104,103 @@ export const triggerProcessQueryClusters = async (req, res) => {
             return res.status(200).json({ message: 'No active clients found.' });
         }
 
-        console.log(`(InternalCtrl) Starting topic analysis for ${activeClientIds.length} client(s).`);
+        console.log(`(InternalCtrl) Starting K-Means topic analysis for ${activeClientIds.length} client(s).`);
         let totalTopicsCreated = 0;
         let totalLogsConsidered = 0;
+        let totalLogsSuccessfullyClusteredAndProcessed = 0;
 
-        for (const client of activeClientIds) { // Assuming activeClientIds is array of {client_id: '...'} as per earlier discussion
+        for (const client of activeClientIds) {
             const clientId = client.client_id;
             if (!clientId) continue;
 
-            console.log(`(InternalCtrl) Processing RAG logs for client: ${clientId}`);
+            console.log(`(InternalCtrl) Processing RAG logs for K-Means clustering: Client ${clientId}`);
             const { data: unprocessedLogs, error: logError } = await db.getUnprocessedRagLogsForClient(clientId, BATCH_SIZE_RAG_LOGS);
 
             if (logError) {
-                console.error(`(InternalCtrl) Error fetching unprocessed logs for client ${clientId}:`, logError);
-                continue; // Skip to next client
+                console.error(`(InternalCtrl) Client ${clientId}: Error fetching unprocessed logs:`, logError);
+                continue;
             }
             if (!unprocessedLogs || unprocessedLogs.length === 0) {
-                console.log(`(InternalCtrl) No unprocessed RAG logs found for client ${clientId}.`);
+                console.log(`(InternalCtrl) Client ${clientId}: No unprocessed RAG logs found.`);
                 continue;
             }
             totalLogsConsidered += unprocessedLogs.length;
 
-            // Group queries by normalized text
-            const queryGroups = new Map(); // normalizedQuery -> { originalQueries: Set<string>, logIds: Set<number>, conversationIds: Set<string> }
-            unprocessedLogs.forEach(log => {
-                const normalized = normalizeQueryText(log.user_query);
-                if (normalized.length < 3) return; // Skip very short/empty normalized queries
+            const logsWithEmbeddings = unprocessedLogs.filter(log => log.query_embedding && Array.isArray(log.query_embedding) && log.query_embedding.length > 0);
 
-                if (!queryGroups.has(normalized)) {
-                    queryGroups.set(normalized, {
-                        originalQueries: new Set(),
-                        logIds: new Set(),
-                        conversationIds: new Set()
-                    });
+            if (logsWithEmbeddings.length < MIN_LOGS_FOR_CLUSTERING) {
+                console.log(`(InternalCtrl) Client ${clientId}: Not enough logs with embeddings (${logsWithEmbeddings.length}) to perform clustering (min: ${MIN_LOGS_FOR_CLUSTERING}).`);
+                if (logsWithEmbeddings.length > 0) {
+                    const idsToMark = logsWithEmbeddings.map(l => l.log_id);
+                    try {
+                        await supabase.from('rag_interaction_logs').update({ topic_analysis_processed_at: new Date().toISOString() }).in('log_id', idsToMark);
+                        console.log(`(InternalCtrl) Client ${clientId}: Marked ${idsToMark.length} logs (with embeddings but too few to cluster) as processed.`);
+                    } catch (markError) {
+                        console.error(`(InternalCtrl) Client ${clientId}: Error marking few logs as processed:`, markError.message);
+                    }
                 }
-                queryGroups.get(normalized).originalQueries.add(log.user_query);
-                queryGroups.get(normalized).logIds.add(log.log_id);
-                if (log.conversation_id) {
-                    queryGroups.get(normalized).conversationIds.add(log.conversation_id);
+                continue;
+            }
+
+            const embeddingsArray = logsWithEmbeddings.map(log => log.query_embedding);
+            let numClusters = Math.max(MIN_CLUSTERS_PER_CLIENT, Math.min(MAX_CLUSTERS_PER_CLIENT, Math.floor(embeddingsArray.length / TARGET_LOGS_PER_CLUSTER)));
+            if (numClusters > embeddingsArray.length) numClusters = embeddingsArray.length;
+            if (numClusters === 0 && embeddingsArray.length > 0) numClusters = 1; // Ensure at least 1 cluster if there's data
+            if (numClusters === 0) {
+                 console.log(`(InternalCtrl) Client ${clientId}: numClusters is 0, skipping K-Means.`);
+                 continue;
+            }
+
+
+            console.log(`(InternalCtrl) Client ${clientId}: Attempting K-Means with K=${numClusters} for ${embeddingsArray.length} embeddings.`);
+            let kmeansResult;
+            try {
+                kmeansResult = kmeans(embeddingsArray, numClusters, { maxIterations: 100 });
+            } catch (clusterError) {
+                console.error(`(InternalCtrl) Client ${clientId}: K-Means clustering failed:`, clusterError.message);
+                const idsToMark = logsWithEmbeddings.map(l => l.log_id);
+                try {
+                    await supabase.from('rag_interaction_logs').update({ topic_analysis_processed_at: new Date().toISOString() }).in('log_id', idsToMark);
+                    console.log(`(InternalCtrl) Client ${clientId}: Marked ${idsToMark.length} logs as processed after clustering error.`);
+                } catch (markError) {
+                     console.error(`(InternalCtrl) Client ${clientId}: Error marking logs as processed after clustering error:`, markError.message);
                 }
-            });
+                continue;
+            }
 
-            console.log(`(InternalCtrl) Client ${clientId}: Found ${queryGroups.size} unique normalized query groups from ${unprocessedLogs.length} logs.`);
+            const clusters = {};
+            for (let i = 0; i < logsWithEmbeddings.length; i++) {
+                const clusterId = kmeansResult.clusters[i];
+                if (!clusters[clusterId]) clusters[clusterId] = [];
+                clusters[clusterId].push(logsWithEmbeddings[i]);
+            }
 
-            for (const [normalizedQuery, groupData] of queryGroups.entries()) {
-                if (groupData.originalQueries.size < MIN_QUERY_GROUP_SIZE_FOR_LLM_LABELING) {
-                    // Not enough unique queries in this group to justify LLM labeling yet, or it's a very specific query.
-                    console.log(`(InternalCtrl) Skipping group "${normalizedQuery.substring(0,50)}..." for LLM labeling (size: ${groupData.originalQueries.size}).`);
+            console.log(`(InternalCtrl) Client ${clientId}: Formed ${Object.keys(clusters).length} clusters.`);
+
+            for (const clusterId in clusters) {
+                const logsInCluster = clusters[clusterId];
+                if (logsInCluster.length < MIN_QUERY_GROUP_SIZE_FOR_LLM_LABELING) { // Using the same constant as before, maybe rename it
+                    console.log(`(InternalCtrl) Client ${clientId}: Cluster ${clusterId} too small (${logsInCluster.length} logs) for LLM labeling. Skipping.`);
+                    // Optionally, still create a topic with a generic name or mark logs. For now, skipping topic creation.
+                    // Mark these logs as processed to avoid them being picked up again.
+                    const logIdsToMarkSmallCluster = logsInCluster.map(l => l.log_id);
+                     try {
+                        await supabase.from('rag_interaction_logs').update({ topic_analysis_processed_at: new Date().toISOString() }).in('log_id', logIdsToMarkSmallCluster);
+                        console.log(`(InternalCtrl) Client ${clientId}: Marked ${logIdsToMarkSmallCluster.length} logs from small cluster ${clusterId} as processed.`);
+                    } catch (markError) {
+                        console.error(`(InternalCtrl) Client ${clientId}: Error marking logs from small cluster ${clusterId} as processed:`, markError.message);
+                    }
                     continue;
                 }
 
-                const representativeQueries = Array.from(groupData.originalQueries).slice(0, MAX_QUERIES_FOR_LLM_PROMPT);
-                let topicName = `Topic for: ${normalizedQuery.substring(0, 50)}...`; // Default name
+                const originalQueriesFromCluster = new Set(logsInCluster.map(log => log.user_query));
+                const logIdsInCluster = new Set(logsInCluster.map(log => log.log_id));
+                const conversationIdsInCluster = new Set(logsInCluster.map(log => log.conversation_id).filter(id => id));
+
+                const representativeQueries = Array.from(originalQueriesFromCluster).slice(0, MAX_QUERIES_FOR_LLM_PROMPT);
+                let topicName = `Cluster ${clusterId}: ${representativeQueries[0]?.substring(0, 30) || 'Generated Topic'}...`; // Default name
 
                 try {
-                    // New System Prompt
                     const systemPrompt = `Eres un asistente de IA experto en análisis semántico y categorización. Tu tarea es generar una etiqueta de tema (topic label) concisa y descriptiva para el siguiente grupo de consultas de usuarios.
 La etiqueta debe:
 1. Estar en Español.
@@ -162,40 +208,30 @@ La etiqueta debe:
 3. Ser representativa del tema principal común a las consultas.
 4. Ser adecuada para mostrar en un dashboard de analíticas.
 Responde ÚNICAMENTE con la etiqueta del tema, sin ninguna explicación adicional, numeración o comillas.`;
-
-                    // User Prompt remains similar, but ensure clarity
-                    const userPrompt = `Consultas de Usuarios Agrupadas:
-${representativeQueries.map(q => `- "${q}"`).join('\n')}
-
-Etiqueta del Tema Sugerida:`;
+                    const userPrompt = `Consultas de Usuarios Agrupadas (representan un cluster):\n${representativeQueries.map(q => `- "${q}"`).join('\n')}\n\nEtiqueta del Tema Sugerida:`;
 
                     const llmLabel = await openaiService.getChatCompletion(
                         [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
                         'gpt-3.5-turbo', 0.3, 20
                     );
-
-                    if (llmLabel && llmLabel.trim().length > 0) {
-                        topicName = llmLabel.trim();
-                    } else {
-                        console.warn(`(InternalCtrl) LLM did not return a valid label for group: ${normalizedQuery}`);
-                    }
+                    if (llmLabel && llmLabel.trim().length > 0) topicName = llmLabel.trim();
+                    else console.warn(`(InternalCtrl) Client ${clientId}: LLM did not return a valid label for cluster ${clusterId}.`);
                 } catch (llmError) {
-                    console.error(`(InternalCtrl) LLM error while generating label for group ${normalizedQuery}:`, llmError.message);
-                    // Continue with default topic name
+                    console.error(`(InternalCtrl) Client ${clientId}: LLM error for cluster ${clusterId}:`, llmError.message);
                 }
 
-                // Store in analyzed_conversation_topics
                 const topicEntry = {
                     client_id: clientId,
                     topic_name: topicName,
-                    normalized_query_text: normalizedQuery, // <<< ADD THIS LINE
-                    representative_queries: Array.from(groupData.originalQueries).slice(0, 20),
-                    query_count: groupData.logIds.size,
-                    example_interaction_ids: Array.from(groupData.logIds).slice(0, 5),
-                    example_conversation_ids: Array.from(groupData.conversationIds).slice(0,5),
+                    normalized_query_text: `cluster_k${numClusters}_id${clusterId}_${topicName.replace(/\s+/g, '_').substring(0,30)}`, // Store a derived identifier
+                    topic_generation_method: 'embedding_kmeans',
+                    cluster_id_internal: String(clusterId),
+                    representative_queries: Array.from(originalQueriesFromCluster).slice(0, 20),
+                    query_count: logIdsInCluster.size,
+                    example_interaction_ids: Array.from(logIdsInCluster).slice(0, 5),
+                    example_conversation_ids: Array.from(conversationIdsInCluster).slice(0,5),
                 };
 
-                // Modified to .select('topic_id').single()
                 const { data: insertedTopicData, error: insertTopicError } = await supabase
                     .from('analyzed_conversation_topics')
                     .insert(topicEntry)
@@ -203,58 +239,41 @@ Etiqueta del Tema Sugerida:`;
                     .single();
 
                 if (insertTopicError) {
-                    console.error(`(InternalCtrl) Error inserting topic "${topicName}" for client ${clientId}:`, insertTopicError.message);
+                    console.error(`(InternalCtrl) Client ${clientId}: Error inserting topic "${topicName}" for cluster ${clusterId}:`, insertTopicError.message);
                 } else {
                     totalTopicsCreated++;
-                    console.log(`(InternalCtrl) Topic created/updated for client ${clientId}: "${topicName}" (ID: ${insertedTopicData?.topic_id}) (from group "${normalizedQuery.substring(0,50)}...")`);
+                    const newTopicId = insertedTopicData.topic_id;
+                    console.log(`(InternalCtrl) Client ${clientId}: Topic created for cluster ${clusterId} -> Topic ID ${newTopicId}: "${topicName}"`);
 
-                    // Populate topic_membership
-                    if (insertedTopicData && insertedTopicData.topic_id && groupData.logIds.size > 0) {
-                        const topicId = insertedTopicData.topic_id;
-                        const membershipEntries = Array.from(groupData.logIds).map(logId => ({
-                            topic_id: topicId,
-                            rag_interaction_log_id: logId,
-                            client_id: clientId
+                    if (newTopicId && logIdsInCluster.size > 0) {
+                        const membershipEntries = Array.from(logIdsInCluster).map(logId => ({
+                            topic_id: newTopicId, rag_interaction_log_id: logId, client_id: clientId
                         }));
-
-                        const { error: membershipInsertError } = await supabase
-                            .from('topic_membership')
-                            .insert(membershipEntries);
-                            // Consider .onConflict({ columns: ['topic_id', 'rag_interaction_log_id'], constraint: 'pk_topic_membership' }).ignore()
-                            // if re-processing might cause duplicate attempts before logs are marked processed.
-                            // For now, direct insert.
-
-                        if (membershipInsertError) {
-                            console.error(`(InternalCtrl) Error inserting topic memberships for topic_id ${topicId}, client ${clientId}:`, membershipInsertError.message);
-                        } else {
-                            console.log(`(InternalCtrl) Successfully inserted ${membershipEntries.length} topic memberships for topic_id ${topicId}, client ${clientId}.`);
-                        }
+                        const { error: membershipError } = await supabase.from('topic_membership').insert(membershipEntries);
+                        if (membershipError) console.error(`(InternalCtrl) Client ${clientId}: Error inserting memberships for topic ${newTopicId}:`, membershipError.message);
+                        else console.log(`(InternalCtrl) Client ${clientId}: Inserted ${membershipEntries.length} memberships for topic ${newTopicId}.`);
                     }
 
-                    // Mark RAG logs as processed (existing logic - should be kept)
-                    if (groupData.logIds.size > 0) {
-                        const logIdsToUpdate = Array.from(groupData.logIds);
-                        const { error: updateLogError } = await supabase
-                            .from('rag_interaction_logs')
-                            .update({ topic_analysis_processed_at: new Date().toISOString() })
-                            .in('log_id', logIdsToUpdate);
-
-                        if (updateLogError) {
-                            console.error(`(InternalCtrl) Error updating topic_analysis_processed_at for ${logIdsToUpdate.length} RAG logs for client ${clientId}, topic "${topicName}":`, updateLogError.message);
-                        } else {
-                            console.log(`(InternalCtrl) Successfully marked ${logIdsToUpdate.length} RAG logs as processed for topic analysis for client ${clientId}, topic "${topicName}".`);
-                        }
+                    const logIdsToUpdateArray = Array.from(logIdsInCluster);
+                    const { error: updateLogError } = await supabase
+                        .from('rag_interaction_logs')
+                        .update({ topic_analysis_processed_at: new Date().toISOString() })
+                        .in('log_id', logIdsToUpdateArray);
+                    if (updateLogError) console.error(`(InternalCtrl) Client ${clientId}: Error marking ${logIdsToUpdateArray.length} RAG logs as processed for topic ${newTopicId}:`, updateLogError.message);
+                    else {
+                        console.log(`(InternalCtrl) Client ${clientId}: Marked ${logIdsToUpdateArray.length} RAG logs as processed for topic ${newTopicId}.`);
+                        totalLogsSuccessfullyClusteredAndProcessed += logIdsToUpdateArray.length;
                     }
                 }
             }
         }
         res.status(200).json({
-            message: `Topic analysis process completed. Clients processed: ${activeClientIds.length}. Logs considered: ${totalLogsConsidered}. Topics created/updated: ${totalTopicsCreated}.`
+            message: `K-Means topic analysis completed. Clients processed: ${activeClientIds.length}. Logs considered: ${totalLogsConsidered}. Topics created: ${totalTopicsCreated}. Logs in created topics: ${totalLogsSuccessfullyClusteredAndProcessed}.`
         });
 
     } catch (error) {
-        console.error('(InternalCtrl) Error in triggerProcessQueryClusters:', error);
-        res.status(500).json({ error: 'Failed to process query clusters.', details: error.message });
+        console.error('(InternalCtrl) Error in triggerProcessQueryClusters (K-Means):', error);
+        res.status(500).json({ error: 'Failed to process query clusters with K-Means.', details: error.message });
     }
 };
 
