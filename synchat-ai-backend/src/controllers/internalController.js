@@ -154,10 +154,22 @@ export const triggerProcessQueryClusters = async (req, res) => {
                 let topicName = `Topic for: ${normalizedQuery.substring(0, 50)}...`; // Default name
 
                 try {
-                    const systemPrompt = "You are an AI assistant. Based on the following user queries, generate a short, descriptive topic label (3-5 words, in Spanish). Respond with ONLY the label itself, no extra text.";
-                    const userPrompt = `User Queries:\n${representativeQueries.map(q => `- "${q}"`).join('\n')}\n\nTopic Label:`;
+                    // New System Prompt
+                    const systemPrompt = `Eres un asistente de IA experto en análisis semántico y categorización. Tu tarea es generar una etiqueta de tema (topic label) concisa y descriptiva para el siguiente grupo de consultas de usuarios.
+La etiqueta debe:
+1. Estar en Español.
+2. Tener entre 2 y 5 palabras.
+3. Ser representativa del tema principal común a las consultas.
+4. Ser adecuada para mostrar en un dashboard de analíticas.
+Responde ÚNICAMENTE con la etiqueta del tema, sin ninguna explicación adicional, numeración o comillas.`;
 
-                    const llmLabel = await openaiService.getChatCompletion( // Corrected to use openaiService.
+                    // User Prompt remains similar, but ensure clarity
+                    const userPrompt = `Consultas de Usuarios Agrupadas:
+${representativeQueries.map(q => `- "${q}"`).join('\n')}
+
+Etiqueta del Tema Sugerida:`;
+
+                    const llmLabel = await openaiService.getChatCompletion(
                         [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
                         'gpt-3.5-turbo', 0.3, 20
                     );
@@ -183,16 +195,43 @@ export const triggerProcessQueryClusters = async (req, res) => {
                     example_conversation_ids: Array.from(groupData.conversationIds).slice(0,5),
                 };
 
-                const { error: insertTopicError } = await supabase
+                // Modified to .select('topic_id').single()
+                const { data: insertedTopicData, error: insertTopicError } = await supabase
                     .from('analyzed_conversation_topics')
-                    .insert(topicEntry);
+                    .insert(topicEntry)
+                    .select('topic_id')
+                    .single();
 
                 if (insertTopicError) {
                     console.error(`(InternalCtrl) Error inserting topic "${topicName}" for client ${clientId}:`, insertTopicError.message);
                 } else {
                     totalTopicsCreated++;
-                    console.log(`(InternalCtrl) Topic created/updated for client ${clientId}: "${topicName}" (from group "${normalizedQuery.substring(0,50)}...")`);
+                    console.log(`(InternalCtrl) Topic created/updated for client ${clientId}: "${topicName}" (ID: ${insertedTopicData?.topic_id}) (from group "${normalizedQuery.substring(0,50)}...")`);
 
+                    // Populate topic_membership
+                    if (insertedTopicData && insertedTopicData.topic_id && groupData.logIds.size > 0) {
+                        const topicId = insertedTopicData.topic_id;
+                        const membershipEntries = Array.from(groupData.logIds).map(logId => ({
+                            topic_id: topicId,
+                            rag_interaction_log_id: logId,
+                            client_id: clientId
+                        }));
+
+                        const { error: membershipInsertError } = await supabase
+                            .from('topic_membership')
+                            .insert(membershipEntries);
+                            // Consider .onConflict({ columns: ['topic_id', 'rag_interaction_log_id'], constraint: 'pk_topic_membership' }).ignore()
+                            // if re-processing might cause duplicate attempts before logs are marked processed.
+                            // For now, direct insert.
+
+                        if (membershipInsertError) {
+                            console.error(`(InternalCtrl) Error inserting topic memberships for topic_id ${topicId}, client ${clientId}:`, membershipInsertError.message);
+                        } else {
+                            console.log(`(InternalCtrl) Successfully inserted ${membershipEntries.length} topic memberships for topic_id ${topicId}, client ${clientId}.`);
+                        }
+                    }
+
+                    // Mark RAG logs as processed (existing logic - should be kept)
                     if (groupData.logIds.size > 0) {
                         const logIdsToUpdate = Array.from(groupData.logIds);
                         const { error: updateLogError } = await supabase

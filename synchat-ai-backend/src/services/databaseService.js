@@ -56,15 +56,7 @@ const SPANISH_STOP_WORDS_GET_TOPICS = new Set([
   "al", "del", "lo", "les", "sus", "tus", "mis"
 ]);
 
-function normalizeQueryTextForAnalytics(query) {
-    if (!query || typeof query !== 'string') return '';
-    let normalized = query.toLowerCase();
-    normalized = normalized.replace(/[¿?¡!.,;:"()\[\]{}]/g, '');
-    // Stop word removal might be needed here if it was used during topic creation's normalization
-    // normalized = normalized.split(/\s+/).filter(word => !SPANISH_STOP_WORDS_GET_TOPICS.has(word)).join(' ');
-    normalized = normalized.replace(/\s+/g, ' ').trim();
-    return normalized;
-}
+// normalizeQueryTextForAnalytics and SPANISH_STOP_WORDS_GET_TOPICS are removed as they are no longer needed by the new getTopicAnalytics
 
 
 // --- Cross-Encoder Pipeline Singleton ---
@@ -894,7 +886,7 @@ export const getTopicAnalytics = async (clientId, periodOptions, topN = 10) => {
     try {
         const { data: topTopics, error: topicsError } = await supabase
             .from('analyzed_conversation_topics')
-            .select('topic_id, topic_name, query_count, representative_queries, normalized_query_text')
+            .select('topic_id, topic_name, query_count, representative_queries') // normalized_query_text no longer strictly needed here for filtering logs
             .eq('client_id', clientId)
             .order('query_count', { ascending: false })
             .limit(topN);
@@ -909,48 +901,44 @@ export const getTopicAnalytics = async (clientId, periodOptions, topN = 10) => {
         }
 
         const analyticsResults = [];
-
         for (const topic of topTopics) {
-            if (!topic.normalized_query_text) {
-                 analyticsResults.push({
+            const { data: topicMembershipEntries, error: logsError } = await supabase
+                .from('topic_membership')
+                .select(`
+                    rag_log:rag_interaction_logs (
+                        log_id,
+                        was_escalated,
+                        conversation_id,
+                        created_at
+                    )
+                `)
+                .eq('topic_id', topic.topic_id)
+                .eq('client_id', clientId)
+                .gte('rag_log.created_at', periodOptions.startDate)
+                .lte('rag_log.created_at', periodOptions.endDate + 'T23:59:59.999Z');
+
+            if (logsError) {
+                console.error(`(DB Service) Error fetching RAG logs for topic ${topic.topic_id} via membership:`, logsError);
+                analyticsResults.push({
                     topic_id: topic.topic_id,
                     topic_name: topic.topic_name,
                     total_queries_in_topic: topic.query_count,
                     representative_queries: topic.representative_queries,
+                    queries_in_period: 0,
                     escalation_rate: 0,
                     average_sentiment: null,
-                    queries_in_period: 0,
-                    message: "Normalized query text missing for this topic, cannot calculate detailed stats."
+                    error_detail: "Failed to fetch interaction logs for detailed metrics."
                 });
-                console.warn(`(DB Service) Topic ${topic.topic_id} ('${topic.topic_name}') is missing normalized_query_text. Skipping detailed stats.`);
                 continue;
             }
 
-            const { data: relevantLogs, error: logsError } = await supabase
-                .from('rag_interaction_logs')
-                .select('log_id, user_query, was_escalated, conversation_id, created_at')
-                .eq('client_id', clientId)
-                .gte('created_at', periodOptions.startDate)
-                .lte('created_at', periodOptions.endDate + 'T23:59:59.999Z');
-
-            if (logsError) {
-                console.error(`(DB Service) Error fetching RAG logs for topic analytics (client ${clientId}):`, logsError);
-                 analyticsResults.push({ topic_id: topic.topic_id, topic_name: topic.topic_name, total_queries_in_topic: topic.query_count, representative_queries: topic.representative_queries, error_detail: "Failed to fetch RAG logs for stats." });
-                continue;
-            }
-
-            const topicSpecificLogs = relevantLogs.filter(log => normalizeQueryTextForAnalytics(log.user_query) === topic.normalized_query_text);
+            const topicSpecificLogs = topicMembershipEntries ? topicMembershipEntries.map(entry => entry.rag_log).filter(log => log !== null) : [];
 
             let escalatedCount = 0;
             const conversationIdsForSentiment = new Set();
-
             topicSpecificLogs.forEach(log => {
-                if (log.was_escalated) {
-                    escalatedCount++;
-                }
-                if (log.conversation_id) {
-                    conversationIdsForSentiment.add(log.conversation_id);
-                }
+                if (log.was_escalated) escalatedCount++;
+                if (log.conversation_id) conversationIdsForSentiment.add(log.conversation_id);
             });
 
             const queriesInPeriod = topicSpecificLogs.length;
@@ -962,41 +950,39 @@ export const getTopicAnalytics = async (clientId, periodOptions, topN = 10) => {
                     .from('messages')
                     .select('sentiment')
                     .in('conversation_id', Array.from(conversationIdsForSentiment))
-                    // .eq('client_id', clientId) // RLS should handle this via conversation_id access
+                    // .eq('client_id', clientId) // Add if messages table has client_id and RLS doesn't cover via conversation_id join
                     .gte('timestamp', periodOptions.startDate)
                     .lte('timestamp', periodOptions.endDate + 'T23:59:59.999Z')
                     .not('sentiment', 'is', null);
 
                 if (messagesError) {
-                    console.error(`(DB Service) Error fetching messages for sentiment (topic: ${topic.topic_name}):`, messagesError);
+                    console.error(`(DB Service) Error fetching messages for sentiment (topic: ${topic.topic_name}, client: ${clientId}):`, messagesError);
                 } else if (messagesForSentiment && messagesForSentiment.length > 0) {
                     let sentimentSum = 0;
                     let validSentimentCount = 0;
                     messagesForSentiment.forEach(msg => {
                         if (msg.sentiment === 'positive') { sentimentSum += 1; validSentimentCount++; }
                         else if (msg.sentiment === 'negative') { sentimentSum -= 1; validSentimentCount++; }
-                        else if (msg.sentiment === 'neutral') { sentimentSum += 0; validSentimentCount++; }
+                        else if (msg.sentiment === 'neutral') { /* sentimentSum += 0; */ validSentimentCount++; }
                     });
-                    if (validSentimentCount > 0) {
-                        averageSentiment = sentimentSum / validSentimentCount;
-                    }
+                    if (validSentimentCount > 0) averageSentiment = sentimentSum / validSentimentCount;
                 }
             }
 
             analyticsResults.push({
                 topic_id: topic.topic_id,
                 topic_name: topic.topic_name,
-                total_queries_in_topic: topic.query_count,
+                total_queries_in_topic: topic.query_count, // Overall count from analyzed_conversation_topics table
                 representative_queries: topic.representative_queries,
-                queries_in_period: queriesInPeriod,
+                queries_in_period: queriesInPeriod, // Count of logs for this topic within the selected period
                 escalation_rate: escalationRate,
                 average_sentiment: averageSentiment
             });
         }
-
         return { data: analyticsResults };
-
     } catch (err) {
+        // Ensure clientId is accessible in this catch block or remove it from the log message.
+        // It's defined in the function's scope, so it should be fine.
         console.error(`(DB Service) Exception in getTopicAnalytics for client ${clientId}:`, err);
         return { error: 'An unexpected error occurred while fetching topic analytics.' };
     }
@@ -1009,14 +995,42 @@ export const getKnowledgeSourcePerformance = async (clientId, periodOptions) => 
     }
 
     try {
-        // Fetch chunk-specific feedback within the period
-        const { data: feedbackEntries, error: feedbackError } = await supabase
+        const performanceResults = new Map(); // Key: source_id (from knowledge_sources)
+
+        // 1. Initialize with all knowledge sources for the client
+        const { data: allSources, error: sourcesError } = await supabase
+            .from('knowledge_sources')
+            .select('source_id, source_name, custom_title, metadata') // Include metadata for chunk_count if available
+            .eq('client_id', clientId);
+
+        if (sourcesError) {
+            console.error(`(DB Service) Error fetching knowledge sources for client ${clientId}:`, sourcesError);
+            return { error: `Failed to fetch knowledge sources: ${sourcesError.message}` };
+        }
+
+        allSources.forEach(source => {
+            performanceResults.set(source.source_id, {
+                source_id: source.source_id,
+                source_name: source.custom_title || source.source_name,
+                total_chunks_in_source: source.metadata?.chunk_count || 0, // From source's own metadata
+                direct_positive_chunk_feedback_count: 0,
+                direct_negative_chunk_feedback_count: 0,
+                direct_neutral_chunk_feedback_count: 0,
+                total_direct_chunk_feedback_count: 0,
+                retrieval_count_in_rag_interactions: 0, // How many RAG interactions used this source
+                retrieval_in_ia_resolved_convos_count: 0,
+                retrieval_in_escalated_convos_count: 0,
+                // For avg_overall_response_rating_when_used
+                overall_response_ratings_sum: 0,
+                overall_response_ratings_count: 0,
+                avg_overall_response_rating_when_used: null
+            });
+        });
+
+        // 2. Fetch and process direct chunk feedback
+        const { data: directFeedbackEntries, error: feedbackError } = await supabase
             .from('rag_feedback_log')
-            .select(`
-                rating,
-                knowledge_base_chunk_id,
-                kb:knowledge_base ( id, metadata )
-            `)
+            .select('rating, knowledge_base_chunk_id, kb:knowledge_base (id, metadata)')
             .eq('client_id', clientId)
             .eq('feedback_type', 'chunk_relevance') // Only feedback directly on chunks
             .not('knowledge_base_chunk_id', 'is', null) // Ensure chunk ID is present
@@ -1024,59 +1038,108 @@ export const getKnowledgeSourcePerformance = async (clientId, periodOptions) => 
             .lte('created_at', periodOptions.endDate + 'T23:59:59.999Z');
 
         if (feedbackError) {
-            console.error(`(DB Service) Error fetching RAG feedback for source performance (client ${clientId}):`, feedbackError);
-            return { error: feedbackError.message };
+            console.error(`(DB Service) Error fetching direct chunk feedback for client ${clientId}:`, feedbackError);
+            // Continue, as other metrics might still be calculable
+        } else if (directFeedbackEntries) {
+            for (const feedback of directFeedbackEntries) {
+                const sourceId = feedback.kb?.metadata?.original_source_id;
+                if (sourceId && performanceResults.has(sourceId)) {
+                    const stats = performanceResults.get(sourceId);
+                    stats.total_direct_chunk_feedback_count++;
+                    if (feedback.rating === 1) stats.direct_positive_chunk_feedback_count++;
+                    else if (feedback.rating === -1) stats.direct_negative_chunk_feedback_count++;
+                    else if (feedback.rating === 0) stats.direct_neutral_chunk_feedback_count++;
+                }
+            }
         }
 
-        if (!feedbackEntries || feedbackEntries.length === 0) {
-            return { data: [], message: "No chunk-specific feedback found for the selected period to analyze source performance." };
-        }
+        // 3. Fetch RAG interactions and link to conversation outcomes and overall feedback
+        const { data: ragInteractions, error: ragLogsError } = await supabase
+            .from('rag_interaction_logs')
+            .select('log_id, retrieved_context, conversation_id, was_escalated')
+            .eq('client_id', clientId)
+            .gte('response_timestamp', periodOptions.startDate) // Assuming response_timestamp is more relevant for period
+            .lte('response_timestamp', periodOptions.endDate + 'T23:59:59.999Z');
 
-        const sourcePerformanceMap = new Map(); // Key: source_identifier, Value: { positive_feedback_count, negative_feedback_count }
+        if (ragLogsError) {
+            console.error(`(DB Service) Error fetching RAG interaction logs for client ${clientId}:`, ragLogsError);
+        } else if (ragInteractions) {
+            const conversationIds = [...new Set(ragInteractions.map(log => log.conversation_id).filter(id => id))];
+            let conversationStats = {}; // Store status by conversation_id
 
-        for (const entry of feedbackEntries) {
-            if (!entry.kb || !entry.kb.metadata) {
-                console.warn(`(DB Service) Feedback entry for chunk ${entry.knowledge_base_chunk_id} is missing knowledge_base record or metadata. Skipping.`);
-                continue;
+            if (conversationIds.length > 0) {
+                const { data: convData, error: convError } = await supabase
+                    .from('conversations') // Assuming this table exists and has 'status'
+                    .select('conversation_id, status')
+                    .in('conversation_id', conversationIds);
+                if (convError) console.error("(DB Service) Error fetching conversation statuses:", convError);
+                else convData.forEach(c => conversationStats[c.conversation_id] = c.status);
             }
 
-            const metadata = entry.kb.metadata;
-            let sourceIdentifier = metadata.original_source_id || metadata.source_name || metadata.url || `ChunkDB_ID_${entry.kb.id}`;
-            if (typeof sourceIdentifier !== 'string') {
-                 sourceIdentifier = String(sourceIdentifier);
+            const ragLogIdsForFeedback = ragInteractions.map(log => log.log_id);
+            let overallFeedbackRatings = {}; // rag_interaction_log_id -> { sum_ratings, count_ratings }
+            if (ragLogIdsForFeedback.length > 0) {
+                 const { data: overallFeedbacks, error: overallFeedbackError } = await supabase
+                    .from('rag_feedback_log')
+                    .select('rag_interaction_log_id, rating')
+                    .in('rag_interaction_log_id', ragLogIdsForFeedback)
+                    .eq('client_id', clientId) // ensure feedback is for this client
+                    .eq('feedback_type', 'response_quality'); // Or other relevant overall types
+                 if (overallFeedbackError) console.error("(DB Service) Error fetching overall response feedback:", overallFeedbackError);
+                 else {
+                    overallFeedbacks.forEach(f => {
+                        if (!overallFeedbackRatings[f.rag_interaction_log_id]) {
+                            overallFeedbackRatings[f.rag_interaction_log_id] = { sum: 0, count: 0 };
+                        }
+                        if (typeof f.rating === 'number') { // Ensure rating is a number
+                           overallFeedbackRatings[f.rag_interaction_log_id].sum += f.rating;
+                           overallFeedbackRatings[f.rag_interaction_log_id].count += 1;
+                        }
+                    });
+                 }
             }
 
-            if (!sourcePerformanceMap.has(sourceIdentifier)) {
-                sourcePerformanceMap.set(sourceIdentifier, {
-                    source_name: sourceIdentifier,
-                    positive_feedback_count: 0,
-                    negative_feedback_count: 0,
-                    neutral_feedback_count: 0,
-                    total_feedback_on_chunks: 0
+            for (const log of ragInteractions) {
+                const sourcesInThisLog = new Set();
+                if (log.retrieved_context && Array.isArray(log.retrieved_context)) {
+                    log.retrieved_context.forEach(chunk => {
+                        const sourceId = chunk.metadata?.original_source_id;
+                        if (sourceId && performanceResults.has(sourceId)) {
+                            sourcesInThisLog.add(sourceId);
+                        }
+                    });
+                }
+
+                sourcesInThisLog.forEach(sourceId => {
+                    const stats = performanceResults.get(sourceId);
+                    stats.retrieval_count_in_rag_interactions++;
+
+                    const convStatus = log.conversation_id ? conversationStats[log.conversation_id] : null;
+                    if (convStatus === 'resolved_by_ia') {
+                        stats.retrieval_in_ia_resolved_convos_count++;
+                    }
+                    if (log.was_escalated || convStatus === 'escalated_to_human' || convStatus === 'closed_by_agent') {
+                        stats.retrieval_in_escalated_convos_count++;
+                    }
+
+                    if (overallFeedbackRatings[log.log_id] && overallFeedbackRatings[log.log_id].count > 0) {
+                        stats.overall_response_ratings_sum += overallFeedbackRatings[log.log_id].sum;
+                        stats.overall_response_ratings_count += overallFeedbackRatings[log.log_id].count;
+                    }
                 });
             }
-
-            const perf = sourcePerformanceMap.get(sourceIdentifier);
-            perf.total_feedback_on_chunks += 1;
-
-            if (entry.rating === 1) {
-                perf.positive_feedback_count += 1;
-            } else if (entry.rating === -1) {
-                perf.negative_feedback_count += 1;
-            } else if (entry.rating === 0) {
-                perf.neutral_feedback_count += 1;
-            }
         }
 
-        const results = Array.from(sourcePerformanceMap.values());
-        results.sort((a, b) => {
-            if (b.total_feedback_on_chunks !== a.total_feedback_on_chunks) {
-                return b.total_feedback_on_chunks - a.total_feedback_on_chunks;
+        performanceResults.forEach(stats => {
+            if (stats.overall_response_ratings_count > 0) {
+                stats.avg_overall_response_rating_when_used = stats.overall_response_ratings_sum / stats.overall_response_ratings_count;
             }
-            return b.positive_feedback_count - a.positive_feedback_count;
         });
 
-        return { data: results };
+        const finalResultsArray = Array.from(performanceResults.values());
+        finalResultsArray.sort((a,b) => (b.retrieval_count_in_rag_interactions - a.retrieval_count_in_rag_interactions) || (b.direct_positive_chunk_feedback_count - a.direct_positive_chunk_feedback_count) );
+
+        return { data: finalResultsArray };
 
     } catch (err) {
         console.error(`(DB Service) Exception in getKnowledgeSourcePerformance for client ${clientId}:`, err);
