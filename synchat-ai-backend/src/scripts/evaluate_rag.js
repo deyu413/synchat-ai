@@ -14,6 +14,12 @@ const GOLDEN_DATASET_PATH = path.join(path.dirname(fileURLToPath(import.meta.url
 const CHAT_MODEL_FOR_EVAL = "gpt-3.5-turbo"; // Or your target model
 const BOT_CANNOT_ANSWER_MSG_FOR_TEST = "Lo siento, no tengo información específica sobre eso en la base de datos de SynChat AI."; // Align with chatController
 
+// Configuration for new metrics
+const FAITHFULNESS_MODEL = "gpt-3.5-turbo";
+const RELEVANCY_MODEL = "gpt-3.5-turbo";
+const METRIC_LLM_TEMP = 0.2; // Low temperature for objective assessment
+const METRIC_LLM_MAX_TOKENS = 10; // For YES/NO responses
+
 // Simplified base system prompt for evaluation purposes
 const SYSTEM_PROMPT_BASE_TEMPLATE = `Eres Zoe, el asistente virtual IA especializado de SynChat AI (synchatai.com). Tu ÚNICA fuente de información es el "Contexto" proporcionado a continuación. NO debes usar ningún conocimiento externo ni hacer suposiciones.
 
@@ -139,6 +145,54 @@ async function runEvaluation() {
             keywordsCheckPassed = false;
         }
 
+        // --- Faithfulness Check ---
+        let faithfulness_check = "N/A";
+        if (llm_response && !llm_response.startsWith("ERROR:")) {
+            try {
+                const faithfulnessPrompt = `Given this context: "${ragContextStringForTest}"
+
+And this answer: "${llm_response}"
+
+Is the answer fully supported by the context and free of hallucinated information not present in the context? Respond with only 'YES' or 'NO'.`;
+                const faithfulnessMessages = [
+                    { role: "system", content: "You are an AI evaluator. Respond only with YES or NO." },
+                    { role: "user", content: faithfulnessPrompt }
+                ];
+                const ff_res = await openaiService.getChatCompletion(faithfulnessMessages, FAITHFULNESS_MODEL, METRIC_LLM_TEMP, METRIC_LLM_MAX_TOKENS);
+                faithfulness_check = ff_res?.trim().toUpperCase() || "NO_RESPONSE";
+                console.log(`Faithfulness Check: ${faithfulness_check}`);
+            } catch (e) {
+                console.error(`Faithfulness check error for test ${testCase.test_id}:`, e.message);
+                faithfulness_check = "ERROR_FAITHFULNESS";
+            }
+        } else {
+            faithfulness_check = "N/A (LLM error)";
+        }
+
+        // --- Answer Relevancy Check ---
+        let answer_relevancy_check = "N/A";
+        if (llm_response && !llm_response.startsWith("ERROR:")) {
+            try {
+                const relevancyPrompt = `Given this user question: "${testCase.query}"
+
+And this answer: "${llm_response}"
+
+Is the answer relevant to the question? Respond with only 'YES' or 'NO'.`;
+                const relevancyMessages = [
+                    { role: "system", content: "You are an AI evaluator. Respond only with YES or NO." },
+                    { role: "user", content: relevancyPrompt }
+                ];
+                const ar_res = await openaiService.getChatCompletion(relevancyMessages, RELEVANCY_MODEL, METRIC_LLM_TEMP, METRIC_LLM_MAX_TOKENS);
+                answer_relevancy_check = ar_res?.trim().toUpperCase() || "NO_RESPONSE";
+                console.log(`Answer Relevancy Check: ${answer_relevancy_check}`);
+            } catch (e) {
+                console.error(`Answer relevancy check error for test ${testCase.test_id}:`, e.message);
+                answer_relevancy_check = "ERROR_RELEVANCY";
+            }
+        } else {
+            answer_relevancy_check = "N/A (LLM error)";
+        }
+
         evaluationResults.push({
             test_id: testCase.test_id,
             query: testCase.query,
@@ -147,7 +201,9 @@ async function runEvaluation() {
             system_prompt_length_chars: systemPromptForTest.length,
             rag_context_length_chars: ragContextStringForTest.length,
             llm_response: llm_response,
-            keywords_check: keywordsCheckPassed ? 'PASS' : 'FAIL'
+            keywords_check: keywordsCheckPassed ? 'PASS' : 'FAIL',
+            faithfulness_check: faithfulness_check,
+            answer_relevancy_check: answer_relevancy_check
         });
     }
 
@@ -155,15 +211,18 @@ async function runEvaluation() {
     console.log("\n\n--- Evaluation Summary ---");
     evaluationResults.forEach(result => {
         console.log(
-            `Test ID: ${result.test_id} | Query: "${result.query.substring(0,30)}..." | Keywords Check: ${result.keywords_check}`
+            `Test ID: ${result.test_id} | Query: "${result.query.substring(0,30)}..." | Keywords: ${result.keywords_check} | Faithfulness: ${result.faithfulness_check} | Relevancy: ${result.answer_relevancy_check}`
         );
     });
 
-    const passedCount = evaluationResults.filter(r => r.keywords_check === 'PASS').length;
-    console.log(`\nTotal Tests: ${evaluationResults.length}`);
-    console.log(`Passed Keyword Checks: ${passedCount}`);
-    console.log(`Failed Keyword Checks: ${evaluationResults.length - passedCount}`);
+    const passedKeywordsCount = evaluationResults.filter(r => r.keywords_check === 'PASS').length;
+    const passedFaithfulnessCount = evaluationResults.filter(r => r.faithfulness_check === 'YES').length;
+    const passedAnswerRelevancyCount = evaluationResults.filter(r => r.answer_relevancy_check === 'YES').length;
 
+    console.log(`\nTotal Tests: ${evaluationResults.length}`);
+    console.log(`Passed Keyword Checks: ${passedKeywordsCount} (${((passedKeywordsCount/evaluationResults.length)*100).toFixed(2)}%)`);
+    console.log(`Passed Faithfulness Checks (YES): ${passedFaithfulnessCount} (${((passedFaithfulnessCount/evaluationResults.length)*100).toFixed(2)}%)`);
+    console.log(`Passed Answer Relevancy Checks (YES): ${passedAnswerRelevancyCount} (${((passedAnswerRelevancyCount/evaluationResults.length)*100).toFixed(2)}%)`);
     // Optionally write detailed results to a file
     const reportPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'evaluation_report.json');
     fs.writeFileSync(reportPath, JSON.stringify(evaluationResults, null, 2), 'utf-8');

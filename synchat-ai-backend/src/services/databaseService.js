@@ -2,21 +2,35 @@
 import { supabase } from './supabaseClient.js'; // Importar cliente inicializado
 import { getEmbedding } from './embeddingService.js'; // Necesario para búsqueda híbrida
 import { getChatCompletion } from './openaiService.js'; // Import for query reformulation
+import { pipeline, env } from '@xenova/transformers';
+
+// --- Transformers.js Configuration ---
+// env.allowLocalModels = false; // Optional: Disable local model loading
+// env.cacheDir = './.cache'; // Optional: Set cache directory for models
 
 // --- Configuración ---
 const HYBRID_SEARCH_VECTOR_WEIGHT = 0.5;
 const HYBRID_SEARCH_FTS_WEIGHT = 0.5;
-const HYBRID_SEARCH_LIMIT = 5;
+const HYBRID_SEARCH_LIMIT = 5; // For main chunk search
 const INITIAL_RETRIEVAL_MULTIPLIER = 3;
 const VECTOR_MATCH_THRESHOLD = 0.65; // Umbral de similitud coseno (0 a 1, más alto es más similar)
 const HISTORY_MESSAGE_LIMIT = 8;       // Límite de mensajes de historial
+
+const PROPOSITION_SEARCH_LIMIT = 3; // Max propositions to fetch
+const PROPOSITION_MATCH_THRESHOLD = 0.78; // Stricter threshold for propositions
 const DEBUG_PREPROCESSING_DATABASE_SERVICE = false; // Separate debug flag for this service
 const DEBUG_RERANKING = false; // Debug flag for re-ranking logic
 
-// Re-ranking Weights
-const W_ORIGINAL_HYBRID_SCORE = 0.6;
-const W_KEYWORD_MATCH_SCORE = 0.3;
-const W_METADATA_RELEVANCE_SCORE = 0.1;
+// Cross-Encoder Configuration
+const CROSS_ENCODER_MODEL_NAME = 'Xenova/bge-reranker-base';
+const CROSS_ENCODER_TOP_K = 20; // Number of initial results to re-rank
+
+// Adjusted Re-ranking Weights to include Cross-Encoder
+const W_CROSS_ENCODER_SCORE = 0.4;      // Weight for the cross-encoder score
+const W_ORIGINAL_HYBRID_SCORE = 0.3;    // Adjusted weight for initial hybrid score
+const W_KEYWORD_MATCH_SCORE = 0.15;   // Adjusted weight for keyword match
+const W_METADATA_RELEVANCE_SCORE = 0.15; // Adjusted weight for metadata relevance
+// Sum of weights = 0.4 + 0.3 + 0.15 + 0.15 = 1.0
 
 // Simple Spanish Stop Words List (customize as needed)
 const SPANISH_STOP_WORDS = new Set([
@@ -26,6 +40,32 @@ const SPANISH_STOP_WORDS = new Set([
   "sobre", "este", "ese", "aquel", "esto", "eso", "aquello", "mi", "tu", "su", "yo", "tú", "él", "ella",
   "nosotros", "vosotros", "ellos", "ellas", "me", "te", "se", "le", "les", "nos", "os"
 ]);
+
+
+// --- Cross-Encoder Pipeline Singleton ---
+let crossEncoderPipeline = null;
+
+async function getCrossEncoderPipeline() {
+    if (crossEncoderPipeline === null) { // null means not yet initialized
+        try {
+            console.log(`(DB Service) Initializing cross-encoder pipeline: ${CROSS_ENCODER_MODEL_NAME}`);
+            // Transformers.js pipeline for 'text-classification' can be used for rerankers
+            // as they output a score (logit) for a pair of texts.
+            crossEncoderPipeline = await pipeline('text-classification', CROSS_ENCODER_MODEL_NAME, {
+                // No specific options needed for Xenova/bge-reranker-base with text-classification for pairwise scoring
+            });
+            console.log("(DB Service) Cross-encoder pipeline initialized successfully.");
+        } catch (error) {
+            console.error("(DB Service) Error initializing cross-encoder pipeline:", error);
+            crossEncoderPipeline = false; // Mark as failed to avoid retrying indefinitely
+        }
+    }
+    return crossEncoderPipeline; // Returns the pipeline or false if initialization failed
+}
+
+function sigmoid(x) {
+    return 1 / (1 + Math.exp(-x));
+}
 
 
 // --- Cache (Simple en Memoria) ---
@@ -259,92 +299,178 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
     const originalQueryTokens = tokenizeText(queryText, true); // true for stopword removal
 
     try {
-        const processedQueryText = preprocessTextForEmbedding(queryText);
-        if (DEBUG_PREPROCESSING_DATABASE_SERVICE && queryText !== processedQueryText) {
-            console.log(`(DB Service DEBUG) Query Preprocessing:
-Original Query: "${queryText.substring(0,100)}..."
-Processed Query: "${processedQueryText.substring(0,100)}..."`);
-        }
-
-        // 1. Query Reformulation
-        let allQueriesToEmbed = [processedQueryText];
-        const reformulationPrompt = `Dada la siguiente pregunta de usuario en español: '${processedQueryText}', genera 1 o 2 reformulaciones alternativas que capturen la misma intención pero con diferentes palabras. Devuelve solo las reformulaciones, separadas por un salto de línea. No añadas numeración ni texto introductorio.`;
-        const llmMessages = [
-            { role: "system", content: "Eres un asistente útil que reformula preguntas." },
-            { role: "user", content: reformulationPrompt }
-        ];
-
+        // --- Query Decomposition Step ---
+        let queriesToProcess = [queryText]; // Default to original query
+        let isDecomposed = false;
         try {
-            const reformulationResponse = await getChatCompletion(llmMessages, "gpt-3.5-turbo", 0.7);
-            if (reformulationResponse) {
-                const reformulated = reformulationResponse.split('\n').map(q => q.trim()).filter(q => q.length > 0);
-                if (reformulated.length > 0) {
-                    allQueriesToEmbed.push(...reformulated);
-                    console.log(`(DB Service) Reformulated queries: ${reformulated.join(' | ')}`);
+            const decompositionPrompt = `Analyze the following user question. If it contains multiple distinct sub-questions that should be answered separately for a comprehensive response, break it down into those individual sub-questions. Return only the list of sub-questions, each on a new line. If it's a single, simple question, return only the original question. User Question: '${queryText}'`;
+            const decompositionMessages = [
+                { role: "system", content: "You are an AI assistant that analyzes user questions and breaks them into sub-questions if necessary. Respond in Spanish." },
+                { role: "user", content: decompositionPrompt }
+            ];
+            console.log(`(DB Service) Attempting query decomposition for: "${queryText.substring(0,100)}..."`);
+            const decompositionResponse = await getChatCompletion(decompositionMessages, "gpt-3.5-turbo", 0.3);
+
+            if (decompositionResponse) {
+                const subQueries = decompositionResponse.split('\n').map(q => q.trim()).filter(q => q.length > 0);
+                if (subQueries.length > 1 || (subQueries.length === 1 && subQueries[0].toLowerCase() !== queryText.toLowerCase())) {
+                    // Consider it decomposed if more than one sub-query, or if one sub-query is different from original.
+                    queriesToProcess = subQueries;
+                    isDecomposed = true;
+                    console.log(`(DB Service) Query decomposed into ${subQueries.length} sub-queries:`, subQueries);
+                } else {
+                    console.log("(DB Service) Query decomposition resulted in original query or single equivalent. Proceeding with original.");
+                    queriesToProcess = [queryText]; // Ensure it's the original if decomposition is not substantial
+                }
+            } else {
+                console.warn("(DB Service) Query decomposition returned no content. Proceeding with original query.");
+            }
+        } catch (decompositionError) {
+            console.error("(DB Service) Error during query decomposition:", decompositionError.message);
+            // Proceed with original queryText if decomposition fails
+            queriesToProcess = [queryText];
+        }
+        // --- End Query Decomposition Step ---
+
+        let aggregatedVectorResults = [];
+        let aggregatedFtsResults = [];
+        let aggregatedQueriesEmbeddedForLog = [];
+        let firstProcessedQueryEmbedding = null; // For proposition search
+
+        for (let idx = 0; idx < queriesToProcess.length; idx++) {
+            const currentQuery = queriesToProcess[idx];
+            console.log(`(DB Service) Processing query #${idx + 1}/${queriesToProcess.length}: "${currentQuery.substring(0,100)}..."`);
+
+            const processedQueryText = preprocessTextForEmbedding(currentQuery);
+            if (DEBUG_PREPROCESSING_DATABASE_SERVICE && currentQuery !== processedQueryText) {
+                console.log(`(DB Service DEBUG) Sub-query Preprocessing for "${currentQuery.substring(0,50)}...":
+Original: "${currentQuery.substring(0,100)}..."
+Processed: "${processedQueryText.substring(0,100)}..."`);
+            }
+
+            const currentLoopEmbeddings = [];
+
+            // 1. Original Processed Sub-Query Embedding
+            const originalSubQueryEmbedding = await getEmbedding(processedQueryText);
+            if (originalSubQueryEmbedding) {
+                currentLoopEmbeddings.push({ query: processedQueryText, embedding: originalSubQueryEmbedding });
+                if (idx === 0 && !firstProcessedQueryEmbedding) { // Store the first main embedding for proposition search
+                    firstProcessedQueryEmbedding = originalSubQueryEmbedding;
+                }
+            } else {
+                console.warn(`(DB Service) No se pudo generar embedding para la sub-consulta procesada: "${processedQueryText.substring(0,50)}..."`);
+            }
+
+            // 2. HyDE (Hypothetical Document Embedding) for the current sub-query
+            if (!isDecomposed || queriesToProcess.length === 1) { // Apply HyDE only if not decomposed or if it's a single query resulting from decomposition
+                try {
+                    const hydePrompt = `User Question: '${processedQueryText}'. Please generate a concise, factual paragraph in Spanish that you believe would be a perfect answer to this question. This paragraph will be used for a semantic search. Focus on providing key information and relevant terms, as if it were a snippet from an ideal document answering the question.`;
+                    // ... (HyDE messages and getChatCompletion call as before)
+                    const hydeMessages = [ /* as before */ { role: "system", content: "You are an AI assistant that generates hypothetical documents for search improvement. Respond in Spanish." }, { role: "user", content: hydePrompt }];
+                    console.log(`(DB Service) Generating HyDE document for sub-query: "${processedQueryText.substring(0,50)}..."`);
+                    const hypotheticalDocument = await getChatCompletion(hydeMessages, "gpt-3.5-turbo", 0.5);
+
+                    if (hypotheticalDocument) {
+                        // ... (logging and embedding as before)
+                        console.log(`(DB Service) Generated HyDE document for sub-query: "${hypotheticalDocument.substring(0,100)}..."`);
+                        const hydeEmbedding = await getEmbedding(hypotheticalDocument);
+                        if (hydeEmbedding) {
+                            currentLoopEmbeddings.push({ query: `hyde_document_for_subquery_'${processedQueryText.substring(0,50)}...'`, embedding: hydeEmbedding });
+                            console.log("(DB Service) HyDE embedding for sub-query generated and added.");
+                        } else {
+                             console.warn("(DB Service) Failed to generate embedding for HyDE document (sub-query).");
+                        }
+                    } // else { console.warn("(DB Service) HyDE document generation (sub-query) returned no content."); }
+                } catch (hydeError) {
+                    console.error("(DB Service) Error during HyDE (sub-query):", hydeError.message);
                 }
             }
-        } catch (llmError) {
-            console.error("(DB Service) Error during query reformulation LLM call:", llmError.message);
-            // Proceed with only the original processed query
-        }
 
-        // 2. Embedding Generation for All Queries
-        const allEmbeddings = [];
-        for (const q of allQueriesToEmbed) {
-            const embedding = await getEmbedding(q);
-            if (embedding) {
-                allEmbeddings.push({ query: q, embedding: embedding });
-            } else {
-                console.warn(`(DB Service) No se pudo generar embedding para la consulta: "${q.substring(0,50)}..."`);
+
+            // 3. Query Reformulation for the current sub-query
+            if (!isDecomposed || queriesToProcess.length === 1) { // Apply reformulation only if not decomposed or single query
+                let subQueryReformulationsLogged = [processedQueryText];
+                const reformulationPrompt = `Dada la siguiente pregunta de usuario en español: '${processedQueryText}', genera 1 o 2 reformulaciones alternativas que capturen la misma intención pero con diferentes palabras. Devuelve solo las reformulaciones, separadas por un salto de línea. No añadas numeración ni texto introductorio.`;
+                // ... (reformulation messages and getChatCompletion as before)
+                const llmMessages = [ /* as before */ { role: "system", content: "Eres un asistente útil que reformula preguntas." }, { role: "user", content: reformulationPrompt }];
+                try {
+                    const reformulationResponse = await getChatCompletion(llmMessages, "gpt-3.5-turbo", 0.7);
+                    if (reformulationResponse) {
+                        const reformulatedQueries = reformulationResponse.split('\n').map(q => q.trim()).filter(q => q.length > 0);
+                        if (reformulatedQueries.length > 0) {
+                            console.log(`(DB Service) Reformulated sub-queries for "${processedQueryText.substring(0,30)}...": ${reformulatedQueries.join(' | ')}`);
+                            subQueryReformulationsLogged.push(...reformulatedQueries);
+                            for (const rq of reformulatedQueries) {
+                                const rqEmbedding = await getEmbedding(rq);
+                                if (rqEmbedding) {
+                                    currentLoopEmbeddings.push({ query: rq, embedding: rqEmbedding });
+                                } // else { console.warn warning about reformulation embedding failure }
+                            }
+                        }
+                    }
+                } catch (llmError) {
+                    console.error("(DB Service) Error during sub-query reformulation:", llmError.message);
+                }
+                aggregatedQueriesEmbeddedForLog.push(...currentLoopEmbeddings.map(e => e.query));
+            } else { // If decomposed, just use the processed sub-query for embedding log for this iteration
+                 aggregatedQueriesEmbeddedForLog.push(processedQueryText);
             }
-        }
 
-        if (allEmbeddings.length === 0) {
-            console.warn("(DB Service) No se pudieron generar embeddings para ninguna consulta. Saltando búsqueda vectorial.");
-            return [];
-        }
 
-        // 3. Vector Search for All Embeddings
-        let allVectorResponses = [];
-        for (const { query, embedding } of allEmbeddings) {
-            const { data, error } = await supabase.rpc('vector_search', {
+            if (currentLoopEmbeddings.length === 0) {
+                console.warn(`(DB Service) No embeddings generated for sub-query: "${currentQuery.substring(0,50)}...". Skipping vector search for this sub-query.`);
+            } else {
+                 // 4. Vector Search for current sub-query's embeddings
+                for (const { query: eqQuery, embedding: eqEmbedding } of currentLoopEmbeddings) {
+                    const { data: vsData, error: vsError } = await supabase.rpc('vector_search', {
+                        client_id_param: clientId,
+                        query_embedding: eqEmbedding,
+                        match_threshold: finalVectorMatchThreshold,
+                        match_count: initialRetrieveLimit
+                    });
+                    if (vsError) {
+                        console.error(`(DB Service) Error in vector_search for sub-query embedding "${eqQuery.substring(0,50)}...":`, vsError.message);
+                    } else if (vsData) {
+                        console.log(`(DB Service) Vector search for sub-query embedding "${eqQuery.substring(0,50)}..." returned ${vsData.length} results.`);
+                        aggregatedVectorResults.push(...vsData);
+                    }
+                }
+            }
+
+            // 6. FTS Search for the current processed sub-query
+            const { data: ftsSubData, error: ftsSubError } = await supabase.rpc('fts_search_with_rank', {
                 client_id_param: clientId,
-                query_embedding: embedding,
-                match_threshold: finalVectorMatchThreshold,
+                query_text: processedQueryText, // FTS on the processed current sub-query
                 match_count: initialRetrieveLimit
             });
-            if (error) {
-                console.error(`(DB Service) Error en RPC vector_search para query "${query.substring(0,50)}...":`, error.message);
-            } else {
-                console.log(`(DB Service) Vector search for query "${query.substring(0,50)}..." returned ${data?.length || 0} results.`);
-                if (data) allVectorResponses.push(...data);
+            if (ftsSubError) {
+                console.error(`(DB Service) Error in fts_search_with_rank for sub-query "${processedQueryText.substring(0,50)}...":`, ftsSubError.message);
+            } else if (ftsSubData) {
+                 console.log(`(DB Service) FTS search for sub-query "${processedQueryText.substring(0,50)}..." returned ${ftsSubData.length} results.`);
+                aggregatedFtsResults.push(...ftsSubData);
             }
-        }
+        } // End of loop over queriesToProcess
 
-        // 4. Combine and Deduplicate Vector Search Results
+
+        // --- Post-Loop Processing (Consolidation & Re-ranking) ---
+        // 5. Combine and Deduplicate Vector Search Results from all sub-queries
         const uniqueVectorResults = {};
-        allVectorResponses.forEach(row => {
-            if (!row.id || (row.similarity && row.similarity < finalVectorMatchThreshold)) return; // Ensure threshold is met
+        aggregatedVectorResults.forEach(row => {
+            if (!row.id || (row.similarity && row.similarity < finalVectorMatchThreshold)) return;
             const id = String(row.id);
             if (!uniqueVectorResults[id] || row.similarity > uniqueVectorResults[id].similarity) {
                 uniqueVectorResults[id] = row;
             }
         });
         const vectorResults = Object.values(uniqueVectorResults);
-        console.log(`(DB Service) Total unique vector results after combining ${allQueriesToEmbed.length} queries: ${vectorResults.length}`);
+        console.log(`(DB Service) Total unique vector results after aggregating all sub-queries: ${vectorResults.length}`);
 
-        // 5. FTS Search (uses original processedQueryText)
-        const { data: ftsData, error: ftsError } = await supabase.rpc('fts_search_with_rank', {
-            client_id_param: clientId,
-            query_text: processedQueryText,
-            match_count: initialRetrieveLimit
-        });
+        // FTS results are already aggregated in `aggregatedFtsResults`
+        const ftsResults = aggregatedFtsResults;
+        console.log(`(DB Service) Total FTS results after aggregating all sub-queries: ${ftsResults.length}`);
 
-        if (ftsError) console.error("(DB Service) Error en RPC fts_search_with_rank:", ftsError.message);
-        const ftsResults = ftsData || [];
-        console.log(`(DB Service) FTS search returned ${ftsResults.length} results.`);
 
-        // 6. Merging Logic (existing logic should largely work)
+        // 7. Merging Logic (operates on consolidated vectorResults and ftsResults)
         const combinedResults = {};
         vectorResults.forEach(row => {
             // This check is slightly redundant due to earlier filtering but kept for safety
@@ -382,48 +508,141 @@ Processed Query: "${processedQueryText.substring(0,100)}..."`);
                 hybrid_score: ((item.vector_similarity || 0) * finalVectorWeight) + ((item.fts_score || 0) * finalFtsWeight)
             }));
 
-        // 7. Re-ranking Logic
-        const rerankedList = initialRankedList.map(item => {
+        // 8. Re-ranking Logic - Stage 1 (Keyword and Metadata) & Preparation for Cross-Encoder
+        // TODO: Refine cross-encoder to use specific sub-query if query decomposition is active.
+        // For now, cross-encoder uses the original top-level queryText.
+
+        let itemsForFinalSort = [...rankedResults]; // Start with results from hybrid (vector+FTS) scoring
+
+        // Attempt Cross-Encoder Re-ranking on top K results
+        const classifier = await getCrossEncoderPipeline();
+        if (classifier && itemsForFinalSort.length > 0) {
+            console.log(`(DB Service) Cross-encoder pipeline available. Preparing to re-rank top results.`);
+            // Sort by hybrid_score before slicing for cross-encoder, if not already sorted sufficiently
+            // The `rankedResults` should already be somewhat sorted or at least have `hybrid_score`.
+            // For safety, explicitly sort if order isn't guaranteed or if only a subset needs high-quality sorting before cross-encoding.
+            // However, `rankedResults` are already scored, so we can take top K from them.
+
+            const itemsToCrossEncode = itemsForFinalSort.sort((a,b) => b.hybrid_score - a.hybrid_score).slice(0, CROSS_ENCODER_TOP_K);
+            const remainingItems = itemsForFinalSort.slice(CROSS_ENCODER_TOP_K);
+
+            if (itemsToCrossEncode.length > 0) {
+                console.log(`(DB Service) Applying cross-encoder to top ${itemsToCrossEncode.length} items.`);
+                const queryDocumentPairs = itemsToCrossEncode.map(item => [queryText, item.content]); // Using original queryText
+
+                try {
+                    const crossEncoderScoresOutput = await classifier(queryDocumentPairs, { topK: null });
+
+                    itemsToCrossEncode.forEach((item, index) => {
+                        const scoreOutput = crossEncoderScoresOutput[index];
+                        let rawScore;
+                        // Transformers.js pipeline for text-classification with a reranker model
+                        // typically returns an array of objects, e.g., [{ label: 'LABEL_0', score: 0.123 }]
+                        // For rerankers like BAAI/bge-reranker-base, there's usually one relevant score.
+                        // It might be the score for 'LABEL_0' or 'LABEL_1', or simply the first score.
+                        // This needs verification with the specific model's output structure via transformers.js.
+                        // Assuming the relevant score is the first one if multiple labels are returned,
+                        // or directly item.score if it's structured like { score: X }.
+                        if (Array.isArray(scoreOutput) && scoreOutput.length > 0) {
+                           // If the model returns multiple labels, we might need to find the one representing relevance.
+                           // For bge-reranker, it's often a single logit. If the pipeline wraps it,
+                           // it might be under a default positive label or just the first score.
+                           // Let's assume the first score is the one we need, or it's an object with a .score property.
+                           if (typeof scoreOutput[0].score === 'number') {
+                               rawScore = scoreOutput[0].score; // Common case for single score models or if positive label is first
+                           } else {
+                               // Fallback or specific label logic
+                                const relevantScoreObj = scoreOutput.find(s => s.label === 'LABEL_1' || s.label === 'entailment'); // Example positive labels
+                                rawScore = relevantScoreObj ? relevantScoreObj.score : (typeof scoreOutput[0].score === 'number' ? scoreOutput[0].score : 0);
+                           }
+                        } else if (typeof scoreOutput.score === 'number') { // If it's like { score: X }
+                            rawScore = scoreOutput.score;
+                        } else if (typeof scoreOutput === 'number') { // If it's a direct number (less common for 'text-classification' pipeline)
+                            rawScore = scoreOutput;
+                        } else {
+                            console.warn(`(DB Service) Unexpected cross-encoder score format for item ${index}:`, scoreOutput);
+                            rawScore = 0; // Neutral score if format is unknown
+                        }
+                        item.cross_encoder_score_raw = rawScore;
+                        item.cross_encoder_score_normalized = sigmoid(rawScore); // Normalize using sigmoid
+                        if (DEBUG_RERANKING) {
+                             console.log(`(DB Service DEBUG) Item ID ${item.id} - Raw CE Score: ${item.cross_encoder_score_raw?.toFixed(4)}, Norm CE Score: ${item.cross_encoder_score_normalized?.toFixed(4)}`);
+                        }
+                    });
+                } catch (ceError) {
+                    console.error("(DB Service) Error during cross-encoder scoring:", ceError.message);
+                    // If cross-encoder fails, items in itemsToCrossEncode won't have cross_encoder_score_normalized.
+                    // The final re-ranking formula will handle undefined scores gracefully.
+                }
+            }
+            itemsForFinalSort = [...itemsToCrossEncode, ...remainingItems]; // Recombine
+        } else {
+            if (itemsForFinalSort.length > 0) {
+                 console.warn("(DB Service) Cross-encoder pipeline not available or no items to re-rank. Skipping cross-encoder step.");
+            }
+        }
+
+        // Final Re-ranking Score Calculation (for all items)
+        const rerankedList = itemsForFinalSort.map(item => {
             const contentTokens = tokenizeText(item.content, true);
             const keywordMatchScore = calculateJaccardSimilarity(originalQueryTokens, contentTokens);
 
-            let metadataRelevanceScore = 0;
+            // Enhanced Metadata Relevance Score Calculation
+            let detailedMetadataScore = 0;
             if (item.metadata?.hierarchy && Array.isArray(item.metadata.hierarchy)) {
-                for (const h of item.metadata.hierarchy) {
-                    if (h.text) {
-                        const hierarchyTokens = tokenizeText(h.text, true);
-                        if (hierarchyTokens.some(ht => originalQueryTokens.includes(ht))) {
-                            metadataRelevanceScore = 0.5; // Simple bonus if any keyword matches
-                            break;
-                        }
+                for (const hNode of item.metadata.hierarchy) {
+                    if (hNode.text) {
+                        const hierarchyTextTokens = tokenizeText(hNode.text, true);
+                        const commonKeywords = hierarchyTextTokens.filter(ht => originalQueryTokens.includes(ht));
+                        let levelBonus = 0;
+                        if (hNode.level === 1) levelBonus = 0.3;
+                        else if (hNode.level === 2) levelBonus = 0.2;
+                        else if (hNode.level <= 4) levelBonus = 0.1;
+                        else levelBonus = 0.05;
+                        detailedMetadataScore += commonKeywords.length * levelBonus;
                     }
                 }
             }
-            // Normalize hybrid_score if it's not already 0-1 (assuming it might be, e.g. sum of normalized scores)
-            // For now, assume hybrid_score is on a comparable scale or roughly normalized.
-            // If hybrid_score can be > 1 (e.g. fts_score is unbounded rank), normalization is crucial.
-            // Let's assume for now it's somewhat normalized (e.g. vector_similarity is 0-1, fts_score is also scaled or normalized).
-            // If fts_score is raw rank, this calculation will be skewed.
-            // For this step, proceeding with the assumption that hybrid_score is usable as is.
-            const reranked_score =
-                ( (item.hybrid_score || 0) * W_ORIGINAL_HYBRID_SCORE) +
-                (keywordMatchScore * W_KEYWORD_MATCH_SCORE) +
-                (metadataRelevanceScore * W_METADATA_RELEVANCE_SCORE);
+            if (item.metadata?.source_name) {
+                const sourceNameTokens = tokenizeText(item.metadata.source_name, true);
+                const commonInSource = sourceNameTokens.filter(st => originalQueryTokens.includes(st));
+                detailedMetadataScore += commonInSource.length * 0.1;
+            }
+            // Example for custom metadata (tags) - ensure `custom_metadata` and `tags` exist
+            if (item.metadata?.custom_metadata && Array.isArray(item.metadata.custom_metadata.tags)) {
+                 const tagTokens = item.metadata.custom_metadata.tags.flatMap(tag => tokenizeText(String(tag), true)); // Ensure tag is string
+                 const commonInTags = tagTokens.filter(tt => originalQueryTokens.includes(tt));
+                 detailedMetadataScore += commonInTags.length * 0.15;
+            }
+            item.metadataRelevanceScore = detailedMetadataScore; // Store the detailed score for logging/debugging
 
-            return { ...item, keywordMatchScore, metadataRelevanceScore, reranked_score };
+            // Default to 0.5 (sigmoid(0)) if not scored by cross-encoder, implying neutral contribution
+            const itemCrossEncoderScoreNormalized = item.cross_encoder_score_normalized !== undefined
+                ? item.cross_encoder_score_normalized
+                : sigmoid(0);
+
+            const reranked_score =
+                ((item.hybrid_score || 0) * W_ORIGINAL_HYBRID_SCORE) +
+                (keywordMatchScore * W_KEYWORD_MATCH_SCORE) + // keywordMatchScore is already on the item
+                (item.metadataRelevanceScore * W_METADATA_RELEVANCE_SCORE) + // Use the new detailed score
+                (itemCrossEncoderScoreNormalized * W_CROSS_ENCODER_SCORE);
+
+            // Ensure keywordMatchScore is added to the item if it wasn't already (it should be from prior logic)
+            item.keywordMatchScore = keywordMatchScore;
+            return { ...item, cross_encoder_score_normalized: itemCrossEncoderScoreNormalized, reranked_score };
         });
 
         rerankedList.sort((a, b) => b.reranked_score - a.reranked_score);
 
         if (DEBUG_RERANKING) {
-            console.log("(DB Service DEBUG) Top results after re-ranking:");
-            rerankedList.slice(0, 5).forEach(r => {
-                console.log(`  ID: ${r.id}, Original Hybrid: ${r.hybrid_score?.toFixed(4)}, Keyword: ${r.keywordMatchScore?.toFixed(4)}, Meta: ${r.metadataRelevanceScore?.toFixed(4)}, Reranked: ${r.reranked_score?.toFixed(4)}`);
-                console.log(`    Content: ${r.content.substring(0,100)}...`);
+            console.log("(DB Service DEBUG) Top results after final re-ranking (incl. Cross-Encoder & detailed Meta):");
+            rerankedList.slice(0, finalLimit + 5).forEach(r => { // Log a bit more to see effect
+                console.log(`  ID: ${r.id}, Reranked: ${r.reranked_score?.toFixed(4)}, Hybrid: ${r.hybrid_score?.toFixed(4)}, CE_norm: ${r.cross_encoder_score_normalized?.toFixed(4)}, KW: ${r.keywordMatchScore?.toFixed(4)}, MetaDetailed: ${r.metadataRelevanceScore?.toFixed(4)}`);
+                // console.log(`    Content: ${r.content.substring(0,60)}...`);
             });
         }
 
-        const finalResults = rerankedList.slice(0, finalLimit);
+        const finalResults = rerankedList.slice(0, finalLimit); // Apply final limit
         const finalResultsMapped = finalResults.map(r => ({
             id: r.id,
             content: r.content,
@@ -433,20 +652,49 @@ Processed Query: "${processedQueryText.substring(0,100)}..."`);
             reranked_score: r.reranked_score,
             hybrid_score: r.hybrid_score,
             keywordMatchScore: r.keywordMatchScore,
-            metadataRelevanceScore: r.metadataRelevanceScore
+            metadataRelevanceScore: r.metadataRelevanceScore,
+            cross_encoder_score_normalized: r.cross_encoder_score_normalized // For potential logging/analysis
         }));
 
+        console.log(`(DB Service) Búsqueda híbrida de chunks completada. Resultados finales después de todos los re-rankings: ${finalResultsMapped.length}`);
 
-        console.log(`(DB Service) Búsqueda híbrida completada. Resultados finales después de re-ranking: ${finalResultsMapped.length}`);
+        // --- Proposition Search ---
+        let propositionResults = [];
+        if (allEmbeddings.length > 0 && allEmbeddings[0].embedding) { // Check if primary embedding exists (original query or first successful)
+            const primaryQueryEmbedding = allEmbeddings[0].embedding; // Use the first available embedding (could be original, HyDE, or first reformulation)
+            console.log(`(DB Service) Iniciando búsqueda de proposiciones para cliente ${clientId} con embedding de: "${allEmbeddings[0].query.substring(0,50)}..."`);
+            try {
+                const { data: propData, error: propSearchError } = await supabase.rpc('proposition_vector_search', {
+                    client_id_param: clientId,
+                    query_embedding: primaryQueryEmbedding,
+                    match_threshold: PROPOSITION_MATCH_THRESHOLD,
+                    match_count: PROPOSITION_SEARCH_LIMIT
+                });
+
+                if (propSearchError) {
+                    console.error("(DB Service) Error en RPC proposition_vector_search:", propSearchError.message);
+                } else {
+                    propositionResults = propData || [];
+                    console.log(`(DB Service) Búsqueda de proposiciones encontró ${propositionResults.length} resultados.`);
+                }
+            } catch (rpcError) {
+                 console.error("(DB Service) Excepción durante RPC proposition_vector_search:", rpcError.message);
+            }
+        } else {
+            console.log("(DB Service) No hay embedding primario disponible, saltando búsqueda de proposiciones.");
+        }
+        // --- End Proposition Search ---
+
         return {
             results: finalResultsMapped, // These are the top N results after re-ranking
+            propositionResults: propositionResults, // Results from proposition search
             searchParams: searchParamsForLog,
-            queriesEmbedded: allQueriesToEmbed, // List of query strings that were embedded
+            queriesEmbedded: queriesEmbeddedForLog, // Use the new log that includes HyDE placeholder
             rawRankedResultsForLog: rerankedList // Provide the full list before final slicing for logging purposes
         };
     } catch (error) {
         console.error(`(DB Service) Error general durante la búsqueda híbrida para cliente ${clientId}:`, error.message, error.stack);
-        return { results: [], searchParams: searchParamsForLog, queriesEmbedded: [queryText], rawRankedResultsForLog: [] }; // Return empty results on error
+        return { results: [], propositionResults: [], searchParams: searchParamsForLog, queriesEmbedded: [processedQueryText], rawRankedResultsForLog: [] }; // Return empty results on error
     }
 };
 
