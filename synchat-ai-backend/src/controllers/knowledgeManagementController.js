@@ -317,3 +317,95 @@ export const deleteSource = async (req, res) => {
     res.status(500).json({ message: 'Un error inesperado ocurrió en el servidor durante la eliminación.', error: error.message });
   }
 };
+
+// 6. Update Knowledge Source Metadata
+export const updateSourceMetadata = async (req, res) => {
+  const { source_id } = req.params;
+  const clientId = req.user.id; // Assuming authMiddleware populates req.user with client_id as id
+
+  if (!source_id) {
+    return res.status(400).json({ message: 'Source ID is required in URL parameters.' });
+  }
+  if (!clientId) {
+    // This should ideally be caught by authMiddleware
+    return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
+  }
+
+  // Whitelist fields that can be updated from the request body
+  const { reingest_frequency, custom_title } = req.body;
+  const metadataUpdates = {};
+
+  if (reingest_frequency !== undefined) {
+    metadataUpdates.reingest_frequency = reingest_frequency;
+  }
+  if (custom_title !== undefined) {
+    metadataUpdates.custom_title = custom_title;
+  }
+  // Add any other allowed fields here, e.g. next_reingest_at if it's directly updatable
+
+  if (Object.keys(metadataUpdates).length === 0) {
+    return res.status(400).json({ message: 'No valid fields provided for update. Allowed fields: reingest_frequency, custom_title.' });
+  }
+
+  console.log(`(Controller) Updating metadata for source_id: ${source_id}, client_id: ${clientId}. Updates:`, metadataUpdates);
+
+  try {
+    const { data, error, status } = await db.updateKnowledgeSourceMetadata(clientId, source_id, metadataUpdates);
+
+    if (error) {
+      // databaseService now returns a status for certain errors
+      const statusCode = status || (error.message.includes('not found') ? 404 : 500);
+      console.error(`(Controller) Error updating source metadata: ${error.message || error}`);
+      return res.status(statusCode).json({ message: error.message || 'Failed to update knowledge source metadata.' });
+    }
+
+    res.status(200).json({ message: 'Knowledge source metadata updated successfully.', data });
+
+  } catch (err) {
+    // Catch unexpected errors from the service call itself, though most should be handled by returned {error}
+    console.error(`(Controller) Unexpected exception updating source metadata for source_id ${source_id}:`, err);
+    res.status(500).json({ message: 'An unexpected server error occurred.', error: err.message });
+  }
+};
+
+// 7. Get Paginated Chunks for a Knowledge Source
+export const getKnowledgeSourceChunks = async (req, res) => {
+  const { source_id } = req.params;
+  const clientId = req.user.id;
+
+  let page = parseInt(req.query.page, 10);
+  let pageSize = parseInt(req.query.pageSize, 10);
+
+  if (isNaN(page) || page < 1) {
+    page = 1;
+  }
+  if (isNaN(pageSize) || pageSize < 1 || pageSize > 200) { // Max pageSize to prevent abuse
+    pageSize = 50;
+  }
+
+  if (!source_id) {
+    return res.status(400).json({ message: 'Source ID is required in URL parameters.' });
+  }
+  if (!clientId) {
+    return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
+  }
+
+  console.log(`(Controller) Fetching chunks for source_id: ${source_id}, client_id: ${clientId}, page: ${page}, pageSize: ${pageSize}`);
+
+  try {
+    const { data, error, status } = await db.getChunksForSource(clientId, source_id, page, pageSize);
+
+    if (error) {
+      const statusCode = status || (error.message.includes('not found') ? 404 : 500);
+      console.error(`(Controller) Error fetching chunks for source ${source_id}: ${error.message || error}`);
+      return res.status(statusCode).json({ message: error.message || 'Failed to fetch chunks.' });
+    }
+
+    // Data is expected to be in the format { chunks, totalCount, page, pageSize }
+    res.status(200).json(data);
+
+  } catch (err) {
+    console.error(`(Controller) Unexpected exception fetching chunks for source_id ${source_id}:`, err);
+    res.status(500).json({ message: 'An unexpected server error occurred while fetching chunks.', error: err.message });
+  }
+};

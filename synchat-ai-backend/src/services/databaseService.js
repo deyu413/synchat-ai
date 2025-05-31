@@ -635,6 +635,141 @@ export const getUnprocessedRagLogsForClient = async (clientId, limit = 1000) => 
     }
 };
 
+export const updateKnowledgeSourceMetadata = async (clientId, sourceId, metadataUpdates) => {
+    if (!clientId || !sourceId) {
+        console.error('(DB Service) clientId and sourceId are required for updateKnowledgeSourceMetadata.');
+        return { error: 'Client ID and Source ID are required.', status: 400 };
+    }
+    if (!metadataUpdates || Object.keys(metadataUpdates).length === 0) {
+        return { error: 'No metadata updates provided.', status: 400 };
+    }
+
+    const allowedFields = ['reingest_frequency', 'custom_title' /*, 'next_reingest_at' */]; // Add other fields as needed
+    const updateObject = {};
+    for (const key in metadataUpdates) {
+        if (allowedFields.includes(key) && metadataUpdates[key] !== undefined) {
+            updateObject[key] = metadataUpdates[key];
+        }
+    }
+
+    if (Object.keys(updateObject).length === 0) {
+        return { error: 'No valid fields provided for update. Allowed fields are: ' + allowedFields.join(', '), status: 400 };
+    }
+
+    // Potentially add logic here if 'reingest_frequency' changes, e.g., to update 'next_reingest_at'
+    // For example, if frequency is set to 'manual', next_reingest_at might be set to null.
+    // If set to 'daily', calculate Date.now() + 1 day. This logic can be complex and might live
+    // in a dedicated scheduling service or be triggered by a DB hook/function.
+    // For now, this service just updates the fields passed after filtering.
+
+    try {
+        const { data, error } = await supabase
+            .from('knowledge_sources')
+            .update(updateObject)
+            .eq('id', sourceId)
+            .eq('client_id', clientId) // Ensure client owns this source
+            .select()
+            .single();
+
+        if (error) {
+            if (error.code === 'PGRST116' || error.details?.includes('0 rows')) { // PostgREST code for "No rows found"
+                console.warn(`(DB Service) Knowledge source not found or client ${clientId} does not own source ${sourceId}.`);
+                return { error: 'Knowledge source not found or access denied.', status: 404 };
+            }
+            console.error(`(DB Service) Error updating knowledge source metadata for source ${sourceId}, client ${clientId}:`, error);
+            return { error: error.message, status: 500 };
+        }
+
+        return { data, error: null }; // Return data on success
+
+    } catch (err) {
+        console.error(`(DB Service) Exception in updateKnowledgeSourceMetadata for source ${sourceId}, client ${clientId}:`, err);
+        return { error: 'An unexpected error occurred while updating knowledge source metadata.', status: 500 };
+    }
+};
+
+export const getChunksForSource = async (clientId, sourceId, page = 1, pageSize = 50) => {
+    if (!clientId || !sourceId) {
+        return { error: 'Client ID and Source ID are required.', status: 400 };
+    }
+    if (isNaN(parseInt(page)) || parseInt(page) < 1) {
+        page = 1;
+    } else {
+        page = parseInt(page);
+    }
+    if (isNaN(parseInt(pageSize)) || parseInt(pageSize) < 1) {
+        pageSize = 50;
+    } else {
+        pageSize = parseInt(pageSize);
+    }
+
+    const offset = (page - 1) * pageSize;
+
+    try {
+        // Verify ownership and existence of the source
+        const { data: sourceData, error: sourceError } = await supabase
+            .from('knowledge_sources')
+            .select('id')
+            .eq('id', sourceId)
+            .eq('client_id', clientId)
+            .single();
+
+        if (sourceError || !sourceData) {
+            console.warn(`(DB Service) Source ${sourceId} not found for client ${clientId} or error:`, sourceError);
+            return { error: 'Source not found or access denied.', status: 404 };
+        }
+
+        // Fetch chunks for the source
+        const { data: chunks, error: chunksError } = await supabase
+            .from('knowledge_base')
+            .select('id, content, metadata, embedding, created_at', { count: 'exact' }) // Request total count here
+            .eq('knowledge_source_id', sourceId)
+            .eq('client_id', clientId)
+            .order('metadata->>chunk_index', { ascending: true, nullsFirst: false }) // Ensure numeric sort if chunk_index is number-like string
+            // For true numeric sort if metadata->>'chunk_index' is actually a number stored as text:
+            // .order(supabase.sql`(metadata->>'chunk_index')::int`, { ascending: true, nullsFirst: false })
+            // However, direct casting in .order() might not be universally supported or straightforward with Supabase JS client.
+            // Simpler to rely on alphanumeric sort of stringified numbers if they are padded, or handle sorting client-side if complex.
+            // For now, assuming chunk_index is stored in a way that string sort is acceptable or it's handled.
+            // If chunk_index is guaranteed numeric and stored as a number in JSONB, Supabase might sort it numerically by default.
+            .limit(pageSize)
+            .range(offset, offset + pageSize - 1);
+
+        if (chunksError) {
+            console.error(`(DB Service) Error fetching chunks for source ${sourceId}, client ${clientId}:`, chunksError);
+            return { error: chunksError.message, status: 500 };
+        }
+
+        // Get total count - Supabase returns count as part of the query if { count: 'exact' } is passed
+        // However, the above query returns the count of the current page. We need the total count for the source.
+        const { count: totalCount, error: countError } = await supabase
+            .from('knowledge_base')
+            .select('id', { count: 'exact', head: true })
+            .eq('knowledge_source_id', sourceId)
+            .eq('client_id', clientId);
+
+        if (countError) {
+             console.error(`(DB Service) Error fetching total chunk count for source ${sourceId}, client ${clientId}:`, countError);
+            // Not fatal, but pagination info will be incomplete
+        }
+
+        return {
+            data: {
+                chunks: chunks || [],
+                totalCount: totalCount || 0,
+                page,
+                pageSize
+            },
+            error: null
+        };
+
+    } catch (err) {
+        console.error(`(DB Service) Exception in getChunksForSource for source ${sourceId}, client ${clientId}:`, err);
+        return { error: 'An unexpected error occurred while fetching chunks.', status: 500 };
+    }
+};
+
+
 export const getClientConversations = async (clientId, statusFilters = [], page = 1, pageSize = 20) => { /* ... */ };
 
 export const getMessagesForConversation = async (conversationId, clientId) => {
