@@ -261,6 +261,77 @@
                     <li class="placeholder-item">Cargando sugerencias...</li>
                 </ul>
             </div>
+
+            <hr> <!-- Separator -->
+
+            <div class="analytics-subsection">
+                <h3>Distribución del Sentimiento de Mensajes de Usuario</h3>
+                <div id="sentimentDistributionChartContainer" style="max-width: 450px; margin: 20px auto;">
+                    <canvas id="sentimentPieChart"></canvas>
+                </div>
+                <table id="sentimentDistributionTable" class="styled-table" style="margin-top: 20px; width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Sentimiento</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Cantidad de Mensajes</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Porcentaje</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sentimentDistributionTableBody">
+                        <!-- Rows will be added by JS: e.g., -->
+                        <!-- <tr><td style="border: 1px solid #ddd; padding: 8px;">Positivo</td><td style="border: 1px solid #ddd; padding: 8px;">0</td><td style="border: 1px solid #ddd; padding: 8px;">0%</td></tr> -->
+                    </tbody>
+                </table>
+                <p id="sentimentDataLoadingMsg" style="text-align:center; padding:10px; display:none;">Cargando datos de sentimiento...</p>
+            </div>
+
+            <hr> <!-- Separator -->
+
+            <div class="analytics-subsection">
+                <h3>Temas Principales de Conversación</h3>
+                <div id="topicAnalyticsChartContainer" style="min-height: 200px; text-align: center; padding:10px;">
+                    <!-- Chart or dynamic list will be rendered here by JS -->
+                     <p id="topicDataLoadingMsg" style="text-align:center; padding:10px; display:none;">Cargando datos de temas...</p>
+                </div>
+                <table id="topicAnalyticsTable" class="styled-table" style="display:none; margin-top: 20px; width: 100%; border-collapse: collapse;"> <!-- Initially hidden if chart is primary -->
+                    <thead>
+                        <tr>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Tema Identificado</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Número de Consultas</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Consultas de Ejemplo</th>
+                        </tr>
+                    </thead>
+                    <tbody id="topicAnalyticsTableBody">
+                        <!-- Rows will be added by JS -->
+                    </tbody>
+                </table>
+                <p><em>El análisis detallado de temas estará disponible próximamente. Los datos mostrados son preliminares o placeholders.</em></p>
+            </div>
+
+            <hr> <!-- Separator -->
+
+            <div class="analytics-subsection">
+                <h3>Rendimiento de Fuentes de Conocimiento (Feedback)</h3>
+                <div id="sourcePerformanceChartContainer" style="min-height: 200px; text-align: center; padding:10px;">
+                    <!-- Chart or dynamic list will be rendered here by JS -->
+                    <p id="sourcePerformanceDataLoadingMsg" style="text-align:center; padding:10px; display:none;">Cargando datos de rendimiento...</p>
+                </div>
+                <table id="sourcePerformanceTable" class="styled-table" style="display:none; margin-top: 20px; width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">ID del Chunk de Conocimiento</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Feedback Positivo</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Feedback Negativo</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Fuente Original (si disponible)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sourcePerformanceTableBody">
+                        <!-- Rows will be added by JS -->
+                    </tbody>
+                </table>
+                <p><em>El análisis detallado del rendimiento de fuentes de conocimiento basado en feedback estará disponible próximamente.</em></p>
+            </div>
+
         </section>
         
         <!-- RAG Playground Section -->
@@ -297,6 +368,48 @@
 
     </div>
     <div id="errorMessageDashboard" style="color: red; padding: 10px; text-align: center;"></div>
+
+    <!-- Inbox Feedback Modal -->
+    <div id="inboxFeedbackModal" class="modal" style="display:none; position:fixed; z-index:1001; left:0; top:0; width:100%; height:100%; overflow:auto; background-color:rgba(0,0,0,0.4);">
+        <div class="modal-content" style="background-color:#fefefe; margin:10% auto; padding:20px; border:1px solid #888; width:80%; max-width:500px; border-radius:8px; position:relative;">
+            <span id="closeInboxFeedbackModalBtn" class="close-modal-btn" style="color:#aaa; float:right; font-size:28px; font-weight:bold; cursor:pointer;">&times;</span>
+            <h4>Proporcionar Feedback sobre la Respuesta</h4>
+            <input type="hidden" id="feedbackMessageIdStore">
+            <input type="hidden" id="feedbackRagLogIdStore">
+            <div style="margin-bottom: 15px;">
+                <p>¿Cómo calificarías esta respuesta?</p>
+                <button id="feedbackPositiveBtn" data-rating="1" style="background-color: #5cb85c; color:white; border:none; padding:10px 15px; border-radius:4px; cursor:pointer; margin-right:10px;">👍 Positivo</button>
+                <button id="feedbackNegativeBtn" data-rating="-1" style="background-color: #d9534f; color:white; border:none; padding:10px 15px; border-radius:4px; cursor:pointer;">👎 Negativo</button>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="feedbackComment" style="display:block; margin-bottom:5px; font-weight:bold;">Comentario (opcional):</label>
+                <textarea id="feedbackComment" rows="3" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px; box-sizing: border-box;"></textarea>
+            </div>
+            <button id="submitInboxFeedbackBtn" style="background-color: #3B4018; color:white; padding:10px 20px; border:none; border-radius:4px; cursor:pointer;">Enviar Feedback</button>
+        </div>
+    </div>
+
+    <!-- RAG Playground Feedback Modal -->
+    <div id="playgroundFeedbackModal" class="modal" style="display:none; position:fixed; z-index:1002; left:0; top:0; width:100%; height:100%; overflow:auto; background-color:rgba(0,0,0,0.4);">
+        <div class="modal-content" style="background-color:#fefefe; margin:10% auto; padding:20px; border:1px solid #888; width:80%; max-width:500px; border-radius:8px; position:relative;">
+            <span id="closePlaygroundFeedbackModalBtn" class="close-modal-btn" style="color:#aaa; float:right; font-size:28px; font-weight:bold; cursor:pointer;">&times;</span>
+            <h4 id="playgroundFeedbackModalTitle">Proporcionar Feedback</h4>
+            <input type="hidden" id="playgroundFeedbackTypeStore">
+            <input type="hidden" id="playgroundItemIdStore"> <!-- For chunk_id if applicable -->
+            <input type="hidden" id="playgroundRagLogIdStore">
+            <div style="margin-bottom: 15px;">
+                <p>Calificación:</p>
+                <button id="playgroundFeedbackPositiveBtn" data-rating="1" style="background-color: #5cb85c; color:white; border:none; padding:10px 15px; border-radius:4px; cursor:pointer; margin-right:10px;">👍 Positivo</button>
+                <button id="playgroundFeedbackNegativeBtn" data-rating="-1" style="background-color: #d9534f; color:white; border:none; padding:10px 15px; border-radius:4px; cursor:pointer;">👎 Negativo</button>
+                <!-- More granular rating (e.g., 1-5 stars) could be added here -->
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label for="playgroundFeedbackComment" style="display:block; margin-bottom:5px; font-weight:bold;">Comentario (opcional):</label>
+                <textarea id="playgroundFeedbackComment" rows="3" style="width:100%; padding:8px; border:1px solid #ccc; border-radius:4px; box-sizing: border-box;"></textarea>
+            </div>
+            <button id="submitPlaygroundFeedbackBtn" style="background-color: #3B4018; color:white; padding:10px 20px; border:none; border-radius:4px; cursor:pointer;">Enviar Feedback</button>
+        </div>
+    </div>
 
     <script type="module" src="src/dashboard.js"></script>
 </body>

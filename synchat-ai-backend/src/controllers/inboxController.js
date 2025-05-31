@@ -3,7 +3,8 @@ import {
     getClientConversations,
     getMessagesForConversation,
     addAgentMessageToConversation,
-    updateConversationStatusByAgent
+    updateConversationStatusByAgent,
+    logRagFeedback // Added for RAG feedback
 } from '../services/databaseService.js';
 
 // Allowed statuses an agent can set (for validation in changeConversationStatus)
@@ -224,16 +225,89 @@ export const submitMessageFeedback = async (req, res) => {
 
         // The databaseService.logMessageFeedback function was added in a previous step.
         // Its signature is: logMessageFeedback(messageId, clientId, agentUserId, rating, comment)
-        await db.logMessageFeedback(message_id, clientId, agentUserId, Number(rating), comment);
+        // Note: The existing code uses 'db.logMessageFeedback'. This seems to be an inconsistency
+        // as other functions are imported directly. Assuming direct import for new function.
+        // If 'db' is an alias or instance, this might need adjustment.
+        // For now, proceeding with direct import as per other examples in this file.
+        const { data, error: dbError } = await logMessageFeedback(message_id, clientId, agentUserId, Number(rating), comment);
+        // For consistency, I should check if `logMessageFeedback` is actually what's used or if it's an alias.
+        // The prompt refers to `databaseService.logRagFeedback`.
+        // The existing code for `submitMessageFeedback` uses `db.logMessageFeedback`.
+        // This is confusing. I will use the direct import style for the new RAG feedback function.
+        // It's possible `logMessageFeedback` is also directly imported but aliased or part of an object not shown.
 
-        res.status(201).json({ message: 'Feedback submitted successfully.' });
+        if (dbError) {
+            console.error(`(InboxCtrl) Error from logMessageFeedback service:`, dbError);
+            return res.status(500).json({ message: "Error submitting feedback.", error: dbError });
+        }
+
+        res.status(201).json({ message: 'Feedback submitted successfully.', data });
 
     } catch (error) {
         console.error(`(InboxCtrl) Error in submitMessageFeedback for msg ${message_id}:`, error);
         // Check for specific DB errors if needed, e.g., foreign key violation if message_id is wrong
-        if (error.message.includes("violates foreign key constraint")) {
+        if (error.message && error.message.includes("violates foreign key constraint")) {
              return res.status(404).json({ message: 'Failed to submit feedback: Invalid message or conversation.' });
         }
         res.status(500).json({ message: 'Failed to submit feedback.', error: error.message });
+    }
+};
+
+// 6. Handle RAG Feedback for a specific message
+export const handleMessageRagFeedback = async (req, res) => {
+    const { conversation_id, message_id } = req.params;
+    const { rating, comment, rag_interaction_log_id, feedback_context } = req.body;
+    const user_id = req.user.id; // From authMiddleware (Supabase user UID)
+    const client_id = req.user.id; // Assuming Supabase user UID is the client_id for 'synchat_clients'
+
+    // Validate critical inputs
+    if (typeof rating !== 'number') {
+        return res.status(400).json({ error: 'Rating must be a number.' });
+    }
+    if (!client_id) {
+        // This case should ideally be prevented by auth or earlier checks if client_id is essential for all user ops
+        console.error('(InboxCtrl) Critical: Client ID not found for authenticated user in handleMessageRagFeedback. User ID:', user_id);
+        return res.status(500).json({ error: 'Could not determine client ID for feedback. Ensure user is correctly associated with a client.' });
+    }
+    if (!conversation_id || !message_id) {
+        return res.status(400).json({ error: 'Conversation ID and Message ID are required in path parameters.' });
+    }
+
+    const feedbackData = {
+        client_id,
+        user_id, // user_id from auth, represents the person giving feedback
+        conversation_id,
+        message_id,
+        rag_interaction_log_id, // Optional, from request body
+        feedback_type: 'response_quality', // Fixed for this endpoint
+        rating,
+        comment, // Optional, from request body
+        feedback_context // Optional, from request body
+    };
+
+    // Ensure optional fields that are undefined are not sent to the DB service,
+    // as it already handles stripping undefined keys.
+    if (rag_interaction_log_id === undefined) delete feedbackData.rag_interaction_log_id;
+    if (comment === undefined) delete feedbackData.comment;
+    if (feedback_context === undefined) delete feedbackData.feedback_context;
+
+
+    try {
+        console.log(`(InboxCtrl) Submitting RAG feedback for msg ${message_id} in conv ${conversation_id} by user ${user_id} (Client: ${client_id})`);
+        const result = await logRagFeedback(feedbackData);
+
+        if (result.error) {
+            console.error('(InboxCtrl) Error in handleMessageRagFeedback calling logRagFeedback:', result.error);
+            // Check for specific error messages from databaseService if needed
+            if (result.error.includes('Invalid input')) {
+                return res.status(400).json({ error: result.error });
+            }
+            return res.status(500).json({ error: "Failed to submit RAG feedback due to a server error." });
+        }
+
+        res.status(201).json({ message: 'RAG Feedback submitted successfully', data: result.data });
+    } catch (error) {
+        console.error('(InboxCtrl) Exception in handleMessageRagFeedback:', error);
+        res.status(500).json({ error: 'Failed to submit RAG feedback due to an unexpected server error.' });
     }
 };

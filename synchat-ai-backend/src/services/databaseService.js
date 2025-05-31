@@ -79,7 +79,81 @@ export const getAllActiveClientIds = async () => { /* ... */ }; // Keep only one
 // export const getAllActiveClientIds = async () => { /* ... using is_active ... */ };
 export const getChunkSampleForSource = async (clientId, sourceId, limit = 5) => { /* ... */ };
 export const getConversationHistory = async (conversationId) => { /* ... */ };
-export const saveMessage = async (conversationId, sender, textContent) => { /* ... */ };
+
+export const saveMessage = async (conversationId, sender, textContent) => {
+    if (!conversationId || !sender || typeof textContent !== 'string') {
+        console.error('(DB Service) Invalid parameters for saveMessage.');
+        return { error: 'Invalid parameters: conversationId, sender, and textContent are required.' };
+    }
+
+    const messageData = {
+        conversation_id: conversationId,
+        sender: sender,
+        content: textContent,
+        // timestamp is defaulted by DB
+        sentiment: null // Default to null
+    };
+
+    if (sender === 'user' && textContent && textContent.trim() !== '') {
+        try {
+            console.log(`(DB Service) Performing sentiment analysis for message content: "${textContent.substring(0, 50)}..."`);
+            const systemPrompt = "Classify the sentiment of the following user message as positive, negative, or neutral. Respond with only one word: positive, negative, or neutral.";
+            const userMessageForSentiment = `Message: "${textContent}"`;
+
+            // getChatCompletion is imported from './openaiService.js'
+            const sentimentResponse = await getChatCompletion(
+                [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessageForSentiment }],
+                'gpt-3.5-turbo', // Using a standard, cost-effective model
+                0.2, // Low temperature for classification
+                10 // Max tokens for a single word response
+            );
+
+            if (sentimentResponse) {
+                let rawSentiment = sentimentResponse.trim().toLowerCase();
+                // Additional cleaning for common LLM variations like "Sentiment: positive"
+                if (rawSentiment.startsWith("sentiment:")) {
+                    rawSentiment = rawSentiment.substring("sentiment:".length).trim();
+                }
+                // Remove punctuation if any, e.g. "positive." -> "positive"
+                rawSentiment = rawSentiment.replace(/[.,!?;]$/, '');
+
+                if (['positive', 'negative', 'neutral'].includes(rawSentiment)) {
+                    messageData.sentiment = rawSentiment;
+                    console.log(`(DB Service) Sentiment classified as: ${rawSentiment}`);
+                } else {
+                    console.warn(`(DB Service) Unexpected sentiment response: "${sentimentResponse}". Original message: "${textContent.substring(0,50)}..."`);
+                    // messageData.sentiment remains null
+                }
+            } else {
+                console.warn(`(DB Service) Sentiment analysis returned no response. Original message: "${textContent.substring(0,50)}..."`);
+                // messageData.sentiment remains null
+            }
+        } catch (sentimentError) {
+            console.error('(DB Service) Error getting sentiment for message:', sentimentError);
+            // messageData.sentiment remains null, ensuring message saving is not blocked
+        }
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('messages')
+            .insert([messageData])
+            .select()
+            .single(); // Assuming we want the newly created message back
+
+        if (error) {
+            console.error('(DB Service) Error saving message:', error);
+            return { error: error.message };
+        }
+        console.log(`(DB Service) Message saved successfully with ID: ${data?.message_id}, Sentiment: ${messageData.sentiment}`);
+        return { data };
+
+    } catch (err) {
+        console.error('(DB Service) General exception in saveMessage:', err);
+        return { error: 'An unexpected error occurred while saving the message.' };
+    }
+};
+
 export const createConversation = async (clientId) => { /* ... */ };
 
 export const hybridSearch = async (clientId, queryText, conversationId, options = {}, returnPipelineDetails = false) => {
@@ -364,7 +438,153 @@ const SPANISH_ABBREVIATIONS = { /* ... */ };
 function preprocessTextForEmbedding(text) { /* ... */ }
 export const getConversationDetails = async (conversationId) => { /* ... */ };
 export const logAiResolution = async (clientId, conversationId, billingCycleId, detailsJson) => { /* ... */ };
-export const logRagInteraction = async (logData) => { /* ... */ };
+
+export const logRagInteraction = async (logData) => {
+    // Ensure required fields for the initial log are present
+    if (!logData || !logData.client_id || !logData.user_query) { // Assuming user_query is essential for logging interaction
+        console.error('(DB Service) Invalid logData for RAG interaction: client_id and user_query are required.', logData);
+        return { error: 'Invalid logData: client_id and user_query are required for RAG interaction log.' };
+    }
+
+    const logEntry = {
+        client_id: logData.client_id,
+        conversation_id: logData.conversation_id, // Optional
+        user_query: logData.user_query,
+        retrieved_context: logData.retrieved_context, // Optional
+        final_prompt_to_llm: logData.final_prompt_to_llm, // Optional
+        llm_response: logData.llm_response, // Optional
+        // response_timestamp is defaulted by DB
+        query_embeddings_used: logData.query_embeddings_used, // Optional (this is for RAG pipeline, not the user_query embedding itself)
+        vector_search_params: logData.vector_search_params, // Optional
+        was_escalated: logData.was_escalated || false, // Default to false
+        // query_embedding will be added in a subsequent update step
+    };
+
+    Object.keys(logEntry).forEach(key => {
+        if (logEntry[key] === undefined) {
+            delete logEntry[key];
+        }
+    });
+
+    try {
+        const { data: insertedData, error: insertError } = await supabase
+            .from('rag_interaction_logs')
+            .insert([logEntry])
+            .select()
+            .single(); // Assuming we want the inserted row, including its log_id
+
+        if (insertError) {
+            console.error('(DB Service) Error logging RAG interaction (initial insert):', insertError);
+            return { error: insertError.message };
+        }
+
+        if (!insertedData || !insertedData.log_id) {
+            console.error('(DB Service) RAG interaction log insert did not return data or log_id.');
+            return { error: 'Failed to retrieve log_id after insert.' };
+        }
+
+        const log_id = insertedData.log_id;
+
+        // Now, generate and update the query_embedding (non-blocking for the return)
+        if (logEntry.user_query) {
+            // Fire-and-forget style for embedding update
+            (async () => {
+                try {
+                    console.log(`(DB Service) Generating embedding for user_query (log_id: ${log_id}): "${logEntry.user_query.substring(0, 50)}..."`);
+                    // getEmbedding is imported from './embeddingService.js'
+                    const embedding = await getEmbedding(logEntry.user_query);
+                    // embeddingService.getEmbedding returns the vector directly or throws an error.
+
+                    if (embedding) {
+                        const { error: updateError } = await supabase
+                            .from('rag_interaction_logs')
+                            .update({ query_embedding: embedding })
+                            .eq('log_id', log_id);
+
+                        if (updateError) {
+                            console.error(`(DB Service) Error updating rag_interaction_logs with query_embedding for log_id ${log_id}:`, updateError);
+                        } else {
+                            console.log(`(DB Service) Successfully updated log_id ${log_id} with query_embedding.`);
+                        }
+                    } else {
+                        // This case might not be reachable if getEmbedding throws on failure,
+                        // but included for robustness if it could return null/undefined.
+                        console.error(`(DB Service) Failed to generate query embedding for log_id ${log_id} (embedding was null/undefined).`);
+                    }
+                } catch (embeddingError) {
+                    console.error(`(DB Service) Exception during query embedding or update for log_id ${log_id}:`, embeddingError);
+                }
+            })();
+        }
+        // Return the initially inserted data (without waiting for embedding update)
+        return { data: insertedData, rag_interaction_log_id: log_id };
+
+    } catch (err) {
+        console.error('(DB Service) General exception in logRagInteraction:', err);
+        return { error: 'An unexpected error occurred while logging RAG interaction.' };
+    }
+};
+
+export const logRagFeedback = async (feedbackData) => {
+    // 1. Validate input
+    if (!feedbackData || !feedbackData.client_id || !feedbackData.feedback_type || typeof feedbackData.feedback_type !== 'string' || typeof feedbackData.rating !== 'number') {
+        console.error('(DB Service) Invalid feedbackData: client_id (string), feedback_type (string), and rating (number) are required.', feedbackData);
+        return { error: 'Invalid input: client_id, feedback_type, and a numeric rating are required.' };
+    }
+
+    const {
+        client_id,
+        user_id,
+        conversation_id,
+        message_id,
+        rag_interaction_log_id,
+        knowledge_base_chunk_id,
+        // knowledge_proposition_id, // This was commented out in the DB schema
+        feedback_type,
+        rating,
+        comment,
+        feedback_context
+    } = feedbackData;
+
+    const insertObject = {
+        client_id,
+        user_id,
+        conversation_id,
+        message_id,
+        rag_interaction_log_id,
+        knowledge_base_chunk_id,
+        // knowledge_proposition_id, // Commented out in DB
+        feedback_type,
+        rating,
+        comment,
+        feedback_context
+    };
+
+    // Remove undefined properties to rely on database defaults or allow NULLs
+    Object.keys(insertObject).forEach(key => {
+        if (insertObject[key] === undefined) {
+            delete insertObject[key];
+        }
+    });
+
+    try {
+        const { data, error } = await supabase
+            .from('rag_feedback_log')
+            .insert([insertObject])
+            .select();
+
+        if (error) {
+            console.error('(DB Service) Error logging RAG feedback:', error);
+            return { error: error.message };
+        }
+        // .select() returns an array, so return the first element if successful
+        return { data: data && data.length > 0 ? data[0] : null };
+    } catch (err) {
+        console.error('(DB Service) Exception in logRagFeedback:', err);
+        return { error: 'An unexpected error occurred while logging feedback.' };
+    }
+};
+
 export const getClientConversations = async (clientId, statusFilters = [], page = 1, pageSize = 20) => { /* ... */ };
 export const getMessagesForConversation = async (conversationId, clientId) => { /* ... */ };
 export const addAgentMessageToConversation = async (conversationId, clientId, agentUserId, content) => { /* ... */ };
@@ -386,3 +606,48 @@ export const updateConversationStatusByAgent = async (conversationId, clientId, 
 // getClientConversations, getMessagesForConversation, addAgentMessageToConversation, updateConversationStatusByAgent
 
 // (The actual overwrite will use the full existing file content with the hybridSearch modifications)
+
+
+// --- New Analytics Service Functions ---
+
+export const getSentimentDistribution = async (clientId, periodOptions) => {
+    if (!clientId || !periodOptions || !periodOptions.startDate || !periodOptions.endDate) {
+        console.error('(DB Service) Invalid params for getSentimentDistribution: clientId, startDate, and endDate are required.');
+        return { error: 'clientId and periodOptions (with startDate, endDate) are required.' };
+    }
+    try {
+        const { data, error } = await supabase.rpc('get_sentiment_distribution_for_client', {
+            p_client_id: clientId,
+            p_start_date: periodOptions.startDate,
+            p_end_date: periodOptions.endDate
+        });
+
+        if (error) {
+            console.error('(DB Service) Error calling get_sentiment_distribution_for_client RPC:', error);
+            return { error: error.message };
+        }
+        console.log(`(DB Service) Sentiment distribution fetched for client ${clientId}`);
+        return { data };
+    } catch (err) {
+        console.error('(DB Service) Exception in getSentimentDistribution:', err);
+        return { error: 'An unexpected error occurred while fetching sentiment distribution.' };
+    }
+};
+
+export const getTopicAnalytics = async (clientId, periodOptions) => {
+    console.log(`(DB Service) getTopicAnalytics called for client ${clientId} with period:`, periodOptions);
+    // Placeholder: Actual implementation depends on the offline topic analysis.
+    // For now, return empty data or a message, indicating it's not fully implemented.
+    // This data would eventually come from the 'analyzed_conversation_topics' table after a background job populates it.
+    await Promise.resolve(); // To make it behave like an async function if no other async ops are present
+    return { data: [], message: "Topic analytics processing is not yet fully implemented. Data will be available after the next scheduled analysis." };
+};
+
+export const getKnowledgeSourcePerformance = async (clientId, periodOptions) => {
+    console.log(`(DB Service) getKnowledgeSourcePerformance called for client ${clientId} with period:`, periodOptions);
+    // Placeholder: Actual implementation is complex and may require a dedicated RPC or more elaborate queries.
+    // It would involve analyzing rag_feedback_log, potentially joining with knowledge_base and rag_interaction_logs.
+    // For now, return empty data.
+    await Promise.resolve(); // To make it behave like an async function
+    return { data: [], message: "Knowledge source performance analytics are not yet fully implemented." };
+};
