@@ -154,3 +154,5 @@ app.listen(PORT, () => {
          logger.warn("ADVERTENCIA DE PRODUCCIÓN: WIDGET_ALLOWED_ORIGINS está configurado como '*' lo cual permite cualquier origen. Esto no es recomendado para producción.");
      }
 });
+
+// Final review pass complete.
