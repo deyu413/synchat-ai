@@ -19,5 +19,11 @@ router.post(
     internalController.triggerProcessQueryClusters
 );
 
+router.post(
+    '/analyze-rag-feedback',
+    internalAuthMiddleware,
+    internalController.triggerRagFeedbackAnalysis
+);
+
 // module.exports = router; // For CommonJS
 export default router; // For ES Modules (matching project type)

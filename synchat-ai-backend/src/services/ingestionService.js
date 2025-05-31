@@ -880,6 +880,11 @@ export async function ingestSourceById(sourceId, clientId) {
             baseMetadata.source_document_updated_at = source.updated_at;
         }
 
+        // Add category_tags if they exist on the source
+        if (source.category_tags && Array.isArray(source.category_tags) && source.category_tags.length > 0) {
+            baseMetadata.category_tags = source.category_tags;
+        }
+
         // Merge custom_metadata from the source, allowing its properties to be added,
         // but core properties defined above will take precedence if there are conflicts.
         if (source.custom_metadata && typeof source.custom_metadata === 'object') {

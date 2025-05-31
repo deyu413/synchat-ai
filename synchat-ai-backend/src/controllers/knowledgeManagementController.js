@@ -332,7 +332,7 @@ export const updateSourceMetadata = async (req, res) => {
   }
 
   // Whitelist fields that can be updated from the request body
-  const { reingest_frequency, custom_title } = req.body;
+  const { reingest_frequency, custom_title, category_tags } = req.body; // Added category_tags
   const metadataUpdates = {};
 
   if (reingest_frequency !== undefined) {
@@ -341,10 +341,22 @@ export const updateSourceMetadata = async (req, res) => {
   if (custom_title !== undefined) {
     metadataUpdates.custom_title = custom_title;
   }
-  // Add any other allowed fields here, e.g. next_reingest_at if it's directly updatable
+  if (category_tags !== undefined) {
+    // category_tags can be an empty array [] to clear them, or null
+    if (category_tags === null || (Array.isArray(category_tags) && category_tags.every(tag => typeof tag === 'string'))) {
+        metadataUpdates.category_tags = category_tags;
+    } else {
+        // Optional: return a 400 error if category_tags is present but not in a valid format
+        // For now, we simply won't add it to metadataUpdates if it's invalid and not null.
+        // If stricter validation is needed, uncomment the line below:
+        // return res.status(400).json({ message: 'Invalid category_tags format. Must be an array of strings or null.' });
+        console.warn(`(Controller) Invalid category_tags format received for source ${source_id}. It was ignored. Received:`, category_tags);
+    }
+  }
+  // Add any other allowed fields here
 
   if (Object.keys(metadataUpdates).length === 0) {
-    return res.status(400).json({ message: 'No valid fields provided for update. Allowed fields: reingest_frequency, custom_title.' });
+    return res.status(400).json({ message: 'No valid fields provided for update. Allowed fields: reingest_frequency, custom_title, category_tags.' });
   }
 
   console.log(`(Controller) Updating metadata for source_id: ${source_id}, client_id: ${clientId}. Updates:`, metadataUpdates);

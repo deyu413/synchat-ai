@@ -609,6 +609,36 @@ export const logRagFeedback = async (feedbackData) => {
     }
 };
 
+export const fetchFeedbackWithInteractionDetails = async (clientId, periodOptions) => {
+    try {
+        let query = supabase
+            .from('rag_feedback_log')
+            .select(`
+                *,
+                interaction:rag_interaction_logs(*)
+            `) // Fetches all columns from both, renames joined table to 'interaction'
+            .gte('created_at', periodOptions.startDate)
+            .lte('created_at', periodOptions.endDate + 'T23:59:59.999Z');
+
+        if (clientId) {
+            query = query.eq('client_id', clientId);
+        }
+
+        const { data, error } = await query.order('created_at', { ascending: false });
+
+        if (error) {
+            console.error(`(DB Service) Error fetching feedback with interaction details (client: ${clientId || 'all'}):`, error);
+            return { error: error.message };
+        }
+
+        return { data };
+
+    } catch (err) {
+        console.error(`(DB Service) Exception in fetchFeedbackWithInteractionDetails (client: ${clientId || 'all'}):`, err);
+        return { error: 'An unexpected error occurred while fetching feedback details.' };
+    }
+};
+
 export const getUnprocessedRagLogsForClient = async (clientId, limit = 1000) => {
     if (!clientId) {
         console.error('(DB Service) clientId is required for getUnprocessedRagLogsForClient.');
@@ -644,7 +674,7 @@ export const updateKnowledgeSourceMetadata = async (clientId, sourceId, metadata
         return { error: 'No metadata updates provided.', status: 400 };
     }
 
-    const allowedFields = ['reingest_frequency', 'custom_title' /*, 'next_reingest_at' */]; // Add other fields as needed
+    const allowedFields = ['reingest_frequency', 'custom_title', 'category_tags']; // Added 'category_tags'
     const updateObject = {};
     for (const key in metadataUpdates) {
         if (allowedFields.includes(key) && metadataUpdates[key] !== undefined) {

@@ -218,3 +218,45 @@ export const triggerProcessQueryClusters = async (req, res) => {
         res.status(500).json({ error: 'Failed to process query clusters.', details: error.message });
     }
 };
+
+export const triggerRagFeedbackAnalysis = async (req, res) => {
+    console.log('(InternalCtrl) Received request to trigger RAG feedback analysis.');
+    const { client_id: clientId, period_days: periodDays = 30 } = req.body; // Or req.query
+
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - parseInt(periodDays, 10));
+    const periodOptions = {
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0]
+    };
+
+    try {
+        // This function will be created in databaseService.js
+        const feedbackDetails = await db.fetchFeedbackWithInteractionDetails(clientId, periodOptions);
+
+        if (feedbackDetails.error) {
+            console.error("(InternalCtrl) Error fetching feedback details:", feedbackDetails.error);
+            return res.status(500).json({ message: "Failed to fetch feedback details for analysis.", error: feedbackDetails.error });
+        }
+
+        const numRecords = feedbackDetails.data ? feedbackDetails.data.length : 0;
+        console.log(`(InternalCtrl) Fetched ${numRecords} feedback entries with interaction details for client: ${clientId || 'all (if implemented)'} and period: ${periodDays} days.`);
+
+        // Placeholder for actual analysis logic:
+        if (numRecords > 0) {
+            console.log("(InternalCtrl) Placeholder: Actual analysis of feedback details would occur here (e.g., chunk performance, strategy correlation).");
+            // Example: console.log("Sample fetched record:", JSON.stringify(feedbackDetails.data[0], null, 2));
+        }
+
+        res.status(200).json({
+            message: `RAG feedback analysis process initiated. Fetched ${numRecords} records. Placeholder analysis logic executed.`,
+            clientId: clientId,
+            period: periodOptions
+        });
+
+    } catch (error) {
+        console.error('(InternalCtrl) Error in triggerRagFeedbackAnalysis:', error);
+        res.status(500).json({ error: 'Failed to initiate RAG feedback analysis process.', details: error.message });
+    }
+};
