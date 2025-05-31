@@ -1,40 +1,31 @@
 // synchat-ai-backend/src/controllers/clientDashboardController.js
-// Controller for handling client dashboard related API requests.
-
-// Corrected import paths from ../../services/ to ../services/
 import { supabase } from '../services/supabaseClient.js';
 import { ingestWebsite } from '../services/ingestionService.js';
-import * as db from '../services/databaseService.js'; // Import databaseService
+import * as db from '../services/databaseService.js';
+import * as openaiService from '../services/openaiService.js'; // For LLM filtering/summarization
+import { encode } from 'gpt-tokenizer'; // For token counting if needed for summarization logic
 
+// --- Existing Controller Functions ---
 
-/**
- * Retrieves the client's current configuration.
- */
 export const getClientConfig = async (req, res) => {
     console.log('clientDashboardController.getClientConfig called');
-    const clientId = req.user?.id; // Consistent with authMiddleware (Supabase user ID)
-
+    const clientId = req.user?.id;
     if (!clientId) {
-        // This case should ideally be caught by authMiddleware, but double-check.
         return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' });
     }
-
     try {
         const { data, error } = await supabase
-            .from('synchat_clients') // Assuming 'client_id' in this table is the Supabase user ID
+            .from('synchat_clients')
             .select('client_name, email, widget_config, knowledge_source_url, last_ingest_status, last_ingest_at')
             .eq('client_id', clientId)
             .single();
-
         if (error) {
             console.error('Error fetching client config:', error.message);
             return res.status(500).json({ message: 'Error fetching client configuration.', error: error.message });
         }
-
         if (!data) {
             return res.status(404).json({ message: 'Client configuration not found.' });
         }
-
         res.status(200).json(data);
     } catch (err) {
         console.error('Unexpected error in getClientConfig:', err.message);
@@ -42,36 +33,14 @@ export const getClientConfig = async (req, res) => {
     }
 };
 
-/**
- * Retrieves knowledge suggestions for the client.
- */
 export const getKnowledgeSuggestions = async (req, res) => {
     const clientId = req.user?.id;
-    if (!clientId) {
-        return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
-    }
-
-    const {
-        status = 'new', // Default to 'new' suggestions
-        type,
-        limit = 20,
-        offset = 0
-    } = req.query;
-
-    const options = {
-        status,
-        type,
-        limit: parseInt(limit, 10),
-        offset: parseInt(offset, 10)
-    };
-
+    if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
+    const { status = 'new', type, limit = 20, offset = 0 } = req.query;
+    const options = { status, type, limit: parseInt(limit, 10), offset: parseInt(offset, 10) };
     console.log(`(ClientDashboardCtrl) Fetching knowledge suggestions for client ${clientId}, options:`, options);
-
     try {
         const suggestions = await db.fetchKnowledgeSuggestions(clientId, options);
-        // Optionally, also fetch total count for pagination if needed by UI:
-        // const { count } = await db.fetchKnowledgeSuggestionsCount(clientId, options);
-        // res.status(200).json({ data: suggestions, total: count });
         res.status(200).json(suggestions);
     } catch (error) {
         console.error(`(ClientDashboardCtrl) Error fetching knowledge suggestions for client ${clientId}:`, error);
@@ -79,114 +48,61 @@ export const getKnowledgeSuggestions = async (req, res) => {
     }
 };
 
-/**
- * Updates the status of a knowledge suggestion.
- */
 export const updateKnowledgeSuggestionStatus = async (req, res) => {
     const clientId = req.user?.id;
     const { suggestion_id } = req.params;
     const { status: newStatus } = req.body;
-
-    if (!clientId) {
-        return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
-    }
-    if (!suggestion_id) {
-        return res.status(400).json({ message: 'Suggestion ID is required in URL parameters.' });
-    }
-    if (!newStatus) {
-        return res.status(400).json({ message: 'New status is required in request body.' });
-    }
-
-    // Basic validation against ENUM values (database service also validates)
+    if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
+    if (!suggestion_id) { return res.status(400).json({ message: 'Suggestion ID is required in URL parameters.' }); }
+    if (!newStatus) { return res.status(400).json({ message: 'New status is required in request body.' }); }
     const validStatuses = ['new', 'reviewed_pending_action', 'action_taken', 'dismissed'];
-    if (!validStatuses.includes(newStatus)) {
-        return res.status(400).json({ message: `Invalid status value: ${newStatus}. Must be one of: ${validStatuses.join(', ')}` });
-    }
-
+    if (!validStatuses.includes(newStatus)) { return res.status(400).json({ message: `Invalid status value: ${newStatus}. Must be one of: ${validStatuses.join(', ')}` }); }
     console.log(`(ClientDashboardCtrl) Updating suggestion ${suggestion_id} for client ${clientId} to status ${newStatus}`);
-
     try {
         const updatedSuggestion = await db.updateClientKnowledgeSuggestionStatus(clientId, suggestion_id, newStatus);
-        if (!updatedSuggestion) {
-            return res.status(404).json({ message: 'Suggestion not found for this client or update failed.' });
-        }
+        if (!updatedSuggestion) { return res.status(404).json({ message: 'Suggestion not found for this client or update failed.' }); }
         res.status(200).json(updatedSuggestion);
     } catch (error) {
         console.error(`(ClientDashboardCtrl) Error updating suggestion ${suggestion_id} status for client ${clientId}:`, error);
-        if (error.message.includes("Invalid status value")) { // Catch error from service layer validation
-            return res.status(400).json({ message: error.message });
-        }
+        if (error.message.includes("Invalid status value")) { return res.status(400).json({ message: error.message }); }
         res.status(500).json({ message: 'Failed to update knowledge suggestion status.', error: error.message });
     }
 };
 
-/**
- * Tests a query against the client's knowledge base using hybrid search (simulating RAG).
- */
 export const testKnowledgeQuery = async (req, res) => {
     const clientId = req.user?.id;
     const { queryText } = req.body;
-
-    if (!clientId) {
-        return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
-    }
-    if (!queryText || typeof queryText !== 'string' || queryText.trim() === '') {
-        return res.status(400).json({ message: 'queryText is required in the request body and must be a non-empty string.' });
-    }
-
+    if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
+    if (!queryText || typeof queryText !== 'string' || queryText.trim() === '') { return res.status(400).json({ message: 'queryText is required in the request body and must be a non-empty string.' }); }
     console.log(`(ClientDashboardCtrl) Testing knowledge query for client ${clientId}: "${queryText.substring(0, 100)}..."`);
-
     try {
-        // We'll use the hybridSearch function which already encapsulates much of the RAG logic
-        // Pass null for conversationId as this is a one-off test query, and empty options to use defaults.
         const searchResult = await db.hybridSearch(clientId, queryText, null, {});
-
-        // The hybridSearch result includes: { results, searchParams, queriesEmbedded, rawRankedResultsForLog }
-        // For this test, we are primarily interested in the 'results' (top N chunks after re-ranking)
-        // and perhaps some of the searchParams or queriesEmbedded for more detailed feedback.
-
         const testResult = {
             originalQuery: queryText,
-            processedQueries: searchResult.queriesEmbedded, // Shows original processed + reformulations
+            processedQueries: searchResult.queriesEmbeddedForLog,
             searchParamsUsed: searchResult.searchParams,
-            retrievedChunks: searchResult.results.map(chunk => ({ // map to a cleaner structure for the frontend
-                id: chunk.id,
-                content: chunk.content,
-                metadata: chunk.metadata,
-                similarity: chunk.vector_similarity, // from vector_search part
-                fts_score: chunk.fts_score, // from fts_search part
-                hybrid_score: chunk.hybrid_score, // initial hybrid score
-                reranked_score: chunk.reranked_score // final score after re-ranking
+            retrievedChunks: searchResult.results.map(chunk => ({
+                id: chunk.id, content: chunk.content, metadata: chunk.metadata,
+                similarity: chunk.vector_similarity, fts_score: chunk.fts_score,
+                hybrid_score: chunk.hybrid_score, reranked_score: chunk.reranked_score
             }))
         };
-
         res.status(200).json(testResult);
-
     } catch (error) {
         console.error(`(ClientDashboardCtrl) Error testing knowledge query for client ${clientId}:`, error);
         res.status(500).json({ message: 'Failed to test knowledge query.', error: error.message });
     }
 };
 
-/**
- * Retrieves chatbot analytics summary for the client.
- */
 export const getChatbotAnalyticsSummary = async (req, res) => {
     const clientId = req.user?.id;
-    if (!clientId) {
-        return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
-    }
-
+    if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
     const { period = '30d', startDate, endDate } = req.query;
     const periodOptions = { period, startDate, endDate };
-
     console.log(`(ClientDashboardCtrl) Fetching analytics summary for client ${clientId}, options:`, periodOptions);
-
     try {
         const summaryData = await db.fetchAnalyticsSummary(clientId, periodOptions);
-        if (!summaryData) { // Should not happen if fetchAnalyticsSummary returns an object or throws
-            return res.status(404).json({ message: 'Analytics summary data not found.' });
-        }
+        if (!summaryData) { return res.status(404).json({ message: 'Analytics summary data not found.' }); }
         res.status(200).json(summaryData);
     } catch (error) {
         console.error(`(ClientDashboardCtrl) Error fetching analytics summary for client ${clientId}:`, error);
@@ -194,21 +110,13 @@ export const getChatbotAnalyticsSummary = async (req, res) => {
     }
 };
 
-/**
- * Retrieves unanswered query suggestions for the client.
- */
 export const getUnansweredQuerySuggestions = async (req, res) => {
     const clientId = req.user?.id;
-    if (!clientId) {
-        return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
-    }
-
+    if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found.' }); }
     const { period = '30d', startDate, endDate, limit: limitQuery } = req.query;
     const periodOptions = { period, startDate, endDate };
     const limit = parseInt(limitQuery, 10) || 10;
-
     console.log(`(ClientDashboardCtrl) Fetching unanswered queries for client ${clientId}, options:`, periodOptions, `limit: ${limit}`);
-
     try {
         const suggestions = await db.fetchUnansweredQueries(clientId, periodOptions, limit);
         res.status(200).json(suggestions);
@@ -218,95 +126,31 @@ export const getUnansweredQuerySuggestions = async (req, res) => {
     }
 };
 
-/**
- * Updates the client's configuration for widget_config and knowledge_source_url.
- */
 export const updateClientConfig = async (req, res) => {
     console.log('clientDashboardController.updateClientConfig called');
-    const clientId = req.user?.id; // Consistent with authMiddleware
-
-    if (!clientId) {
-        return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' });
-    }
-
+    const clientId = req.user?.id;
+    if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' }); }
     const { widget_config: newWidgetConfigData, knowledge_source_url } = req.body;
-
-    // Basic validation: Check if at least one updatable field is provided
-    if (newWidgetConfigData === undefined && knowledge_source_url === undefined) {
-        return res.status(400).json({ message: 'No valid fields provided for update. Provide widget_config or knowledge_source_url.' });
-    }
-
+    if (newWidgetConfigData === undefined && knowledge_source_url === undefined) { return res.status(400).json({ message: 'No valid fields provided for update. Provide widget_config or knowledge_source_url.' }); }
     const updateFields = {};
-
     try {
-        // Handle widget_config update (if newWidgetConfigData is provided and is an object)
         if (newWidgetConfigData !== undefined) {
-            if (typeof newWidgetConfigData !== 'object' || newWidgetConfigData === null) {
-                return res.status(400).json({ message: 'Invalid widget_config format. It must be an object.' });
-            }
-
+            if (typeof newWidgetConfigData !== 'object' || newWidgetConfigData === null) { return res.status(400).json({ message: 'Invalid widget_config format. It must be an object.' }); }
             let currentWidgetConfig = {};
-            const { data: clientRecord, error: fetchError } = await supabase
-                .from('synchat_clients')
-                .select('widget_config')
-                .eq('client_id', clientId)
-                .single();
-
-            if (fetchError) {
-                console.error('Error fetching current widget_config:', fetchError.message);
-                // PGRST116: "The result contains 0 rows" - this is not an error if client exists but has no widget_config yet
-                if (fetchError.code !== 'PGRST116') { 
-                     return res.status(500).json({ message: 'Error fetching current configuration for update.', error: fetchError.message });
-                }
-            }
+            const { data: clientRecord, error: fetchError } = await supabase.from('synchat_clients').select('widget_config').eq('client_id', clientId).single();
+            if (fetchError && fetchError.code !== 'PGRST116') { console.error('Error fetching current widget_config:', fetchError.message); return res.status(500).json({ message: 'Error fetching current configuration for update.', error: fetchError.message }); }
             currentWidgetConfig = clientRecord?.widget_config || {};
-            
-            const mergedWidgetConfig = { ...currentWidgetConfig, ...newWidgetConfigData };
-            updateFields.widget_config = mergedWidgetConfig;
+            updateFields.widget_config = { ...currentWidgetConfig, ...newWidgetConfigData };
         }
-
-        // Handle knowledge_source_url update
         if (knowledge_source_url !== undefined) {
-            // Basic URL validation (optional, but good practice)
-            try {
-                if (knowledge_source_url !== '') { // Allow empty string to clear the URL
-                    new URL(knowledge_source_url);
-                }
-            } catch (urlError) {
-                return res.status(400).json({ message: 'Invalid knowledge_source_url format.' });
-            }
+            try { if (knowledge_source_url !== '') { new URL(knowledge_source_url); } }
+            catch (urlError) { return res.status(400).json({ message: 'Invalid knowledge_source_url format.' }); }
             updateFields.knowledge_source_url = knowledge_source_url;
         }
-
-        // If no fields were actually prepared for update (e.g., only undefined values were passed for updatable fields)
-        if (Object.keys(updateFields).length === 0) {
-            // Optionally, fetch and return current data if no update is made, or just a message.
-            // For this task, we'll return a message indicating no update was performed.
-            // However, the initial check for both being undefined should catch most of this.
-            // This check is more for if widget_config was passed as undefined and knowledge_source_url was also undefined.
-            return res.status(200).json({ message: 'No new data provided to update.' });
-        }
-        
-        // updated_at is handled by the database trigger
-
-        const { data, error } = await supabase
-            .from('synchat_clients')
-            .update(updateFields)
-            .eq('client_id', clientId)
-            .select('client_id, widget_config, knowledge_source_url, updated_at') // Return updated fields
-            .single();
-
-        if (error) {
-            console.error('Error updating client config:', error.message);
-            return res.status(500).json({ message: 'Error updating client configuration.', error: error.message });
-        }
-        
-        if (!data) {
-            // This case might happen if the clientId is valid but somehow the update affects 0 rows.
-            // Or if RLS prevents the select after update.
-            return res.status(404).json({ message: 'Client not found or update failed to return data.' });
-        }
-
+        if (Object.keys(updateFields).length === 0) { return res.status(200).json({ message: 'No new data provided to update.' });}
+        const { data, error } = await supabase.from('synchat_clients').update(updateFields).eq('client_id', clientId).select('client_id, widget_config, knowledge_source_url, updated_at').single();
+        if (error) { console.error('Error updating client config:', error.message); return res.status(500).json({ message: 'Error updating client configuration.', error: error.message });}
+        if (!data) { return res.status(404).json({ message: 'Client not found or update failed to return data.' }); }
         res.status(200).json({ message: 'Client configuration updated successfully.', data });
     } catch (err) {
         console.error('Unexpected error in updateClientConfig:', err.message, err.stack);
@@ -314,130 +158,174 @@ export const updateClientConfig = async (req, res) => {
     }
 };
 
-/**
- * Initiates a request to ingest knowledge from the client's configured source URL.
- */
 export const requestKnowledgeIngest = async (req, res) => {
     console.log('clientDashboardController.requestKnowledgeIngest called');
-    const clientId = req.user?.id; // Consistent with authMiddleware
-
-    if (!clientId) {
-        return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' });
-    }
-
+    const clientId = req.user?.id;
+    if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' }); }
     try {
-        // 1. Fetch the client's saved knowledge_source_url
-        const { data: clientData, error: fetchError } = await supabase
-            .from('synchat_clients')
-            .select('knowledge_source_url')
-            .eq('client_id', clientId) // Assuming 'client_id' in this table is the Supabase user ID
-            .single();
-
-        if (fetchError) {
-            console.error('Error fetching client data for ingest:', fetchError.message);
-            return res.status(500).json({ message: 'Error fetching client data.', error: fetchError.message });
-        }
-
-        if (!clientData || !clientData.knowledge_source_url) {
-            return res.status(400).json({ message: 'No knowledge source URL configured for this client. Please set it up in your configuration.' });
-        }
-
+        const { data: clientData, error: fetchError } = await supabase.from('synchat_clients').select('knowledge_source_url').eq('client_id', clientId).single();
+        if (fetchError) { console.error('Error fetching client data for ingest:', fetchError.message); return res.status(500).json({ message: 'Error fetching client data.', error: fetchError.message });}
+        if (!clientData || !clientData.knowledge_source_url) { return res.status(400).json({ message: 'No knowledge source URL configured for this client. Please set it up in your configuration.' });}
         const knowledge_source_url = clientData.knowledge_source_url;
-
-        // Call ingestWebsite in a non-blocking way
         ingestWebsite(clientId, knowledge_source_url)
-            .then(result => {
-                if (result.success) {
-                    console.log(`Ingestion completed successfully for client ${clientId}. Details:`, result.data);
-                    // For this task, only logging. Actual status update ('completed'/'failed')
-                    // would ideally be handled by the service or a robust job queue.
-                } else {
-                    console.error(`Ingestion failed for client ${clientId}. Error:`, result.error);
-                }
-            })
-            .catch(error => {
-                console.error(`Critical error during background ingestion for client ${clientId}:`, error);
-            });
-
-        // 2. Update last_ingest_status to 'pending' and last_ingest_at
-        // This indicates the request has been accepted and is being processed (by the background task)
-        const { error: updateError } = await supabase
-            .from('synchat_clients')
-            .update({ 
-                last_ingest_status: 'pending',
-                last_ingest_at: new Date().toISOString() 
-            })
-            .eq('client_id', clientId); // Assuming 'client_id' in this table is the Supabase user ID
-
-        if (updateError) {
-            console.error('Error updating client ingest status:', updateError.message);
-            // Note: If this update fails, the ingestion is still triggered in the background.
-            // Consider how to handle this inconsistency if critical. For MVP, logging is okay.
-            // The ingestWebsite service itself will attempt to update to 'completed' or 'failed'.
-        }
-
-        // 3. (Conceptually) Trigger the actual ingestion process
-        // The actual call to ingestionService (ingestWebsite) is done above and runs asynchronously.
+            .then(result => { if (result.success) { console.log(`Ingestion completed successfully for client ${clientId}. Details:`, result.data); } else { console.error(`Ingestion failed for client ${clientId}. Error:`, result.error);}})
+            .catch(error => { console.error(`Critical error during background ingestion for client ${clientId}:`, error); });
+        const { error: updateError } = await supabase.from('synchat_clients').update({ last_ingest_status: 'pending', last_ingest_at: new Date().toISOString() }).eq('client_id', clientId);
+        if (updateError) { console.error('Error updating client ingest status:', updateError.message); }
         console.log(`Ingestion process initiated for client ${clientId} with URL ${knowledge_source_url}`);
-        
-
         res.status(202).json({ message: 'Knowledge ingestion request received and is being processed. Status set to pending.' });
-
     } catch (err) {
         console.error('Unexpected error in requestKnowledgeIngest:', err.message, err.stack);
         res.status(500).json({ message: 'An unexpected error occurred.', error: err.message });
     }
 };
 
-
-/**
- * Retrieves client usage data, specifically AI resolution counts.
- * Defaults to the current month's statistics if no `billing_cycle_id` is provided.
- */
 export const getClientUsageResolutions = async (req, res) => {
     console.log('clientDashboardController.getClientUsageResolutions called');
-    const clientId = req.user?.id; // Changed from req.user?.client_id to req.user.id based on authMiddleware
-
-    if (!clientId) {
-        return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' });
-    }
-
-    let { billing_cycle_id } = req.query; // Optional query parameter
-
-    // If no billing_cycle_id is provided, default to the current month in 'YYYY-MM' format
-    if (!billing_cycle_id) {
-        const now = new Date();
-        const year = now.getFullYear();
-        const month = (now.getMonth() + 1).toString().padStart(2, '0'); // JavaScript months are 0-indexed
-        billing_cycle_id = `${year}-${month}`;
-        console.log(`No billing_cycle_id provided, defaulting to current month: ${billing_cycle_id}`);
-    }
-
+    const clientId = req.user?.id;
+    if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' }); }
+    let { billing_cycle_id } = req.query;
+    if (!billing_cycle_id) { const now = new Date(); const year = now.getFullYear(); const month = (now.getMonth() + 1).toString().padStart(2, '0'); billing_cycle_id = `${year}-${month}`; console.log(`No billing_cycle_id provided, defaulting to current month: ${billing_cycle_id}`); }
     try {
-        let query = supabase
-            .from('ia_resolutions_log')
-            .select('*', { count: 'exact', head: true }) // Using head:true for count only
-            .eq('client_id', clientId) 
-            .eq('billing_cycle_id', billing_cycle_id); 
-
+        let query = supabase.from('ia_resolutions_log').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('billing_cycle_id', billing_cycle_id);
         const { count, error } = await query;
-
-        if (error) {
-            console.error('Error fetching client usage resolutions:', error.message);
-            return res.status(500).json({ message: 'Error fetching client usage data.', error: error.message });
-        }
-
+        if (error) { console.error('Error fetching client usage resolutions:', error.message); return res.status(500).json({ message: 'Error fetching client usage data.', error: error.message }); }
         const resolutionCount = count === null ? 0 : count;
-
-        res.status(200).json({
-            client_id: clientId,
-            billing_cycle_id: billing_cycle_id,
-            ai_resolutions_current_month: resolutionCount, 
-            total_queries_current_month: 'N/A' // Placeholder as per plan
-        });
-
+        res.status(200).json({ client_id: clientId, billing_cycle_id: billing_cycle_id, ai_resolutions_current_month: resolutionCount, total_queries_current_month: 'N/A' });
     } catch (err) {
         console.error('Unexpected error in getClientUsageResolutions:', err.message, err.stack);
         res.status(500).json({ message: 'An unexpected error occurred.', error: err.message });
+    }
+};
+
+// --- RAG Playground Controller Function ---
+const LLM_FILTER_TOP_N_CHUNKS_PLAYGROUND = 5;
+const LLM_FILTER_MODEL_PLAYGROUND = "gpt-3.5-turbo";
+const LLM_FILTER_TEMP_RELEVANCE_PLAYGROUND = 0.2;
+const LLM_FILTER_TEMP_SUMMARY_PLAYGROUND = 0.3;
+const ENABLE_LLM_CONTEXT_FILTERING_PLAYGROUND = true;
+const ENABLE_LLM_CONTEXT_SUMMARIZATION_PLAYGROUND = true;
+
+export const runRagPlaygroundQuery = async (req, res, next) => {
+    const clientId = req.user?.id;
+    const { queryText } = req.body;
+
+    if (!queryText || typeof queryText !== 'string' || queryText.trim() === '') {
+        return res.status(400).json({ error: 'queryText is required and must be a non-empty string.' });
+    }
+
+    console.log(`(ClientDashboardCtrl) RAG Playground query for client ${clientId}: "${queryText.substring(0, 100)}..."`);
+
+    try {
+        const hybridSearchOutput = await db.hybridSearch(
+            clientId,
+            queryText,
+            null, /* conversationId */
+            {},   /* options */
+            true  /* returnPipelineDetails */
+        );
+
+        let playgroundData = { ...hybridSearchOutput.pipelineDetails };
+        playgroundData.searchParams = hybridSearchOutput.searchParams;
+        playgroundData.queriesUsedForEmbeddingLog = hybridSearchOutput.queriesEmbeddedForLog;
+
+        // The initial set of chunks before LLM processing comes from hybridSearch's pipelineDetails
+        let chunksToProcessForLLM = playgroundData.finalRankedResultsForPlayground || [];
+
+        playgroundData.llmContextualization = {
+            llmFilteringActions: [],
+            llmSummarizationActions: [],
+            processedKnowledgeForContextAssembly: [],
+            finalLLMContextString: ""
+        };
+
+        let filteredChunksForPlayground = [];
+        if (ENABLE_LLM_CONTEXT_FILTERING_PLAYGROUND && chunksToProcessForLLM.length > 0) {
+            console.log(`(Playground) Starting LLM filtering for ${chunksToProcessForLLM.length} chunks.`);
+            for (const chunk of chunksToProcessForLLM) {
+                let decision = 'ERROR';
+                try {
+                    const relevancePrompt = `User Question: '${queryText}'. Is the following 'Text Snippet' directly relevant and useful for answering the user's question? Respond with only 'YES' or 'NO'. Text Snippet: '${chunk.contentSnippet || chunk.content}'`;
+                    const relevanceMessages = [ { role: "system", content: "You are an AI assistant that judges relevance. Respond with only YES or NO." }, { role: "user", content: relevancePrompt }];
+                    const relevanceResponse = await openaiService.getChatCompletion(relevanceMessages, LLM_FILTER_MODEL_PLAYGROUND, LLM_FILTER_TEMP_RELEVANCE_PLAYGROUND, 10);
+                    decision = relevanceResponse && relevanceResponse.trim().toLowerCase().startsWith('yes') ? 'YES' : 'NO';
+                    if (decision === 'YES') filteredChunksForPlayground.push(chunk);
+                } catch (filterError) {
+                    console.error(`(Playground) LLM relevance check error for chunk ID ${chunk.id}: ${filterError.message}. Keeping chunk.`);
+                    filteredChunksForPlayground.push(chunk); // Keep if error
+                    decision = 'ERROR_FALLBACK_KEPT';
+                }
+                playgroundData.llmContextualization.llmFilteringActions.push({ chunkId: chunk.id, originalContentPreview: chunk.contentSnippet || chunk.content?.substring(0,150)+'...', decision });
+            }
+            if (filteredChunksForPlayground.length === 0 && chunksToProcessForLLM.length > 0) {
+                filteredChunksForPlayground = [...chunksToProcessForLLM]; // Fallback
+                 playgroundData.llmContextualization.llmFilteringActions.push({ action: "Fallback", detail: "All chunks filtered, reverted to original top N." });
+            }
+        } else {
+            filteredChunksForPlayground = [...chunksToProcessForLLM];
+        }
+
+        let summarizedChunksForPlayground = [];
+        if (ENABLE_LLM_CONTEXT_SUMMARIZATION_PLAYGROUND && filteredChunksForPlayground.length > 0) {
+            console.log(`(Playground) Starting LLM summarization for ${filteredChunksForPlayground.length} chunks.`);
+            for (const chunk of filteredChunksForPlayground) {
+                let summary = null;
+                let actionTaken = 'Kept Original (or error)';
+                try {
+                    const summaryPrompt = `User Question: '${queryText}'. From the 'Text Snippet' below, extract only the sentence(s) or key phrases that directly help answer the question. If no part is relevant, or if the snippet is already very concise and relevant, return the original snippet. If absolutely no part is relevant, return an empty string. Text Snippet: '${chunk.content}'`; // Use full content for summary
+                    const summaryMessages = [ { role: "system", content: "You are an AI assistant that extracts key relevant sentences from text." }, { role: "user", content: summaryPrompt }];
+                    const summaryMaxTokens = Math.min(encode(chunk.content || "").length + 50, 300);
+                    summary = await openaiService.getChatCompletion(summaryMessages, LLM_FILTER_MODEL_PLAYGROUND, LLM_FILTER_TEMP_SUMMARY_PLAYGROUND, summaryMaxTokens);
+                    if (summary && summary.trim().length > 0) {
+                        summarizedChunksForPlayground.push({ ...chunk, extracted_content: summary.trim() });
+                        actionTaken = 'Summarized';
+                    } else {
+                        summarizedChunksForPlayground.push(chunk); // Use original if summary is empty
+                        actionTaken = summary === "" ? 'Kept Original (empty summary)' : 'Kept Original (LLM error or no summary)';
+                    }
+                } catch (summaryError) {
+                    console.error(`(Playground) LLM summarization error for chunk ID ${chunk.id}: ${summaryError.message}. Using original.`);
+                    summarizedChunksForPlayground.push(chunk);
+                    actionTaken = 'Kept Original (exception)';
+                }
+                playgroundData.llmContextualization.llmSummarizationActions.push({ chunkId: chunk.id, originalContentPreview: chunk.contentSnippet || chunk.content?.substring(0,150)+'...', summarizedContentPreview: summary || 'N/A', actionTaken });
+            }
+        } else {
+            summarizedChunksForPlayground = [...filteredChunksForPlayground];
+        }
+        playgroundData.llmContextualization.processedKnowledgeForContextAssembly = summarizedChunksForPlayground;
+
+        // Assemble finalContextForLLM (mimicking chatController)
+        let finalContextString = "";
+        if (playgroundData.finalPropositionResults && playgroundData.finalPropositionResults.length > 0) {
+            const propositionLines = playgroundData.finalPropositionResults.map(p =>
+                `Afirmación Relevante: ${p.text}\n(Contexto de Afirmación ID: ${p.sourceChunkId}, Score: ${p.score?.toFixed(4)})`
+            );
+            finalContextString += "--- Afirmaciones Clave Encontradas ---\n" + propositionLines.join("\n---\n") + "\n\n";
+        }
+        if (summarizedChunksForPlayground.length > 0) {
+            const chunkLines = summarizedChunksForPlayground.map(chunk => {
+                const sourceInfo = chunk.metadata?.hierarchy?.join(" > ") || chunk.metadata?.url || chunk.metadata?.source_name || 'Documento Relevante';
+                const prefix = `Fuente: ${sourceInfo} (Chunk ID: ${chunk.id})\n`;
+                const contentToDisplay = chunk.extracted_content || chunk.content;
+                return `${prefix}Contenido: ${contentToDisplay}`;
+            });
+            finalContextString += "--- Fragmentos de Documentos Relevantes (potencialmente resumidos) ---\n" + chunkLines.join("\n\n---\n\n");
+        }
+        if (!finalContextString) {
+            finalContextString = "(No se encontró contexto relevante o procesado para esta pregunta)";
+        }
+        playgroundData.llmContextualization.finalLLMContextString = finalContextString;
+
+        // Add top-level results from hybridSearch to playgroundData for clarity
+        playgroundData.hybridSearchResults = hybridSearchOutput.results;
+        playgroundData.hybridSearchPropositionResults = hybridSearchOutput.propositionResults;
+
+
+        res.status(200).json(playgroundData);
+
+    } catch (error) {
+        console.error(`(ClientDashboardCtrl) Error in RAG Playground query for client ${clientId}:`, error);
+        next(error); // Pass to global error handler
     }
 };
