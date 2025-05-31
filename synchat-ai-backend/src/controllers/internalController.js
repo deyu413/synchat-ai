@@ -6,26 +6,6 @@ import * as openaiService from '../services/openaiService.js'; // Corrected impo
 
 import { kmeans } from 'ml-kmeans'; // K-Means library
 
-// Spanish Stop Words (can be shared or redefined here if not easily importable from db service for this controller)
-// This can be removed if normalizeQueryText is also removed (as it's not used by k-means version)
-// const SPANISH_STOP_WORDS = new Set([
-//   "de", "la", "el", "en", "y", "a", "los", "las", "del", "un", "una", "unos", "unas",
-//   "ser", "estar", "haber", "tener", "con", "por", "para", "como", "más", "pero", "si",
-//   "no", "o", "qué", "que", "cuál", "cuando", "dónde", "quién", "cómo", "desde", "hasta",
-//   "sobre", "este", "ese", "aquel", "esto", "eso", "aquello", "mi", "tu", "su", "yo", "tú", "él", "ella",
-//   "nosotros", "vosotros", "ellos", "ellas", "me", "te", "se", "le", "les", "nos", "os",
-//   "al", "del", "lo", "les", "sus", "tus", "mis"
-// ]);
-
-// function normalizeQueryText(query) { // This function might not be needed if clustering is purely by embedding
-//     if (!query || typeof query !== 'string') return '';
-//     let normalized = query.toLowerCase();
-//     normalized = normalized.replace(/[¿?¡!.,;:"()\[\]{}]/g, '');
-//     // normalized = normalized.split(/\s+/).filter(word => !SPANISH_STOP_WORDS.has(word)).join(' ');
-//     normalized = normalized.replace(/\s+/g, ' ').trim();
-//     return normalized;
-// }
-
 /**
  * Triggers suggestion generation for all active clients.
  * This is intended to be called by a secured internal scheduler (e.g., an Edge Function).

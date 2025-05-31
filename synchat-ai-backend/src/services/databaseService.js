@@ -89,7 +89,6 @@ export function setCache(key, value) { /* ... */ }
 export const getClientConfig = async (clientId) => { /* ... */ };
 export const getAllActiveClientIds = async () => { /* ... */ }; // Keep only one definition
 // Note: There are two getAllActiveClientIds, removing one. The one using subscription_status seems more robust.
-// export const getAllActiveClientIds = async () => { /* ... using is_active ... */ };
 export const getChunkSampleForSource = async (clientId, sourceId, limit = 5) => { /* ... */ };
 export const getConversationHistory = async (conversationId) => { /* ... */ };
 

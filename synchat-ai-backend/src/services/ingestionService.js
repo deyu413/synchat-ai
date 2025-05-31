@@ -1116,12 +1116,7 @@ export async function ingestWebsite(clientId, urlToIngest) {
 }
 
 
-// --- Helper function (legacy, consider removing or adapting if synchat_clients status is still needed) ---
-/*
-async function updateClientIngestStatus(clientId, status, errorMessage = null) {
-    // ... (Código legado, como estaba antes) ...
-}
-*/
+// Ensure no trailing newlines or content after this removal if it's the absolute end of the file.
 
 // --- Exports ---
 // ingestSourceById e ingestWebsite ya están exportadas en su definición.
