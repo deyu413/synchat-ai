@@ -104,8 +104,113 @@ document.addEventListener('DOMContentLoaded', () => {
     const displayMessage = (element, message, isSuccess) => { /* ... */ };
     function safeText(text) { /* ... */ }
 
-    const sections = { /* ... */ };
-    navLinks.forEach(link => { /* ... updated in previous step ... */ });
+    // Initialize navigation links for section switching
+    const navLinks = document.querySelectorAll('nav ul a'); // Get all anchor tags in the nav
+    const allDashboardSections = document.querySelectorAll('.dashboard-section');
+
+    navLinks.forEach(link => {
+        // Exclude non-section links like logout button (if it were an anchor) or external links.
+        // The logout button is a <button>, so it's not selected by 'nav ul a'.
+        const hasHrefHash = link.getAttribute('href') && link.getAttribute('href').startsWith('#');
+        const hasDataSection = link.dataset.section;
+
+        if (hasHrefHash || hasDataSection) {
+            link.addEventListener('click', (event) => {
+                event.preventDefault();
+                let targetSectionId = '';
+
+                if (link.dataset.section) {
+                    targetSectionId = link.dataset.section;
+                } else if (link.getAttribute('href') && link.getAttribute('href') !== '#') {
+                    // Standard href like #config, #ingest
+                    targetSectionId = link.getAttribute('href').substring(1);
+                } else if (link.id === 'navInboxLink' && link.getAttribute('href') === '#') {
+                    // Special handling for Inbox link if its href is just "#"
+                    targetSectionId = 'inboxSection';
+                }
+                // Add other specific link ID to section ID mappings here if necessary
+
+                if (targetSectionId) {
+                    let sectionFound = false;
+                    allDashboardSections.forEach(section => {
+                        if (section.id === targetSectionId) {
+                            section.style.display = 'block'; // Or remove hide class
+                            sectionFound = true;
+                        } else {
+                            section.style.display = 'none'; // Or use a class to hide
+                        }
+                    });
+
+                    if (sectionFound) {
+                        // Special case for analytics: load data when section is shown
+                        if (targetSectionId === 'analyticsSection' && typeof loadAnalyticsData === 'function') {
+                            loadAnalyticsData();
+                        }
+                        // When switching to knowledge management ('ingest' section), reload sources
+                        if (targetSectionId === 'ingest' && typeof loadKnowledgeSources === 'function') {
+                            loadKnowledgeSources();
+                        }
+                        // Add similar conditions for other sections if they need data loaded on view
+                        // For example, if RAG Playground needs initialization:
+                        // if (targetSectionId === 'ragPlayground' && typeof initializeRagPlayground === 'function') {
+                        //    initializeRagPlayground();
+                        // }
+                    } else {
+                        console.warn(`Dashboard section with ID "${targetSectionId}" not found.`);
+                        // Optionally, leave the current view as is, or hide all sections,
+                        // or show a default section/error message.
+                        // For now, if a target isn't found, other sections remain hidden from the loop above.
+                    }
+                } else {
+                    // This case might happen for links like <a href="#"> that are not the inbox link
+                    // and don't have a data-section. Decide behavior: either log or ignore.
+                    console.log('Clicked a nav link without a clear target section:', link);
+                }
+            });
+        }
+    });
+
+    // Determine and show the initial section.
+    // Priority: URL hash, then 'config', then first available section.
+    let initialSectionIdToShow = 'config'; // Default initial section
+    if (window.location.hash) {
+        const hash = window.location.hash.substring(1);
+        // Ensure the hash corresponds to a valid section ID
+        const sectionExists = Array.from(allDashboardSections).some(s => s.id === hash);
+        if (sectionExists) {
+            initialSectionIdToShow = hash;
+        }
+    }
+
+    let showedInitial = false;
+    allDashboardSections.forEach(s => {
+        if (s.id === initialSectionIdToShow) {
+            s.style.display = 'block';
+            showedInitial = true;
+            // If this initial section needs data loading, call its function here
+            if (initialSectionIdToShow === 'analyticsSection' && typeof loadAnalyticsData === 'function') {
+                loadAnalyticsData();
+            }
+            if (initialSectionIdToShow === 'ingest' && typeof loadKnowledgeSources === 'function') {
+                loadKnowledgeSources();
+            }
+        } else {
+            s.style.display = 'none';
+        }
+    });
+
+    // Fallback if the target initial section (e.g. 'config' or from hash) wasn't found or doesn't exist
+    if (!showedInitial && allDashboardSections.length > 0) {
+        allDashboardSections[0].style.display = 'block'; // Show the first actual section
+        // If this first section needs data loading, call its function
+        const firstSectionId = allDashboardSections[0].id;
+         if (firstSectionId === 'analyticsSection' && typeof loadAnalyticsData === 'function') {
+            loadAnalyticsData();
+        }
+        if (firstSectionId === 'ingest' && typeof loadKnowledgeSources === 'function') {
+            loadKnowledgeSources();
+        }
+        // Add more for other sections if needed
     const token = localStorage.getItem('synchat_session_token');
     if (!token) { /* ... */ }
     // ... (onboarding logic) ...
@@ -484,6 +589,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (refreshAnalyticsBtn) refreshAnalyticsBtn.addEventListener('click', loadAnalyticsData);
     if (analyticsPeriodSelector) analyticsPeriodSelector.addEventListener('change', loadAnalyticsData);
+
+    // Logout button functionality
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', () => {
+            logout(); // Call the imported logout function from auth.js
+        });
+    }
 
     // ... (rest of the file, including Playground and Inbox feedback logic, and Monkey patch)
 });

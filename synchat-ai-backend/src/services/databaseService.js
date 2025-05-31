@@ -645,40 +645,47 @@ export const logRagInteraction = async (logData) => {
         }
 
         const log_id = insertedData.log_id;
+        let embeddingStatus = 'skipped'; // Possible values: 'success', 'failed', 'skipped'
 
-        // Now, generate and update the query_embedding (non-blocking for the return)
         if (logEntry.user_query) {
-            // Fire-and-forget style for embedding update
-            (async () => {
-                try {
-                    logger.debug(`(DB Service) Generating embedding for user_query (log_id: ${log_id}): "${logEntry.user_query.substring(0, 50)}..."`);
-                    // getEmbedding is imported from './embeddingService.js'
-                    const embedding = await getEmbedding(logEntry.user_query);
-                    // embeddingService.getEmbedding returns the vector directly or throws an error.
+            try {
+                logger.debug(`(DB Service) Generating embedding for user_query (log_id: ${log_id}): "${logEntry.user_query.substring(0, 50)}..."`);
+                // getEmbedding is imported from './embeddingService.js'
+                const embedding = await getEmbedding(logEntry.user_query);
 
-                    if (embedding) {
-                        const { error: updateError } = await supabase
-                            .from('rag_interaction_logs')
-                            .update({ query_embedding: embedding })
-                            .eq('log_id', log_id);
+                if (embedding) {
+                    const { error: updateError } = await supabase
+                        .from('rag_interaction_logs')
+                        .update({ query_embedding: embedding })
+                        .eq('log_id', log_id);
 
-                        if (updateError) {
-                            logger.error(`(DB Service) Error updating rag_interaction_logs with query_embedding for log_id ${log_id}:`, updateError);
-                        } else {
-                            logger.info(`(DB Service) Successfully updated log_id ${log_id} with query_embedding.`);
-                        }
+                    if (updateError) {
+                        logger.error(`(DB Service) Error updating rag_interaction_logs with query_embedding for log_id ${log_id}:`, updateError);
+                        embeddingStatus = 'failed_update';
                     } else {
-                        // This case might not be reachable if getEmbedding throws on failure,
-                        // but included for robustness if it could return null/undefined.
-                        logger.error(`(DB Service) Failed to generate query embedding for log_id ${log_id} (embedding was null/undefined).`);
+                        logger.info(`(DB Service) Successfully updated log_id ${log_id} with query_embedding.`);
+                        embeddingStatus = 'success';
                     }
-                } catch (embeddingError) {
-                    logger.error(`(DB Service) Exception during query embedding or update for log_id ${log_id}:`, embeddingError);
+                } else {
+                    // This case might not be reachable if getEmbedding throws on failure,
+                    // but included for robustness if it could return null/undefined.
+                    logger.error(`(DB Service) Failed to generate query embedding for log_id ${log_id} (embedding was null/undefined).`);
+                    embeddingStatus = 'failed_generation';
                 }
-            })();
+            } catch (embeddingError) {
+                logger.error(`(DB Service) Exception during query embedding or update for log_id ${log_id}:`, { message: embeddingError.message, stack: embeddingError.stack });
+                embeddingStatus = 'failed_exception';
+            }
+        } else {
+            logger.debug(`(DB Service) No user_query provided for log_id: ${log_id}, skipping embedding generation.`);
+            // embeddingStatus remains 'skipped'
         }
-        // Return the initially inserted data (without waiting for embedding update)
-        return { data: insertedData, rag_interaction_log_id: log_id };
+
+        return {
+            data: insertedData,
+            rag_interaction_log_id: log_id,
+            embedding_status: embeddingStatus
+        };
 
     } catch (err) {
         logger.error('(DB Service) General exception in logRagInteraction:', err);
