@@ -38,13 +38,33 @@ const W_METADATA_RELEVANCE_SCORE = 0.15; // Adjusted weight for metadata relevan
 // Sum of weights = 0.4 + 0.3 + 0.15 + 0.15 = 1.0
 
 // Simple Spanish Stop Words List (customize as needed)
-const SPANISH_STOP_WORDS = new Set([
+const SPANISH_STOP_WORDS = new Set([ // This is the existing one, used by hybridSearch's tokenizeText
   "de", "la", "el", "en", "y", "a", "los", "las", "del", "un", "una", "unos", "unas",
   "ser", "estar", "haber", "tener", "con", "por", "para", "como", "más", "pero", "si",
   "no", "o", "qué", "que", "cuál", "cuando", "dónde", "quién", "cómo", "desde", "hasta",
   "sobre", "este", "ese", "aquel", "esto", "eso", "aquello", "mi", "tu", "su", "yo", "tú", "él", "ella",
   "nosotros", "vosotros", "ellos", "ellas", "me", "te", "se", "le", "les", "nos", "os"
 ]);
+
+// Stop words list for topic analytics normalization - as per prompt, it has a few more.
+const SPANISH_STOP_WORDS_GET_TOPICS = new Set([
+  "de", "la", "el", "en", "y", "a", "los", "las", "del", "un", "una", "unos", "unas",
+  "ser", "estar", "haber", "tener", "con", "por", "para", "como", "más", "pero", "si",
+  "no", "o", "qué", "que", "cuál", "cuando", "dónde", "quién", "cómo", "desde", "hasta",
+  "sobre", "este", "ese", "aquel", "esto", "eso", "aquello", "mi", "tu", "su", "yo", "tú", "él", "ella",
+  "nosotros", "vosotros", "ellos", "ellas", "me", "te", "se", "le", "les", "nos", "os",
+  "al", "del", "lo", "les", "sus", "tus", "mis"
+]);
+
+function normalizeQueryTextForAnalytics(query) {
+    if (!query || typeof query !== 'string') return '';
+    let normalized = query.toLowerCase();
+    normalized = normalized.replace(/[¿?¡!.,;:"()\[\]{}]/g, '');
+    // Stop word removal might be needed here if it was used during topic creation's normalization
+    // normalized = normalized.split(/\s+/).filter(word => !SPANISH_STOP_WORDS_GET_TOPICS.has(word)).join(' ');
+    normalized = normalized.replace(/\s+/g, ' ').trim();
+    return normalized;
+}
 
 
 // --- Cross-Encoder Pipeline Singleton ---
@@ -589,6 +609,32 @@ export const logRagFeedback = async (feedbackData) => {
     }
 };
 
+export const getUnprocessedRagLogsForClient = async (clientId, limit = 1000) => {
+    if (!clientId) {
+        console.error('(DB Service) clientId is required for getUnprocessedRagLogsForClient.');
+        return { error: 'clientId is required.' };
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('rag_interaction_logs')
+            .select('log_id, user_query, query_embedding, created_at, conversation_id') // Added conversation_id for context
+            .eq('client_id', clientId)
+            .is('topic_analysis_processed_at', null) // Fetch only logs not yet processed
+            .order('created_at', { ascending: true })
+            .limit(limit);
+
+        if (error) {
+            console.error(`(DB Service) Error fetching unprocessed RAG logs for client ${clientId}:`, error);
+            return { error: error.message };
+        }
+        return { data };
+    } catch (err) {
+        console.error(`(DB Service) Exception in getUnprocessedRagLogsForClient for client ${clientId}:`, err);
+        return { error: 'An unexpected error occurred while fetching unprocessed RAG logs.' };
+    }
+};
+
 export const getClientConversations = async (clientId, statusFilters = [], page = 1, pageSize = 20) => { /* ... */ };
 
 export const getMessagesForConversation = async (conversationId, clientId) => {
@@ -674,20 +720,201 @@ export const getSentimentDistribution = async (clientId, periodOptions) => {
     }
 };
 
-export const getTopicAnalytics = async (clientId, periodOptions) => {
-    console.log(`(DB Service) getTopicAnalytics called for client ${clientId} with period:`, periodOptions);
-    // Placeholder: Actual implementation depends on the offline topic analysis.
-    // For now, return empty data or a message, indicating it's not fully implemented.
-    // This data would eventually come from the 'analyzed_conversation_topics' table after a background job populates it.
-    await Promise.resolve(); // To make it behave like an async function if no other async ops are present
-    return { data: [], message: "Topic analytics processing is not yet fully implemented. Data will be available after the next scheduled analysis." };
+export const getTopicAnalytics = async (clientId, periodOptions, topN = 10) => {
+    if (!clientId || !periodOptions || !periodOptions.startDate || !periodOptions.endDate) {
+        console.error('(DB Service) Invalid params for getTopicAnalytics: clientId and periodOptions (with startDate, endDate) are required.');
+        return { error: 'clientId and periodOptions (with startDate, endDate) are required.' };
+    }
+
+    try {
+        const { data: topTopics, error: topicsError } = await supabase
+            .from('analyzed_conversation_topics')
+            .select('topic_id, topic_name, query_count, representative_queries, normalized_query_text')
+            .eq('client_id', clientId)
+            .order('query_count', { ascending: false })
+            .limit(topN);
+
+        if (topicsError) {
+            console.error(`(DB Service) Error fetching top topics for client ${clientId}:`, topicsError);
+            return { error: topicsError.message };
+        }
+
+        if (!topTopics || topTopics.length === 0) {
+            return { data: [], message: "No topic data available for the selected client or period." };
+        }
+
+        const analyticsResults = [];
+
+        for (const topic of topTopics) {
+            if (!topic.normalized_query_text) {
+                 analyticsResults.push({
+                    topic_id: topic.topic_id,
+                    topic_name: topic.topic_name,
+                    total_queries_in_topic: topic.query_count,
+                    representative_queries: topic.representative_queries,
+                    escalation_rate: 0,
+                    average_sentiment: null,
+                    queries_in_period: 0,
+                    message: "Normalized query text missing for this topic, cannot calculate detailed stats."
+                });
+                console.warn(`(DB Service) Topic ${topic.topic_id} ('${topic.topic_name}') is missing normalized_query_text. Skipping detailed stats.`);
+                continue;
+            }
+
+            const { data: relevantLogs, error: logsError } = await supabase
+                .from('rag_interaction_logs')
+                .select('log_id, user_query, was_escalated, conversation_id, created_at')
+                .eq('client_id', clientId)
+                .gte('created_at', periodOptions.startDate)
+                .lte('created_at', periodOptions.endDate + 'T23:59:59.999Z');
+
+            if (logsError) {
+                console.error(`(DB Service) Error fetching RAG logs for topic analytics (client ${clientId}):`, logsError);
+                 analyticsResults.push({ topic_id: topic.topic_id, topic_name: topic.topic_name, total_queries_in_topic: topic.query_count, representative_queries: topic.representative_queries, error_detail: "Failed to fetch RAG logs for stats." });
+                continue;
+            }
+
+            const topicSpecificLogs = relevantLogs.filter(log => normalizeQueryTextForAnalytics(log.user_query) === topic.normalized_query_text);
+
+            let escalatedCount = 0;
+            const conversationIdsForSentiment = new Set();
+
+            topicSpecificLogs.forEach(log => {
+                if (log.was_escalated) {
+                    escalatedCount++;
+                }
+                if (log.conversation_id) {
+                    conversationIdsForSentiment.add(log.conversation_id);
+                }
+            });
+
+            const queriesInPeriod = topicSpecificLogs.length;
+            const escalationRate = queriesInPeriod > 0 ? (escalatedCount / queriesInPeriod) : 0;
+
+            let averageSentiment = null;
+            if (conversationIdsForSentiment.size > 0) {
+                const { data: messagesForSentiment, error: messagesError } = await supabase
+                    .from('messages')
+                    .select('sentiment')
+                    .in('conversation_id', Array.from(conversationIdsForSentiment))
+                    // .eq('client_id', clientId) // RLS should handle this via conversation_id access
+                    .gte('timestamp', periodOptions.startDate)
+                    .lte('timestamp', periodOptions.endDate + 'T23:59:59.999Z')
+                    .not('sentiment', 'is', null);
+
+                if (messagesError) {
+                    console.error(`(DB Service) Error fetching messages for sentiment (topic: ${topic.topic_name}):`, messagesError);
+                } else if (messagesForSentiment && messagesForSentiment.length > 0) {
+                    let sentimentSum = 0;
+                    let validSentimentCount = 0;
+                    messagesForSentiment.forEach(msg => {
+                        if (msg.sentiment === 'positive') { sentimentSum += 1; validSentimentCount++; }
+                        else if (msg.sentiment === 'negative') { sentimentSum -= 1; validSentimentCount++; }
+                        else if (msg.sentiment === 'neutral') { sentimentSum += 0; validSentimentCount++; }
+                    });
+                    if (validSentimentCount > 0) {
+                        averageSentiment = sentimentSum / validSentimentCount;
+                    }
+                }
+            }
+
+            analyticsResults.push({
+                topic_id: topic.topic_id,
+                topic_name: topic.topic_name,
+                total_queries_in_topic: topic.query_count,
+                representative_queries: topic.representative_queries,
+                queries_in_period: queriesInPeriod,
+                escalation_rate: escalationRate,
+                average_sentiment: averageSentiment
+            });
+        }
+
+        return { data: analyticsResults };
+
+    } catch (err) {
+        console.error(`(DB Service) Exception in getTopicAnalytics for client ${clientId}:`, err);
+        return { error: 'An unexpected error occurred while fetching topic analytics.' };
+    }
 };
 
 export const getKnowledgeSourcePerformance = async (clientId, periodOptions) => {
-    console.log(`(DB Service) getKnowledgeSourcePerformance called for client ${clientId} with period:`, periodOptions);
-    // Placeholder: Actual implementation is complex and may require a dedicated RPC or more elaborate queries.
-    // It would involve analyzing rag_feedback_log, potentially joining with knowledge_base and rag_interaction_logs.
-    // For now, return empty data.
-    await Promise.resolve(); // To make it behave like an async function
-    return { data: [], message: "Knowledge source performance analytics are not yet fully implemented." };
+    if (!clientId || !periodOptions || !periodOptions.startDate || !periodOptions.endDate) {
+        console.error('(DB Service) Invalid params for getKnowledgeSourcePerformance: clientId and periodOptions (with startDate, endDate) are required.');
+        return { error: 'clientId and periodOptions (with startDate, endDate) are required.' };
+    }
+
+    try {
+        // Fetch chunk-specific feedback within the period
+        const { data: feedbackEntries, error: feedbackError } = await supabase
+            .from('rag_feedback_log')
+            .select(`
+                rating,
+                knowledge_base_chunk_id,
+                kb:knowledge_base ( id, metadata )
+            `)
+            .eq('client_id', clientId)
+            .eq('feedback_type', 'chunk_relevance') // Only feedback directly on chunks
+            .not('knowledge_base_chunk_id', 'is', null) // Ensure chunk ID is present
+            .gte('created_at', periodOptions.startDate)
+            .lte('created_at', periodOptions.endDate + 'T23:59:59.999Z');
+
+        if (feedbackError) {
+            console.error(`(DB Service) Error fetching RAG feedback for source performance (client ${clientId}):`, feedbackError);
+            return { error: feedbackError.message };
+        }
+
+        if (!feedbackEntries || feedbackEntries.length === 0) {
+            return { data: [], message: "No chunk-specific feedback found for the selected period to analyze source performance." };
+        }
+
+        const sourcePerformanceMap = new Map(); // Key: source_identifier, Value: { positive_feedback_count, negative_feedback_count }
+
+        for (const entry of feedbackEntries) {
+            if (!entry.kb || !entry.kb.metadata) {
+                console.warn(`(DB Service) Feedback entry for chunk ${entry.knowledge_base_chunk_id} is missing knowledge_base record or metadata. Skipping.`);
+                continue;
+            }
+
+            const metadata = entry.kb.metadata;
+            let sourceIdentifier = metadata.original_source_id || metadata.source_name || metadata.url || `ChunkDB_ID_${entry.kb.id}`;
+            if (typeof sourceIdentifier !== 'string') {
+                 sourceIdentifier = String(sourceIdentifier);
+            }
+
+            if (!sourcePerformanceMap.has(sourceIdentifier)) {
+                sourcePerformanceMap.set(sourceIdentifier, {
+                    source_name: sourceIdentifier,
+                    positive_feedback_count: 0,
+                    negative_feedback_count: 0,
+                    neutral_feedback_count: 0,
+                    total_feedback_on_chunks: 0
+                });
+            }
+
+            const perf = sourcePerformanceMap.get(sourceIdentifier);
+            perf.total_feedback_on_chunks += 1;
+
+            if (entry.rating === 1) {
+                perf.positive_feedback_count += 1;
+            } else if (entry.rating === -1) {
+                perf.negative_feedback_count += 1;
+            } else if (entry.rating === 0) {
+                perf.neutral_feedback_count += 1;
+            }
+        }
+
+        const results = Array.from(sourcePerformanceMap.values());
+        results.sort((a, b) => {
+            if (b.total_feedback_on_chunks !== a.total_feedback_on_chunks) {
+                return b.total_feedback_on_chunks - a.total_feedback_on_chunks;
+            }
+            return b.positive_feedback_count - a.positive_feedback_count;
+        });
+
+        return { data: results };
+
+    } catch (err) {
+        console.error(`(DB Service) Exception in getKnowledgeSourcePerformance for client ${clientId}:`, err);
+        return { error: 'An unexpected error occurred while fetching knowledge source performance.' };
+    }
 };

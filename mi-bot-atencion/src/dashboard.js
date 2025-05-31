@@ -557,66 +557,80 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function displayTopicAnalytics(apiData) {
-        const tableBody = topicAnalyticsTableBody;
-        const loadingMsg = topicDataLoadingMsg;
-        if (!tableBody || !loadingMsg) return;
+    function displayTopicAnalytics(apiResponse) {
+        const tableBody = topicAnalyticsTableBody; // Assumed to be globally available or passed
+        const loadingMsg = topicDataLoadingMsg;     // Assumed
+        const topicTable = document.getElementById('topicAnalyticsTable'); // Get the table
+
+        if (!tableBody || !loadingMsg || !topicTable) {
+            console.error("Topic analytics UI elements not found in displayTopicAnalytics.");
+            return;
+        }
 
         loadingMsg.style.display = 'none';
-        tableBody.innerHTML = ''; // Clear previous
+        tableBody.innerHTML = ''; // Clear previous content
+        topicTable.style.display = 'none'; // Hide table initially
 
-        if (apiData && apiData.message) { // Display placeholder message
-            const row = tableBody.insertRow();
-            const cell = row.insertCell();
-            cell.colSpan = 3; // Assuming 3 columns in topic table
-            cell.textContent = apiData.message;
-            cell.style.textAlign = 'center';
-        } else if (apiData && apiData.data && apiData.data.length > 0) {
-            // Future: Render actual topic data if backend implements it
-             apiData.data.forEach(item => {
+        if (apiResponse && apiResponse.data && apiResponse.data.length > 0) {
+            topicTable.style.display = ''; // Show table
+            apiResponse.data.forEach(topic => {
                 const row = tableBody.insertRow();
-                row.insertCell().textContent = item.topic_name || 'N/A';
-                row.insertCell().textContent = item.query_count || 0;
-                row.insertCell().textContent = item.example_queries ? item.example_queries.join(', ') : 'N/A';
+                row.insertCell().textContent = topic.topic_name || 'N/A';
+                row.insertCell().textContent = topic.queries_in_period !== undefined ? topic.queries_in_period : (topic.total_queries_in_topic || 0);
+
+                const escalationRateCell = row.insertCell();
+                escalationRateCell.textContent = topic.escalation_rate !== null && topic.escalation_rate !== undefined ?
+                    (topic.escalation_rate * 100).toFixed(1) + '%' : 'N/A';
+
+                const sentimentCell = row.insertCell();
+                sentimentCell.textContent = topic.average_sentiment !== null && topic.average_sentiment !== undefined ?
+                    topic.average_sentiment.toFixed(2) : 'N/A';
+
+                const repQueriesCell = row.insertCell();
+                repQueriesCell.textContent = topic.representative_queries && topic.representative_queries.length > 0 ?
+                    topic.representative_queries.slice(0, 3).join('; ') + (topic.representative_queries.length > 3 ? '...' : '')
+                    : 'N/A';
+                 // Add more cells if needed, e.g., for total_queries_in_topic if different from queries_in_period
             });
+        } else if (apiResponse && apiResponse.message) {
+            loadingMsg.textContent = apiResponse.message;
+            loadingMsg.style.display = 'block';
         } else {
-            const row = tableBody.insertRow();
-            const cell = row.insertCell();
-            cell.colSpan = 3;
-            cell.textContent = 'No hay datos de temas disponibles.';
-             cell.style.textAlign = 'center';
+            loadingMsg.textContent = 'No topic data available for the selected period.';
+            loadingMsg.style.display = 'block';
         }
     }
 
-    function displayKnowledgeSourcePerformance(apiData) {
-        const tableBody = sourcePerformanceTableBody;
-        const loadingMsg = sourcePerformanceDataLoadingMsg;
-        if (!tableBody || !loadingMsg) return;
+    function displayKnowledgeSourcePerformance(apiResponse) {
+        const tableBody = sourcePerformanceTableBody; // Assumed
+        const loadingMsg = sourcePerformanceDataLoadingMsg; // Assumed
+        const perfTable = document.getElementById('sourcePerformanceTable'); // Get the table
+
+        if (!tableBody || !loadingMsg || !perfTable) {
+            console.error("Source performance UI elements not found in displayKnowledgeSourcePerformance.");
+            return;
+        }
 
         loadingMsg.style.display = 'none';
-        tableBody.innerHTML = ''; // Clear previous
+        tableBody.innerHTML = '';
+        perfTable.style.display = 'none';
 
-        if (apiData && apiData.message) { // Display placeholder message
-            const row = tableBody.insertRow();
-            const cell = row.insertCell();
-            cell.colSpan = 4; // Assuming 4 columns
-            cell.textContent = apiData.message;
-            cell.style.textAlign = 'center';
-        } else if (apiData && apiData.data && apiData.data.length > 0) {
-            // Future: Render actual source performance data
-            apiData.data.forEach(item => {
+        if (apiResponse && apiResponse.data && apiResponse.data.length > 0) {
+            perfTable.style.display = ''; // Show table
+            apiResponse.data.forEach(source => {
                 const row = tableBody.insertRow();
-                row.insertCell().textContent = item.chunk_id || 'N/A';
-                row.insertCell().textContent = item.positive_feedback_count || 0;
-                row.insertCell().textContent = item.negative_feedback_count || 0;
-                row.insertCell().textContent = item.source_name || 'N/A';
+                row.insertCell().textContent = source.source_name || 'Unknown Source';
+                row.insertCell().textContent = source.positive_feedback_count || 0;
+                row.insertCell().textContent = source.negative_feedback_count || 0;
+                row.insertCell().textContent = source.neutral_feedback_count || 0;
+                row.insertCell().textContent = source.total_feedback_on_chunks || 0;
             });
+        } else if (apiResponse && apiResponse.message) {
+            loadingMsg.textContent = apiResponse.message;
+            loadingMsg.style.display = 'block';
         } else {
-             const row = tableBody.insertRow();
-            const cell = row.insertCell();
-            cell.colSpan = 4;
-            cell.textContent = 'No hay datos de rendimiento de fuentes disponibles.';
-            cell.style.textAlign = 'center';
+            loadingMsg.textContent = 'No source performance data available for the selected period.';
+            loadingMsg.style.display = 'block';
         }
     }
 

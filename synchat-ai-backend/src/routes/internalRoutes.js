@@ -13,5 +13,11 @@ router.post(
     internalController.triggerAllClientsSuggestionGeneration
 );
 
+router.post(
+    '/process-query-clusters',
+    internalAuthMiddleware,
+    internalController.triggerProcessQueryClusters
+);
+
 // module.exports = router; // For CommonJS
 export default router; // For ES Modules (matching project type)
