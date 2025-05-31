@@ -43,6 +43,132 @@ export const getClientConfig = async (req, res) => {
 };
 
 /**
+ * Retrieves knowledge suggestions for the client.
+ */
+export const getKnowledgeSuggestions = async (req, res) => {
+    const clientId = req.user?.id;
+    if (!clientId) {
+        return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
+    }
+
+    const {
+        status = 'new', // Default to 'new' suggestions
+        type,
+        limit = 20,
+        offset = 0
+    } = req.query;
+
+    const options = {
+        status,
+        type,
+        limit: parseInt(limit, 10),
+        offset: parseInt(offset, 10)
+    };
+
+    console.log(`(ClientDashboardCtrl) Fetching knowledge suggestions for client ${clientId}, options:`, options);
+
+    try {
+        const suggestions = await db.fetchKnowledgeSuggestions(clientId, options);
+        // Optionally, also fetch total count for pagination if needed by UI:
+        // const { count } = await db.fetchKnowledgeSuggestionsCount(clientId, options);
+        // res.status(200).json({ data: suggestions, total: count });
+        res.status(200).json(suggestions);
+    } catch (error) {
+        console.error(`(ClientDashboardCtrl) Error fetching knowledge suggestions for client ${clientId}:`, error);
+        res.status(500).json({ message: 'Failed to retrieve knowledge suggestions.', error: error.message });
+    }
+};
+
+/**
+ * Updates the status of a knowledge suggestion.
+ */
+export const updateKnowledgeSuggestionStatus = async (req, res) => {
+    const clientId = req.user?.id;
+    const { suggestion_id } = req.params;
+    const { status: newStatus } = req.body;
+
+    if (!clientId) {
+        return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
+    }
+    if (!suggestion_id) {
+        return res.status(400).json({ message: 'Suggestion ID is required in URL parameters.' });
+    }
+    if (!newStatus) {
+        return res.status(400).json({ message: 'New status is required in request body.' });
+    }
+
+    // Basic validation against ENUM values (database service also validates)
+    const validStatuses = ['new', 'reviewed_pending_action', 'action_taken', 'dismissed'];
+    if (!validStatuses.includes(newStatus)) {
+        return res.status(400).json({ message: `Invalid status value: ${newStatus}. Must be one of: ${validStatuses.join(', ')}` });
+    }
+
+    console.log(`(ClientDashboardCtrl) Updating suggestion ${suggestion_id} for client ${clientId} to status ${newStatus}`);
+
+    try {
+        const updatedSuggestion = await db.updateClientKnowledgeSuggestionStatus(clientId, suggestion_id, newStatus);
+        if (!updatedSuggestion) {
+            return res.status(404).json({ message: 'Suggestion not found for this client or update failed.' });
+        }
+        res.status(200).json(updatedSuggestion);
+    } catch (error) {
+        console.error(`(ClientDashboardCtrl) Error updating suggestion ${suggestion_id} status for client ${clientId}:`, error);
+        if (error.message.includes("Invalid status value")) { // Catch error from service layer validation
+            return res.status(400).json({ message: error.message });
+        }
+        res.status(500).json({ message: 'Failed to update knowledge suggestion status.', error: error.message });
+    }
+};
+
+/**
+ * Tests a query against the client's knowledge base using hybrid search (simulating RAG).
+ */
+export const testKnowledgeQuery = async (req, res) => {
+    const clientId = req.user?.id;
+    const { queryText } = req.body;
+
+    if (!clientId) {
+        return res.status(401).json({ message: 'Unauthorized: Client ID not found.' });
+    }
+    if (!queryText || typeof queryText !== 'string' || queryText.trim() === '') {
+        return res.status(400).json({ message: 'queryText is required in the request body and must be a non-empty string.' });
+    }
+
+    console.log(`(ClientDashboardCtrl) Testing knowledge query for client ${clientId}: "${queryText.substring(0, 100)}..."`);
+
+    try {
+        // We'll use the hybridSearch function which already encapsulates much of the RAG logic
+        // Pass null for conversationId as this is a one-off test query, and empty options to use defaults.
+        const searchResult = await db.hybridSearch(clientId, queryText, null, {});
+
+        // The hybridSearch result includes: { results, searchParams, queriesEmbedded, rawRankedResultsForLog }
+        // For this test, we are primarily interested in the 'results' (top N chunks after re-ranking)
+        // and perhaps some of the searchParams or queriesEmbedded for more detailed feedback.
+
+        const testResult = {
+            originalQuery: queryText,
+            processedQueries: searchResult.queriesEmbedded, // Shows original processed + reformulations
+            searchParamsUsed: searchResult.searchParams,
+            retrievedChunks: searchResult.results.map(chunk => ({ // map to a cleaner structure for the frontend
+                id: chunk.id,
+                content: chunk.content,
+                metadata: chunk.metadata,
+                similarity: chunk.vector_similarity, // from vector_search part
+                fts_score: chunk.fts_score, // from fts_search part
+                hybrid_score: chunk.hybrid_score, // initial hybrid score
+                reranked_score: chunk.reranked_score // final score after re-ranking
+            }))
+        };
+
+        res.status(200).json(testResult);
+
+    } catch (error) {
+        console.error(`(ClientDashboardCtrl) Error testing knowledge query for client ${clientId}:`, error);
+        res.status(500).json({ message: 'Failed to test knowledge query.', error: error.message });
+    }
+};
+
+/**
  * Retrieves chatbot analytics summary for the client.
  */
 export const getChatbotAnalyticsSummary = async (req, res) => {

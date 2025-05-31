@@ -8,6 +8,7 @@ import knowledgeManagementRoutes from './src/routes/knowledgeManagementRoutes.js
 import inboxRoutes from './src/routes/inboxRoutes.js'; // Shared Inbox routes
 import paymentRoutes from './src/routes/paymentRoutes.js'; // Payment routes
 import publicChatRoutes from './src/routes/publicChatRoutes.js'; // Public chat routes for the widget
+import internalRoutes from './src/routes/internalRoutes.js'; // Internal routes for scheduled tasks etc.
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -115,6 +116,10 @@ console.log('>>> server.js: Rutas /api/payments montadas');
 console.log('>>> server.js: Montando rutas /api/public-chat (for widget)');
 app.use('/api/public-chat', publicChatRoutes);
 console.log('>>> server.js: Rutas /api/public-chat montadas');
+
+console.log('>>> server.js: Montando rutas /api/internal/v1');
+app.use('/api/internal/v1', internalRoutes); // Using versioned path
+console.log('>>> server.js: Rutas /api/internal/v1 montadas');
 
 
 // --- Manejo de Errores (Al final) ---

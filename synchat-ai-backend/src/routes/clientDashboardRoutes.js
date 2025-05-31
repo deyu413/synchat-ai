@@ -6,8 +6,11 @@ import { // Assuming clientDashboardController.js uses named exports
     updateClientConfig,
     requestKnowledgeIngest,
     getClientUsageResolutions,
-    getChatbotAnalyticsSummary, // Add new controller function
-    getUnansweredQuerySuggestions, // Add new controller function
+    getChatbotAnalyticsSummary,
+    getUnansweredQuerySuggestions,
+    testKnowledgeQuery,
+    getKnowledgeSuggestions, // New controller function for getting suggestions
+    updateKnowledgeSuggestionStatus, // New controller function for updating suggestion status
 } from '../controllers/clientDashboardController.js';
 
 const router = express.Router();
@@ -21,5 +24,12 @@ router.get('/me/usage/resolutions', protectRoute, getClientUsageResolutions);
 // New analytics routes
 router.get('/me/analytics/summary', protectRoute, getChatbotAnalyticsSummary);
 router.get('/me/analytics/suggestions/unanswered', protectRoute, getUnansweredQuerySuggestions);
+
+// New route for testing knowledge query
+router.post('/me/knowledge/test_query', protectRoute, testKnowledgeQuery);
+
+// Routes for knowledge suggestions
+router.get('/me/knowledge/suggestions', protectRoute, getKnowledgeSuggestions);
+router.put('/me/knowledge/suggestions/:suggestion_id/status', protectRoute, updateKnowledgeSuggestionStatus);
 
 export default router;

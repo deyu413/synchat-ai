@@ -15,15 +15,16 @@ const knowledgeManagementSection = document.getElementById('knowledgeManagement'
 const usageSection = document.getElementById('usage');
 const inboxSection = document.getElementById('inboxSection');
 const widgetSection = document.getElementById('widget'); // Assuming a widget section exists
-const analyticsSection = document.getElementById('analyticsSection'); // New Analytics Section
+const analyticsSection = document.getElementById('analyticsSection');
 
 // --- Navigation Links ---
-const navConfigLink = document.querySelector('nav ul li a[href="#config"]');
-const navIngestLink = document.querySelector('nav ul li a[href="#ingest"]'); // Note: href="#ingest" was in HTML, but no section for it. Assuming knowledgeManagement is used.
-const navWidgetLink = document.querySelector('nav ul li a[href="#widget"]');
-const navUsageLink = document.querySelector('nav ul li a[href="#usage"]');
-const navInboxLink = document.getElementById('navInboxLink');
-const navAnalyticsLink = document.querySelector('nav ul li a[data-section="analyticsSection"]'); // New Analytics Link
+// Generic selector will handle these:
+// const navConfigLink = document.querySelector('nav ul li a[href="#config"]');
+// const navIngestLink = document.querySelector('nav ul li a[href="#ingest"]');
+// const navWidgetLink = document.querySelector('nav ul li a[href="#widget"]');
+// const navUsageLink = document.querySelector('nav ul li a[href="#usage"]');
+// const navInboxLink = document.getElementById('navInboxLink');
+// const navAnalyticsLink = document.querySelector('nav ul li a[data-section="analyticsSection"]');
 
 // --- Config Form Elements ---
 const configForm = document.getElementById('configForm');
@@ -81,29 +82,40 @@ const avgDurationEl = document.getElementById('avgDuration');
 const avgMessagesPerConversationEl = document.getElementById('avgMessagesPerConversation');
 const unansweredQueriesListEl = document.getElementById('unansweredQueriesList');
 
+// --- Knowledge Suggestions Elements (within Analytics section) ---
+const suggestionStatusFilterEl = document.getElementById('suggestionStatusFilter');
+const refreshSuggestionsBtnEl = document.getElementById('refreshSuggestionsBtn');
+const knowledgeSuggestionsListEl = document.getElementById('knowledgeSuggestionsList');
+
 
 // --- State Variables ---
 let currentClientId = null;
 let currentOpenConversationId = null;
 let currentConversations = [];
-let analyticsDataLoadedOnce = false; // Flag for initial analytics load
+let analyticsDataLoadedOnce = false;
+let knowledgeSuggestionsLoadedOnce = false; // New flag for suggestions
 
 // --- Helper to show/hide sections ---
 const allDashboardSections = [configSection, knowledgeManagementSection, usageSection, inboxSection, widgetSection, analyticsSection].filter(Boolean);
 
 function showSection(sectionIdToShow) {
     allDashboardSections.forEach(section => {
-        if (section.id === sectionIdToShow) {
+        if (section && section.id === sectionIdToShow) {
             section.style.display = 'block';
-            if (section.id === 'analyticsSection' && !analyticsDataLoadedOnce && analyticsPeriodSelector) {
-                loadChatbotAnalytics(analyticsPeriodSelector.value);
-                analyticsDataLoadedOnce = true;
+            if (section.id === 'analyticsSection') {
+                if (!analyticsDataLoadedOnce && analyticsPeriodSelector) {
+                    loadChatbotAnalytics(analyticsPeriodSelector.value);
+                    analyticsDataLoadedOnce = true;
+                }
+                if (!knowledgeSuggestionsLoadedOnce && suggestionStatusFilterEl) {
+                    loadKnowledgeSuggestions(suggestionStatusFilterEl.value);
+                    knowledgeSuggestionsLoadedOnce = true;
+                }
             }
-        } else {
+        } else if (section) {
             section.style.display = 'none';
         }
     });
-    // Update URL hash
     window.location.hash = sectionIdToShow;
 }
 
@@ -130,12 +142,12 @@ async function checkAuthAndLoadDashboard() {
     await loadKnowledgeSources();
     
     const hash = window.location.hash.substring(1);
-    const sectionExists = allDashboardSections.some(s => s.id === hash);
+    const sectionElement = document.getElementById(hash);
 
-    if (hash && sectionExists) {
+    if (hash && sectionElement && allDashboardSections.map(s=>s.id).includes(hash)) {
         showSection(hash);
         if (hash === 'inboxSection' && inboxStatusFilter) await loadInboxConversations(inboxStatusFilter.value);
-    } else if (configSection) { // Default to config if no valid hash or hash is empty
+    } else if (configSection) {
         showSection('config');
     }
 
@@ -148,25 +160,25 @@ async function checkAuthAndLoadDashboard() {
 document.querySelectorAll('nav ul li a[data-section]').forEach(link => {
     link.addEventListener('click', (e) => {
         e.preventDefault();
-        const sectionId = e.target.dataset.section;
-        if (document.getElementById(sectionId)) { // Check if section actually exists
+        const sectionId = e.currentTarget.dataset.section; // Use currentTarget for safety
+        if (document.getElementById(sectionId)) {
             showSection(sectionId);
             if (sectionId === 'inboxSection' && inboxStatusFilter) {
                  loadInboxConversations(inboxStatusFilter.value);
             }
         } else {
             console.warn(`Navigation link points to non-existent section: ${sectionId}`);
-            if(configSection) showSection('config'); // Default to config if link is broken
+            if(configSection) showSection('config');
         }
     });
 });
 
-// Special handling for original nav links if they don't have data-section
-if (navConfigLink) navConfigLink.addEventListener('click', (e) => { e.preventDefault(); showSection('config'); });
-if (navIngestLink && knowledgeManagementSection) navIngestLink.addEventListener('click', (e) => { e.preventDefault(); showSection('knowledgeManagement'); }); // Assuming ingest maps to knowledgeManagement
-if (navWidgetLink && widgetSection) navWidgetLink.addEventListener('click', (e) => { e.preventDefault(); showSection('widget'); });
-if (navUsageLink && usageSection) navUsageLink.addEventListener('click', (e) => { e.preventDefault(); showSection('usage'); });
-if (navInboxLink && inboxSection) {
+// Remove individual nav link listeners if all use data-section now
+// if (navConfigLink) navConfigLink.addEventListener('click', (e) => { e.preventDefault(); showSection('config'); });
+// if (navIngestLink && knowledgeManagementSection) navIngestLink.addEventListener('click', (e) => { e.preventDefault(); showSection('knowledgeManagement'); });
+// if (navWidgetLink && widgetSection) navWidgetLink.addEventListener('click', (e) => { e.preventDefault(); showSection('widget'); });
+// if (navUsageLink && usageSection) navUsageLink.addEventListener('click', (e) => { e.preventDefault(); showSection('usage'); });
+if (navInboxLink && inboxSection) { // This one might also be a data-section link
     navInboxLink.addEventListener('click', async (e) => {
         e.preventDefault();
         showSection('inboxSection');
@@ -256,7 +268,24 @@ async function loadKnowledgeSources() {
                 const deleteButtonDisabled = (source.source_id === 'main_url' || source.status === 'ingesting') ? 'disabled' : '';
 
                 const textContentDiv = document.createElement('div');
-                textContentDiv.innerHTML = `<strong>${source.source_name || 'Fuente sin nombre'}</strong> (${source.source_type || 'N/A'}) - Estado: ${statusDisplay} ${source.last_ingest_at ? `- Última ingesta: ${new Date(source.last_ingest_at).toLocaleString()}` : ''} ${source.last_ingest_error ? `<br><small style="color:red;">Error: ${source.last_ingest_error}</small>` : ''}`;
+
+                let accessibilityHtml = '';
+                if (source.source_type === 'url' && source.last_accessibility_status && source.last_accessibility_status !== 'OK' && source.last_accessibility_status !== 'OK_EDGE') {
+                    let warningText = `⚠️ Problema Detectado (${source.last_accessibility_status})`;
+                    let titleText = `Última comprobación: ${source.last_accessibility_check_at ? new Date(source.last_accessibility_check_at).toLocaleString() : 'N/A'}`;
+                    if (source.last_accessibility_status.startsWith('ERROR_4') || source.last_accessibility_status.startsWith('ERROR_5')) {
+                        warningText = `⚠️ URL Inaccesible (${source.last_accessibility_status.replace('_EDGE','')})`;
+                    } else if (source.last_accessibility_status.includes('CONTENT_CHANGED_SIGNIFICANTLY')) {
+                        warningText = `🔄 Contenido Modificado (Re-ingerir)`;
+                    } else if (['ERROR_CONNECTION', 'ERROR_CONNECTION_EDGE'].includes(source.last_accessibility_status)) {
+                        warningText = `⚠️ Error de Conexión al verificar URL`;
+                    } else if (['ERROR_EMPTY_CONTENT', 'ERROR_NO_TEXT_EXTRACTED', 'ERROR_EMPTY_CONTENT_EDGE', 'ERROR_NO_TEXT_EXTRACTED_EDGE'].includes(source.last_accessibility_status)) {
+                        warningText = `⚠️ Contenido Vacío o Inválido en URL`;
+                    }
+                    accessibilityHtml = `<em class="source-status-alert" style="color: #856404; background-color: #fff3cd; border: 1px solid #ffeeba; padding: 3px 6px; border-radius: 4px; font-size: 0.85em; display: inline-block; margin-top: 4px;" title="${titleText}">${warningText}</em>`;
+                }
+
+                textContentDiv.innerHTML = `<strong>${source.source_name || 'Fuente sin nombre'}</strong> (${source.source_type || 'N/A'}) - Estado: ${statusDisplay} ${source.last_ingest_at ? `- Última ingesta: ${new Date(source.last_ingest_at).toLocaleString()}` : ''} ${source.last_ingest_error ? `<br><small style="color:red;">Error: ${source.last_ingest_error}</small>` : ''}${accessibilityHtml}`;
 
                 const frequencyDiv = document.createElement('div');
                 frequencyDiv.style.fontSize = '0.9em';
@@ -406,7 +435,7 @@ async function deleteKnowledgeSource(sourceId) {
 }
 
 // --- Shared Inbox Functions ---
-// ... (existing inbox functions remain here) ...
+// ... (existing inbox functions) ...
 async function loadInboxConversations(statusFilter = '') {
     if (!inboxLoadingMsg || !inboxConvList) return;
     inboxLoadingMsg.style.display = 'block';
@@ -1029,5 +1058,13 @@ async function displayClientUsage() {
 }
 
 document.addEventListener('DOMContentLoaded', checkAuthAndLoadDashboard);
+
+// Ensure this is at the very end or after all other DOM element definitions
+const navAnalyticsLinkFromDataSection = document.querySelector('nav ul li a[data-section="analyticsSection"]');
+if (navAnalyticsLinkFromDataSection) { // Check if the link itself exists
+    // This listener is already covered by the generic data-section handler,
+    // but if specific logic for Analytics first load was needed here beyond what showSection does, it would go here.
+    // For now, the generic data-section handler and the logic in showSection cover the initial load.
+}
 
 [end of mi-bot-atencion/src/dashboard.js]

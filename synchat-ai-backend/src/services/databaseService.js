@@ -83,6 +83,53 @@ export const getClientConfig = async (clientId) => {
 };
 
 /**
+ * Fetches all active client IDs.
+ */
+export const getAllActiveClientIds = async () => {
+    console.log(`(DB Service) Fetching all active client IDs from 'synchat_clients'`);
+    try {
+        // Assuming 'subscription_status' is a more reliable indicator of active clients
+        // than a generic 'is_active' column, if 'is_active' isn't standard on synchat_clients.
+        // Adjust if 'is_active' is indeed the correct column.
+        const { data, error } = await supabase
+            .from('synchat_clients')
+            .select('client_id')
+            .in('subscription_status', ['active', 'trialing']); // Example active statuses
+
+        if (error) {
+            console.error(`(DB Service) Error fetching active client IDs:`, error.message);
+            throw error;
+        }
+        return data ? data.map(c => c.client_id) : [];
+    } catch (error) {
+        console.error(`(DB Service) Exception in getAllActiveClientIds:`, error.message);
+        throw error;
+    }
+};
+
+/**
+ * Fetches all active client IDs.
+ */
+export const getAllActiveClientIds = async () => {
+    console.log(`(DB Service) Fetching all active client IDs from 'synchat_clients'`);
+    try {
+        const { data, error } = await supabase
+            .from('synchat_clients')
+            .select('client_id')
+            .eq('is_active', true); // Assuming 'is_active' boolean column exists
+
+        if (error) {
+            console.error(`(DB Service) Error fetching active client IDs:`, error.message);
+            throw error;
+        }
+        return data ? data.map(c => c.client_id) : [];
+    } catch (error) {
+        console.error(`(DB Service) Exception in getAllActiveClientIds:`, error.message);
+        throw error;
+    }
+};
+
+/**
  * Fetches a sample of chunks for a given knowledge source.
  */
 export const getChunkSampleForSource = async (clientId, sourceId, limit = 5) => {
@@ -402,6 +449,87 @@ Processed Query: "${processedQueryText.substring(0,100)}..."`);
         return { results: [], searchParams: searchParamsForLog, queriesEmbedded: [queryText], rawRankedResultsForLog: [] }; // Return empty results on error
     }
 };
+
+// --- Knowledge Suggestion Functions ---
+
+/**
+ * Fetches knowledge suggestions for a client with optional filters.
+ */
+export const fetchKnowledgeSuggestions = async (clientId, { status = 'new', type, limit = 20, offset = 0 }) => {
+    if (!clientId) throw new Error("Client ID is required to fetch knowledge suggestions.");
+
+    console.log(`(DB Service) Fetching knowledge suggestions for client ${clientId}, status: ${status}, type: ${type}, limit: ${limit}, offset: ${offset}`);
+    try {
+        let query = supabase
+            .from('knowledge_suggestions')
+            .select('*')
+            .eq('client_id', clientId);
+
+        if (status && status.toLowerCase() !== 'all') {
+            query = query.eq('status', status);
+        }
+        if (type) {
+            query = query.eq('type', type);
+        }
+
+        query = query.order('created_at', { ascending: false })
+                     .range(offset, offset + limit - 1);
+
+        const { data, error } = await query;
+
+        if (error) {
+            console.error(`(DB Service) Error fetching knowledge suggestions for client ${clientId}:`, error.message);
+            throw error;
+        }
+        return data || [];
+    } catch (error) {
+        console.error(`(DB Service) Exception in fetchKnowledgeSuggestions for client ${clientId}:`, error.message);
+        throw error;
+    }
+};
+
+/**
+ * Updates the status of a specific knowledge suggestion for a client.
+ */
+export const updateClientKnowledgeSuggestionStatus = async (clientId, suggestionId, newStatus) => {
+    if (!clientId || !suggestionId || !newStatus) {
+        throw new Error("Client ID, Suggestion ID, and new status are required.");
+    }
+
+    // Validate newStatus against the ENUM values (optional here, but good practice for robustness if ENUM isn't strictly enforced by DB for all roles)
+    const validStatuses = ['new', 'reviewed_pending_action', 'action_taken', 'dismissed'];
+    if (!validStatuses.includes(newStatus)) {
+        console.error(`(DB Service) Invalid status value "${newStatus}" for suggestion ${suggestionId}.`);
+        throw new Error(`Invalid status value: ${newStatus}.`);
+    }
+
+    console.log(`(DB Service) Updating suggestion ${suggestionId} for client ${clientId} to status ${newStatus}`);
+    try {
+        const { data, error } = await supabase
+            .from('knowledge_suggestions')
+            .update({
+                status: newStatus,
+                updated_at: new Date().toISOString()
+            })
+            .eq('client_id', clientId)
+            .eq('suggestion_id', suggestionId)
+            .select()
+            .single(); // Expecting to update and return a single row
+
+        if (error) {
+            console.error(`(DB Service) Error updating suggestion status for suggestion ${suggestionId}, client ${clientId}:`, error.message);
+            if (error.code === 'PGRST116') { // No row found for the update
+                return null; // Or throw a specific "not found" error
+            }
+            throw error;
+        }
+        return data; // Returns the updated suggestion
+    } catch (error) {
+        console.error(`(DB Service) Exception in updateClientKnowledgeSuggestionStatus for suggestion ${suggestionId}:`, error.message);
+        throw error;
+    }
+};
+
 
 // --- Analytics Helper Functions ---
 
