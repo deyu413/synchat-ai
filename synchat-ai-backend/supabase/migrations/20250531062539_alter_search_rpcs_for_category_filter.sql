@@ -23,7 +23,7 @@ BEGIN
         kb.id,
         kb.content,
         kb.metadata,
-        kb.knowledge_source_id,
+        (kb.metadata->>'original_source_id')::uuid AS knowledge_source_id,
         1 - (kb.embedding <=> query_embedding) AS similarity
     FROM
         public.knowledge_base kb
@@ -70,7 +70,7 @@ BEGIN
         kb.id,
         kb.content,
         kb.metadata,
-        kb.knowledge_source_id,
+        (kb.metadata->>'original_source_id')::uuid AS knowledge_source_id,
         ts_rank_cd(kb.fts_document_vector, ts_query_obj) AS rank -- fts_document_vector is assumed to be the tsvector column
     FROM
         public.knowledge_base kb

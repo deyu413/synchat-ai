@@ -10,13 +10,40 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const BACKEND_API_URL = Deno.env.get('BACKEND_API_URL')! // e.g., https://your-app.vercel.app/api
 const INTERNAL_API_SECRET = Deno.env.get('INTERNAL_API_SECRET')! // A secret to authenticate this Edge Function to your backend
 
+// Placeholder for a more robust alerting system (e.g., DB table insert)
+async function sendAlert(supabaseAdmin: SupabaseClient | null, functionName: string, severity: string, message: string, details: object) {
+  const alertPayload = {
+    function_name: functionName,
+    severity: severity,
+    message: message,
+    details: details,
+    // created_at would be defaulted by DB if inserting
+  };
+  console.error(`ALERT [${severity.toUpperCase()}] for ${functionName}: ${message}`, details);
+
+  // Example: Insert into a system_alerts table (if it exists and SupabaseClient is provided)
+  // if (supabaseAdmin) {
+  //   try {
+  //     const { error } = await supabaseAdmin.from('system_alerts').insert([alertPayload]);
+  //     if (error) {
+  //       console.error(`(EdgeFunc) Failed to insert alert into system_alerts for ${functionName}:`, error);
+  //     } else {
+  //       console.log(`(EdgeFunc) System alert for ${functionName} successfully recorded.`);
+  //     }
+  //   } catch (e) {
+  //     console.error(`(EdgeFunc) Exception while trying to store alert for ${functionName}:`, e);
+  //   }
+  // }
+}
+
 interface Client {
   client_id: string;
   // Add other relevant fields if needed, e.g., for filtering active clients
 }
 
-async function triggerSuggestionGenerationForClient(clientId: string) {
+async function triggerSuggestionGenerationForClient(clientId: string, supabaseAdminForAlerts: SupabaseClient | null): Promise<boolean> {
   console.log(`(EdgeFunc) Triggering suggestion generation for client: ${clientId}`);
+  let success = true;
 
   const headers = {
     'Content-Type': 'application/json',
@@ -32,6 +59,7 @@ async function triggerSuggestionGenerationForClient(clientId: string) {
     });
     if (!contentGapResponse.ok) {
       console.error(`(EdgeFunc) Error triggering content gap suggestions for ${clientId}: ${contentGapResponse.status} ${await contentGapResponse.text()}`);
+      success = false;
     } else {
       console.log(`(EdgeFunc) Successfully triggered content gap suggestions for ${clientId}.`);
     }
@@ -44,13 +72,16 @@ async function triggerSuggestionGenerationForClient(clientId: string) {
     });
     if (!faqEscalationResponse.ok) {
       console.error(`(EdgeFunc) Error triggering FAQ (escalation) suggestions for ${clientId}: ${faqEscalationResponse.status} ${await faqEscalationResponse.text()}`);
+      success = false;
     } else {
       console.log(`(EdgeFunc) Successfully triggered FAQ (escalation) suggestions for ${clientId}.`);
     }
 
   } catch (error) {
     console.error(`(EdgeFunc) Exception while triggering suggestions for client ${clientId}:`, error.message);
+    success = false;
   }
+  return success;
 }
 
 serve(async (req) => {
@@ -98,18 +129,51 @@ serve(async (req) => {
     }
 
     console.log(`(EdgeFunc) Found ${clients.length} clients to process for suggestions.`);
+    const totalClients = clients.length;
+    let failedClientOperations = 0;
+
     for (const client of clients) {
-      await triggerSuggestionGenerationForClient(client.client_id);
+      const clientSuccess = await triggerSuggestionGenerationForClient(client.client_id, supabaseAdmin);
+      if (!clientSuccess) {
+        failedClientOperations++;
+      }
       // Add a small delay if calling out to many clients to avoid overwhelming your backend
       await new Promise(resolve => setTimeout(resolve, 500)); // 0.5 second delay
     }
 
-    return new Response(JSON.stringify({ message: `Attempted suggestion generation for ${clients.length} clients.` }), {
+    const failureThresholdPercentage = 0.3; // 30%
+    const minAbsoluteFailuresForAlert = 3; // Minimum number of failures to trigger alert, regardless of percentage
+
+    if (totalClients > 0 &&
+        (failedClientOperations >= minAbsoluteFailuresForAlert ||
+         (failedClientOperations / totalClients) > failureThresholdPercentage)) {
+      await sendAlert(
+        supabaseAdmin,
+        'knowledge-suggestion-generator',
+        'critical',
+        'High failure rate in suggestion generation process.',
+        {
+          totalClientsProcessed: totalClients,
+          failedClientOperations: failedClientOperations,
+          failureRate: (failedClientOperations / totalClients).toFixed(2)
+        }
+      );
+    }
+
+    return new Response(JSON.stringify({ message: `Attempted suggestion generation for ${clients.length} clients. Failed operations: ${failedClientOperations}` }), {
       headers: { 'Content-Type': 'application/json' },
       status: 200,
     });
 
   } catch (error) {
+    // Consider a top-level alert if the whole function fails catastrophically before/during client loop
+    await sendAlert(
+      null, // supabaseAdmin might not be initialized if error is very early
+      'knowledge-suggestion-generator',
+      'critical',
+      'Main serve function failed catastrophically.',
+      { error: error.message, stack: error.stack }
+    );
     console.error('(EdgeFunc) Error in knowledge suggestion generator function:', error.message, error.stack);
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { 'Content-Type': 'application/json' },

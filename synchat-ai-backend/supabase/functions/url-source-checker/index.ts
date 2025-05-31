@@ -7,6 +7,32 @@ import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 
+// Placeholder for a more robust alerting system (e.g., DB table insert)
+async function sendAlert(supabaseAdmin: SupabaseClient | null, functionName: string, severity: string, message: string, details: object) {
+  const alertPayload = {
+    function_name: functionName,
+    severity: severity,
+    message: message,
+    details: details,
+    // created_at would be defaulted by DB if inserting
+  };
+  console.error(`ALERT [${severity.toUpperCase()}] for ${functionName}: ${message}`, details);
+
+  // Example: Insert into a system_alerts table (if it exists and SupabaseClient is provided)
+  // if (supabaseAdmin) {
+  //   try {
+  //     const { error } = await supabaseAdmin.from('system_alerts').insert([alertPayload]);
+  //     if (error) {
+  //       console.error(`(EdgeFunc) Failed to insert alert into system_alerts for ${functionName}:`, error);
+  //     } else {
+  //       console.log(`(EdgeFunc) System alert for ${functionName} successfully recorded.`);
+  //     }
+  //   } catch (e) {
+  //     console.error(`(EdgeFunc) Exception while trying to store alert for ${functionName}:`, e);
+  //   }
+  // }
+}
+
 // --- User Agent for HTTP Requests ---
 const USER_AGENT = 'Mozilla/5.0 (compatible; SynChatSupabaseEdgeMonitor/1.0; +https://www.synchatai.com/bot-monitor)';
 
@@ -36,14 +62,14 @@ async function calculateSha256(text: string): Promise<string> {
 
 // --- Core Logic (Adapted conceptual version of checkUrlSourceStatus) ---
 interface Source {
-  id: string; // Assuming id is UUID, but Supabase returns it as string from select
+  source_id: string; // Assuming id is UUID, but Supabase returns it as string from select
   source_url: string;
   last_known_content_hash: string | null;
   client_id: string; // For any per-client logic or detailed logging
 }
 
-async function checkAndRecordSourceStatus(supabaseAdmin: SupabaseClient, source: Source) {
-  console.log(`(EdgeFunc) Checking source ID: ${source.id}, URL: ${source.source_url}`);
+async function checkAndRecordSourceStatus(supabaseAdmin: SupabaseClient, source: Source): Promise<boolean> {
+  console.log(`(EdgeFunc) Checking source ID: ${source.source_id}, URL: ${source.source_url}`);
   let accessibilityStatus = 'UNKNOWN_ERROR_EDGE';
   let newHash = null;
   let mainStatusUpdate = {}; // To update the main 'status' column if needed
@@ -69,18 +95,18 @@ async function checkAndRecordSourceStatus(supabaseAdmin: SupabaseClient, source:
           } else {
             accessibilityStatus = 'CONTENT_CHANGED_SIGNIFICANTLY_EDGE';
             mainStatusUpdate = { status: 'pending_reingest' }; // Mark for re-ingestion
-            console.log(`(EdgeFunc) Content change detected for source ID: ${source.id}. Old hash: ${source.last_known_content_hash}, New hash: ${newHash}`);
+            console.log(`(EdgeFunc) Content change detected for source ID: ${source.source_id}. Old hash: ${source.last_known_content_hash}, New hash: ${newHash}`);
           }
         }
       }
     } else {
       accessibilityStatus = `ERROR_${response.status}_EDGE`;
-      console.warn(`(EdgeFunc) HTTP error for source ID: ${source.id}. Status: ${response.status}`);
+      console.warn(`(EdgeFunc) HTTP error for source ID: ${source.source_id}. Status: ${response.status}`);
     }
   } catch (error) {
     // Deno's fetch throws for network errors (unlike Axios which might resolve with error.response)
     accessibilityStatus = 'ERROR_CONNECTION_EDGE';
-    console.warn(`(EdgeFunc) Network/Connection error for source ID: ${source.id}. URL: ${source.source_url}`, error.message);
+    console.warn(`(EdgeFunc) Network/Connection error for source ID: ${source.source_id}. URL: ${source.source_url}`, error.message);
   }
 
   // Update knowledge_sources table
@@ -98,15 +124,18 @@ async function checkAndRecordSourceStatus(supabaseAdmin: SupabaseClient, source:
     const { error: dbError } = await supabaseAdmin
       .from('knowledge_sources')
       .update(updatePayload)
-      .eq('id', source.id); // Assuming 'id' is the primary key column for knowledge_sources
+      .eq('source_id', source.source_id); // Assuming 'id' is the primary key column for knowledge_sources
 
     if (dbError) {
-      console.error(`(EdgeFunc) DB Error updating source ID ${source.id}:`, dbError.message);
+      console.error(`(EdgeFunc) DB Error updating source ID ${source.source_id}:`, dbError.message);
+      return false;
     } else {
-      console.log(`(EdgeFunc) Updated source ID ${source.id} with status: ${accessibilityStatus}. Main status: ${mainStatusUpdate.status || '(no change)'}`);
+      console.log(`(EdgeFunc) Updated source ID ${source.source_id} with status: ${accessibilityStatus}. Main status: ${mainStatusUpdate.status || '(no change)'}`);
+      return true;
     }
   } catch (dbUpdateError) {
-    console.error(`(EdgeFunc) DB Exception updating source ID ${source.id}:`, dbUpdateError.message);
+    console.error(`(EdgeFunc) DB Exception updating source ID ${source.source_id}:`, dbUpdateError.message);
+    return false;
   }
 }
 
@@ -139,7 +168,7 @@ serve(async (req) => {
     // If your knowledge_sources table uses 'source_id' as PK, adjust .eq('id', source.id) below.
     const { data: sources, error: queryError } = await supabaseAdmin
       .from('knowledge_sources')
-      .select('id, source_url, source_name, last_known_content_hash, client_id') // source_name is where URL is stored for type 'url'
+      .select('source_id, source_url, source_name, last_known_content_hash, client_id') // source_name is where URL is stored for type 'url'
       .eq('source_type', 'url')
       // Check sources not checked in last 7 days OR never checked at all.
       .or(`last_accessibility_check_at.is.null,last_accessibility_check_at.<=${sevenDaysAgo}`)
@@ -159,23 +188,50 @@ serve(async (req) => {
     }
 
     console.log(`(EdgeFunc) Found ${sources.length} URL sources to check.`);
+    const totalSourcesAttempted = sources.length;
+    let dbUpdateFailures = 0;
+
     for (const source of sources) {
       // For 'url' type sources, the URL is often stored in 'source_name'.
       // Adjust if your schema uses 'source_url' column directly.
       const urlToCheck = source.source_url || source.source_name;
       if (urlToCheck && urlToCheck.startsWith('http')) {
-        await checkAndRecordSourceStatus(supabaseAdmin, { ...source, source_url: urlToCheck });
+        const updateSuccess = await checkAndRecordSourceStatus(supabaseAdmin, { ...source, source_url: urlToCheck });
+        if (!updateSuccess) {
+          dbUpdateFailures++;
+        }
       } else {
-        console.warn(`(EdgeFunc) Skipping source ID ${source.id} as URL is invalid or missing: ${urlToCheck}`);
+        console.warn(`(EdgeFunc) Skipping source ID ${source.source_id} as URL is invalid or missing: ${urlToCheck}`);
+        // Not incrementing dbUpdateFailures here as it's a skip, not a DB write failure.
       }
     }
 
-    return new Response(JSON.stringify({ message: `Processed ${sources.length} sources.` }), {
+    const failureThresholdPercentage = 0.20; // 20%
+    const minAbsoluteDbFailuresForAlert = 3;
+
+    if (totalSourcesAttempted > 0 &&
+        (dbUpdateFailures >= minAbsoluteDbFailuresForAlert ||
+         (dbUpdateFailures / totalSourcesAttempted) > failureThresholdPercentage)) {
+      await sendAlert(
+        supabaseAdmin,
+        'url-source-checker',
+        'critical',
+        'High rate of database update failures during source checking.',
+        {
+          totalSourcesAttempted: totalSourcesAttempted,
+          dbUpdateFailures: dbUpdateFailures,
+          failureRate: (dbUpdateFailures / totalSourcesAttempted).toFixed(2)
+        }
+      );
+    }
+
+    return new Response(JSON.stringify({ message: `Processed ${totalSourcesAttempted} sources. DB update failures: ${dbUpdateFailures}.` }), {
       headers: { 'Content-Type': 'application/json' },
       status: 200,
     });
 
   } catch (error) {
+    await sendAlert(null, 'url-source-checker', 'critical', 'Url-source-checker function failed catastrophically.', { error: error.message, stack: error.stack });
     console.error('(EdgeFunc) Error in URL source checker function:', error.message, error.stack);
     return new Response(JSON.stringify({ error: error.message }), {
       headers: { 'Content-Type': 'application/json' },

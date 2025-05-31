@@ -69,13 +69,20 @@ USING (
 WITH CHECK (
     EXISTS (
         SELECT 1 FROM public.synchat_clients sc
-        WHERE sc.client_id = public.knowledge_suggestions.client_id AND sc.client_id = auth.uid()
+        WHERE sc.client_id = public.knowledge_suggestions.client_id
+        AND sc.client_id = auth.uid() -- This line should reflect previous correction
     )
-    AND (NEW.status IS NOT NULL) -- Client can only update status; other fields protected.
-    -- To allow updating only specific columns like status:
-    -- AND (NEW.client_id = OLD.client_id) AND (NEW.type = OLD.type) ... etc for all other columns
-    -- For simplicity, this check relies on backend logic to only send status updates from client-facing API.
-    -- A more restrictive check would explicitly list all non-updatable columns.
+    AND (NEW.client_id = OLD.client_id)
+    AND (NEW.type = OLD.type)
+    AND (NEW.title = OLD.title)
+    AND (NEW.description = OLD.description)
+    AND (NEW.source_queries IS NOT DISTINCT FROM OLD.source_queries)
+    AND (NEW.example_resolution IS NOT DISTINCT FROM OLD.example_resolution)
+    AND (NEW.related_knowledge_source_ids IS NOT DISTINCT FROM OLD.related_knowledge_source_ids)
+    -- created_at should not be updatable by this policy, and OLD.created_at isn't implicitly checked against NEW.created_at unless specified.
+    -- It's generally assumed created_at is immutable after creation.
+    AND (NEW.status IS DISTINCT FROM OLD.status AND NEW.status IS NOT NULL)
+    -- updated_at should be handled by a trigger, so no check needed here for it.
 );
 
 -- Service role will be used by backend for inserts and more privileged updates.

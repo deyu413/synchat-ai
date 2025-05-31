@@ -875,8 +875,8 @@ export const getChunksForSource = async (clientId, sourceId, page = 1, pageSize 
         // Verify ownership and existence of the source
         const { data: sourceData, error: sourceError } = await supabase
             .from('knowledge_sources')
-            .select('id')
-            .eq('id', sourceId)
+            .select('source_id') // Select the correct PK column name
+            .eq('source_id', sourceId) // Query by the correct PK column name
             .eq('client_id', clientId)
             .single();
 
