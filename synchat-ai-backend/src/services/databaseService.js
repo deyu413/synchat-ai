@@ -1,4 +1,5 @@
 // src/services/databaseService.js
+import logger from '../utils/logger.js';
 import { supabase } from './supabaseClient.js'; // Importar cliente inicializado
 import { getEmbedding } from './embeddingService.js'; // Necesario para búsqueda híbrida
 import { getChatCompletion } from './openaiService.js'; // Import for query reformulation
@@ -65,11 +66,11 @@ let crossEncoderPipeline = null;
 async function getCrossEncoderPipeline() {
     if (crossEncoderPipeline === null) {
         try {
-            console.log(`(DB Service) Initializing cross-encoder pipeline: ${CROSS_ENCODER_MODEL_NAME}`);
+            logger.info(`(DB Service) Initializing cross-encoder pipeline: ${CROSS_ENCODER_MODEL_NAME}`);
             crossEncoderPipeline = await pipeline('text-classification', CROSS_ENCODER_MODEL_NAME, {});
-            console.log("(DB Service) Cross-encoder pipeline initialized successfully.");
+            logger.info("(DB Service) Cross-encoder pipeline initialized successfully.");
         } catch (error) {
-            console.error("(DB Service) Error initializing cross-encoder pipeline:", error);
+            logger.error("(DB Service) Error initializing cross-encoder pipeline:", error);
             crossEncoderPipeline = false;
         }
     }
@@ -94,7 +95,7 @@ export const getConversationHistory = async (conversationId) => { /* ... */ };
 
 export const saveMessage = async (conversationId, sender, textContent, ragInteractionRef = null) => {
     if (!conversationId || !sender || typeof textContent !== 'string') {
-        console.error('(DB Service) Invalid parameters for saveMessage.');
+        logger.warn('(DB Service) Invalid parameters for saveMessage.');
         return { error: 'Invalid parameters: conversationId, sender, and textContent are required.' };
     }
 
@@ -112,7 +113,7 @@ export const saveMessage = async (conversationId, sender, textContent, ragIntera
 
     if (sender === 'user' && textContent && textContent.trim() !== '') {
         try {
-            console.log(`(DB Service) Performing sentiment analysis for message content: "${textContent.substring(0, 50)}..."`);
+            logger.debug(`(DB Service) Performing sentiment analysis for message content: "${textContent.substring(0, 50)}..."`);
             const systemPrompt = "Classify the sentiment of the following user message as positive, negative, or neutral. Respond with only one word: positive, negative, or neutral.";
             const userMessageForSentiment = `Message: "${textContent}"`;
 
@@ -135,17 +136,17 @@ export const saveMessage = async (conversationId, sender, textContent, ragIntera
 
                 if (['positive', 'negative', 'neutral'].includes(rawSentiment)) {
                     messageData.sentiment = rawSentiment;
-                    console.log(`(DB Service) Sentiment classified as: ${rawSentiment}`);
+                    logger.debug(`(DB Service) Sentiment classified as: ${rawSentiment}`);
                 } else {
-                    console.warn(`(DB Service) Unexpected sentiment response: "${sentimentResponse}". Original message: "${textContent.substring(0,50)}..."`);
+                    logger.warn(`(DB Service) Unexpected sentiment response: "${sentimentResponse}". Original message: "${textContent.substring(0,50)}..."`);
                     // messageData.sentiment remains null
                 }
             } else {
-                console.warn(`(DB Service) Sentiment analysis returned no response. Original message: "${textContent.substring(0,50)}..."`);
+                logger.warn(`(DB Service) Sentiment analysis returned no response. Original message: "${textContent.substring(0,50)}..."`);
                 // messageData.sentiment remains null
             }
         } catch (sentimentError) {
-            console.error('(DB Service) Error getting sentiment for message:', sentimentError);
+            logger.error('(DB Service) Error getting sentiment for message:', { error: sentimentError, messageContent: textContent.substring(0,50) });
             // messageData.sentiment remains null, ensuring message saving is not blocked
         }
     }
@@ -158,21 +159,21 @@ export const saveMessage = async (conversationId, sender, textContent, ragIntera
             .single(); // Assuming we want the newly created message back
 
         if (error) {
-            console.error('(DB Service) Error saving message:', error);
+            logger.error('(DB Service) Error saving message:', error);
             return { error: error.message };
         }
-        console.log(`(DB Service) Message saved successfully with ID: ${data?.message_id}, Sentiment: ${messageData.sentiment}`);
+        logger.info(`(DB Service) Message saved successfully with ID: ${data?.message_id}, Sentiment: ${messageData.sentiment}`);
         return { data };
 
     } catch (err) {
-        console.error('(DB Service) General exception in saveMessage:', err);
+        logger.error('(DB Service) General exception in saveMessage:', err);
         return { error: 'An unexpected error occurred while saving the message.' };
     }
 };
 
 export const getClientKnowledgeCategories = async (clientId) => {
     if (!clientId) {
-        console.warn('(DB Service) getClientKnowledgeCategories: clientId is required.');
+        logger.warn('(DB Service) getClientKnowledgeCategories: clientId is required.');
         return { data: [], error: 'Client ID is required.' };
     }
     try {
@@ -183,7 +184,7 @@ export const getClientKnowledgeCategories = async (clientId) => {
             .not('category_tags', 'is', null); // Only sources with tags
 
         if (error) {
-            console.error(`(DB Service) Error fetching category_tags for client ${clientId}:`, error);
+            logger.error(`(DB Service) Error fetching category_tags for client ${clientId}:`, error);
             return { data: [], error: error.message };
         }
 
@@ -201,7 +202,7 @@ export const getClientKnowledgeCategories = async (clientId) => {
         }
         return { data: Array.from(uniqueCategories), error: null };
     } catch (err) {
-        console.error(`(DB Service) Exception in getClientKnowledgeCategories for client ${clientId}:`, err);
+        logger.error(`(DB Service) Exception in getClientKnowledgeCategories for client ${clientId}:`, err);
         return { data: [], error: 'An unexpected error occurred.' };
     }
 };
@@ -239,13 +240,13 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
                 queryCorrectionDetails.correctedQuery = trimmedLlmQuery;
                 queryCorrectionDetails.wasChanged = originalUserQueryAtStart !== trimmedLlmQuery;
                 currentQueryText = trimmedLlmQuery; // Use the corrected query from now on
-                console.log(`(DB Service) Query Correction: Original='${originalUserQueryAtStart}', Corrected='${currentQueryText}'`);
+                logger.info(`(DB Service) Query Correction: Original='${originalUserQueryAtStart}', Corrected='${currentQueryText}'`);
             } else {
-                console.warn("(DB Service) Query correction LLM call returned empty or invalid. Using original query.");
+                logger.warn("(DB Service) Query correction LLM call returned empty or invalid. Using original query.");
                 // correctedQueryText remains originalUserQueryAtStart, wasChanged remains false
             }
         } catch (error) {
-            console.error("(DB Service) Error during query correction LLM call:", error.message);
+            logger.error("(DB Service) Error during query correction LLM call:", { message: error.message, originalQuery: originalUserQueryAtStart });
             // correctedQueryText remains originalUserQueryAtStart, wasChanged remains false
         }
     }
@@ -292,12 +293,12 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
                 queryCorrectionDetails.correctedQuery = trimmedLlmQuery;
                 queryCorrectionDetails.wasChanged = originalUserQueryAtStart !== trimmedLlmQuery;
                 currentQueryText = trimmedLlmQuery;
-                console.log(`(DB Service) Query Correction: Original='${originalUserQueryAtStart}', Corrected='${currentQueryText}'`);
+                logger.info(`(DB Service) Query Correction: Original='${originalUserQueryAtStart}', Corrected='${currentQueryText}'`);
             } else {
-                console.warn("(DB Service) Query correction LLM call returned empty or invalid. Using original query.");
+                logger.warn("(DB Service) Query correction LLM call returned empty or invalid. Using original query.");
             }
         } catch (error) {
-            console.error("(DB Service) Error during query correction LLM call:", error.message);
+            logger.error("(DB Service) Error during query correction LLM call:", { message: error.message, originalQuery: originalUserQueryAtStart });
         }
     }
     if (returnPipelineDetails) {
@@ -309,7 +310,7 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
     try {
         const { data: categories, error: catError } = await getClientKnowledgeCategories(clientId);
         if (catError) {
-            console.warn(`(DB Service) Error fetching client knowledge categories for ${clientId}: ${catError.message}. Proceeding without classification.`);
+            logger.warn(`(DB Service) Error fetching client knowledge categories for client ${clientId}: ${catError.message}. Proceeding without classification.`);
         } else if (categories && categories.length > 0) {
             clientCategoriesArray = categories;
             if (returnPipelineDetails) {
@@ -334,22 +335,22 @@ Classification:`;
                 const trimmedClassification = llmClassification.trim();
                 if (clientCategoriesArray.includes(trimmedClassification)) {
                     predictedCategory = trimmedClassification;
-                    console.log(`(DB Service) Query classified for client ${clientId}. Query: "${currentQueryText.substring(0,30)}...", Category: ${predictedCategory}`);
+                    logger.info(`(DB Service) Query classified for client ${clientId}. Query: "${currentQueryText.substring(0,30)}...", Category: ${predictedCategory}`);
                 } else if (trimmedClassification.toLowerCase() === 'none') {
                     predictedCategory = null; // Or a special "None_Predicted" value
-                    console.log(`(DB Service) Query classification for client ${clientId} resulted in "None". Query: "${currentQueryText.substring(0,30)}..."`);
+                    logger.info(`(DB Service) Query classification for client ${clientId} resulted in "None". Query: "${currentQueryText.substring(0,30)}..."`);
                 } else {
-                    console.warn(`(DB Service) LLM returned an unlisted category: "${trimmedClassification}" for client ${clientId}. Query: "${currentQueryText.substring(0,30)}...". Treating as unclassified.`);
+                    logger.warn(`(DB Service) LLM returned an unlisted category: "${trimmedClassification}" for client ${clientId}. Query: "${currentQueryText.substring(0,30)}...". Treating as unclassified.`);
                     predictedCategory = null;
                 }
             } else {
-                console.warn(`(DB Service) Query classification LLM call returned empty or invalid for client ${clientId}. Query: "${currentQueryText.substring(0,30)}..."`);
+                logger.warn(`(DB Service) Query classification LLM call returned empty or invalid for client ${clientId}. Query: "${currentQueryText.substring(0,30)}..."`);
             }
         } else {
-            console.log(`(DB Service) No categories defined for client ${clientId}. Skipping query classification.`);
+            logger.info(`(DB Service) No categories defined for client ${clientId}. Skipping query classification.`);
         }
     } catch (classificationError) {
-        console.error(`(DB Service) Error during query classification process for client ${clientId}: ${classificationError.message}`);
+        logger.error(`(DB Service) Error during query classification process for client ${clientId}: ${classificationError.message}`);
     }
     if (returnPipelineDetails) {
         pipelineDetails.queryClassification.predictedCategory = predictedCategory;
@@ -364,7 +365,7 @@ Classification:`;
         initialLimit: initialRetrieveLimit,
         predicted_category_applied: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? predictedCategory : null
     };
-    console.log(`(DB Service) Hybrid Search Parameters: Effective Query='${currentQueryText.substring(0,50)}...', vectorWeight=${searchParamsForLog.vectorWeight}, ftsWeight=${searchParamsForLog.ftsWeight}, vectorMatchThreshold=${searchParamsForLog.threshold}, finalLimit=${searchParamsForLog.finalLimit}, initialRetrieveLimit=${searchParamsForLog.initialLimit}, clientId=${clientId}, categoryFilter='${searchParamsForLog.predicted_category_applied}'`);
+    logger.debug(`(DB Service) Hybrid Search Parameters: Effective Query='${currentQueryText.substring(0,50)}...', vectorWeight=${searchParamsForLog.vectorWeight}, ftsWeight=${searchParamsForLog.ftsWeight}, vectorMatchThreshold=${searchParamsForLog.threshold}, finalLimit=${searchParamsForLog.finalLimit}, initialRetrieveLimit=${searchParamsForLog.initialLimit}, clientId=${clientId}, categoryFilter='${searchParamsForLog.predicted_category_applied}'`);
 
     // Tokenize the *corrected* query text for subsequent Jaccard similarity etc.
     const correctedQueryTokens = tokenizeText(currentQueryText, true);
@@ -384,10 +385,10 @@ Classification:`;
                     const subQueries = decompositionResponse.split('\n').map(q => q.trim()).filter(q => q.length > 0);
                     if (subQueries.length > 1 || (subQueries.length === 1 && subQueries[0].toLowerCase() !== currentQueryText.toLowerCase())) {
                         queriesToProcess = subQueries; wasDecomposedForLog = true; subQueriesForLog = [...subQueries];
-                        console.log(`(DB Service) Corrected Query decomposed into ${subQueries.length} sub-queries:`, subQueries);
+                        logger.info(`(DB Service) Corrected Query decomposed into ${subQueries.length} sub-queries:`, subQueries);
                     } else { queriesToProcess = [currentQueryText]; }
                 }
-            } catch (decompositionError) { console.error("(DB Service) Error during query decomposition:", decompositionError.message); queriesToProcess = [currentQueryText]; }
+            } catch (decompositionError) { logger.error("(DB Service) Error during query decomposition:", { message: decompositionError.message, query: currentQueryText }); queriesToProcess = [currentQueryText]; }
         }
 
         if (returnPipelineDetails) {
@@ -435,7 +436,7 @@ Classification:`;
                             if (returnPipelineDetails) currentQueryPipelineDetailsRef.enhancements.push({ forQuery: processedQueryText, type: "HyDE_Document", generatedText: hypotheticalDocument, embeddingVectorPreview: "Generated" });
                         }
                     }
-                } catch (hydeError) { console.error("(DB Service) Error during HyDE:", hydeError.message); }
+                } catch (hydeError) { logger.error("(DB Service) Error during HyDE:", { message: hydeError.message, query: processedQueryText }); }
 
                 try { // Reformulation
                     const reformulationPrompt = `Dada la siguiente pregunta de usuario en español: '${processedQueryText}'...`; // Full prompt
@@ -451,7 +452,7 @@ Classification:`;
                             }
                         }
                     }
-                } catch (llmError) { console.error("(DB Service) Error during reformulation:", llmError.message); }
+                } catch (llmError) { logger.error("(DB Service) Error during reformulation:", { message: llmError.message, query: processedQueryText }); }
             }
             currentLoopEmbeddings.forEach(emb => aggregatedQueriesEmbeddedForLog.push(emb.query));
 
@@ -465,7 +466,7 @@ Classification:`;
                         p_category_filter: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? [predictedCategory] : null
                     };
                     const { data: vsData, error: vsError } = await supabase.rpc('vector_search', rpcParamsVector);
-                    if (vsError) { console.error(`(DB Service) Vector search error for "${eqQuery.substring(0,50)}...":`, vsError.message); }
+                    if (vsError) { logger.error(`(DB Service) Vector search error for "${eqQuery.substring(0,50)}...":`, vsError.message); }
                     else if (vsData) {
                         aggregatedVectorResults.push(...vsData);
                         if (returnPipelineDetails) currentQueryPipelineDetailsRef.vectorSearchResults.push({ retrievedForQueryIdentifier: eqQuery, results: vsData.map(r => ({ id: r.id, contentSnippet: r.content?.substring(0,100)+'...', metadata: r.metadata, score: r.similarity })) });
@@ -479,7 +480,7 @@ Classification:`;
                 p_category_filter: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? [predictedCategory] : null
             };
             const { data: ftsSubData, error: ftsSubError } = await supabase.rpc('fts_search_with_rank', rpcParamsFts);
-            if (ftsSubError) { console.error(`(DB Service) FTS error for "${processedQueryText.substring(0,50)}...":`, ftsSubError.message); }
+            if (ftsSubError) { logger.error(`(DB Service) FTS error for "${processedQueryText.substring(0,50)}...":`, ftsSubError.message); }
             else if (ftsSubData) {
                 aggregatedFtsResults.push(...ftsSubData);
                 if (returnPipelineDetails) currentQueryPipelineDetailsRef.ftsResults.push({ retrievedForQuery: processedQueryText, results: ftsSubData.map(r => ({ id: r.id, contentSnippet: r.content?.substring(0,100)+'...', metadata: r.metadata, score: r.rank })) });
@@ -503,7 +504,7 @@ Classification:`;
         if (rankedResults.length === 0) {
             const emptyReturn = { results: [], propositionResults: [], searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog, predictedCategory };
             if (returnPipelineDetails) emptyReturn.pipelineDetails = pipelineDetails;
-            console.log("(DB Service) No results after merging. Returning empty.");
+            logger.info("(DB Service) No results after merging. Returning empty.");
             return emptyReturn;
         }
 
@@ -520,10 +521,10 @@ Classification:`;
                     const crossEncoderScoresOutput = await classifier(queryDocumentPairs, { topK: null });
                     itemsToCrossEncode.forEach((item, index) => { /* ... score assignment as before ... */ const scoreOutput = crossEncoderScoresOutput[index]; let rawScore; if (Array.isArray(scoreOutput) && scoreOutput.length > 0) { if (typeof scoreOutput[0].score === 'number') { rawScore = scoreOutput[0].score; } else { const relevantScoreObj = scoreOutput.find(s => s.label === 'LABEL_1' || s.label === 'entailment'); rawScore = relevantScoreObj ? relevantScoreObj.score : (typeof scoreOutput[0].score === 'number' ? scoreOutput[0].score : 0);}} else if (typeof scoreOutput.score === 'number') { rawScore = scoreOutput.score; } else if (typeof scoreOutput === 'number') { rawScore = scoreOutput; } else { rawScore = 0; } item.cross_encoder_score_raw = rawScore; item.cross_encoder_score_normalized = sigmoid(rawScore); });
                     if (returnPipelineDetails) pipelineDetails.crossEncoderProcessing.outputs = itemsToCrossEncode.map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', rawScore: item.cross_encoder_score_raw, normalizedScore: item.cross_encoder_score_normalized }));
-                } catch (ceError) { console.error("(DB Service) Error during cross-encoder scoring:", ceError.message); }
+                } catch (ceError) { logger.error("(DB Service) Error during cross-encoder scoring:", ceError.message); }
             }
             itemsForFinalSort = [...itemsToCrossEncode, ...remainingItems];
-        } else if (itemsForFinalSort.length > 0) { console.warn("(DB Service) Cross-encoder pipeline not available. Skipping CE re-ranking."); }
+        } else if (itemsForFinalSort.length > 0) { logger.warn("(DB Service) Cross-encoder pipeline not available. Skipping CE re-ranking."); }
 
         const rerankedList = itemsForFinalSort.map(item => {
             // Use correctedQueryTokens for Jaccard similarity
@@ -540,7 +541,7 @@ Classification:`;
         });
 
         rerankedList.sort((a, b) => b.reranked_score - a.reranked_score);
-        if (DEBUG_RERANKING) { rerankedList.slice(0, finalLimit + 5).forEach(r => { console.log(`  ID: ${r.id}, Reranked: ${r.reranked_score?.toFixed(4)}, Hybrid: ${r.hybrid_score?.toFixed(4)}, CE_norm: ${r.cross_encoder_score_normalized?.toFixed(4)}, KW: ${r.keywordMatchScore?.toFixed(4)}, MetaDetailed: ${r.metadataRelevanceScore?.toFixed(4)}`); });}
+        if (DEBUG_RERANKING) { rerankedList.slice(0, finalLimit + 5).forEach(r => { logger.debug(`  ID: ${r.id}, Reranked: ${r.reranked_score?.toFixed(4)}, Hybrid: ${r.hybrid_score?.toFixed(4)}, CE_norm: ${r.cross_encoder_score_normalized?.toFixed(4)}, KW: ${r.keywordMatchScore?.toFixed(4)}, MetaDetailed: ${r.metadataRelevanceScore?.toFixed(4)}`); });}
 
         const finalResults = rerankedList.slice(0, finalLimit);
         const finalResultsMapped = finalResults.map(r => ({ id: r.id, content: r.content, metadata: r.metadata, reranked_score: r.reranked_score, hybrid_score: r.hybrid_score, keywordMatchScore: r.keywordMatchScore, metadataRelevanceScore: r.metadataRelevanceScore, cross_encoder_score_normalized: r.cross_encoder_score_normalized }));
@@ -552,10 +553,10 @@ Classification:`;
             const primaryQueryEmbedding = firstProcessedQueryEmbedding;
             try {
                 const { data: propData, error: propSearchError } = await supabase.rpc('proposition_vector_search', { client_id_param: clientId, query_embedding: primaryQueryEmbedding, match_threshold: PROPOSITION_MATCH_THRESHOLD, match_count: PROPOSITION_SEARCH_LIMIT });
-                if (propSearchError) { console.error("(DB Service) Error en RPC proposition_vector_search:", propSearchError.message); }
+                if (propSearchError) { logger.error("(DB Service) Error en RPC proposition_vector_search:", propSearchError.message); }
                 else { propositionResults = propData || []; }
-            } catch (rpcError) { console.error("(DB Service) Excepción durante RPC proposition_vector_search:", rpcError.message); }
-        } else { console.log("(DB Service) No hay embedding de la consulta principal disponible, saltando búsqueda de proposiciones."); }
+            } catch (rpcError) { logger.error("(DB Service) Excepción durante RPC proposition_vector_search:", rpcError.message); }
+        } else { logger.info("(DB Service) No hay embedding de la consulta principal disponible, saltando búsqueda de proposiciones."); }
 
         const propositionDataForReturn = propositionResults || [];
         if (returnPipelineDetails) pipelineDetails.finalPropositionResults = propositionDataForReturn.map(p => ({ propositionId: p.proposition_id, text: p.proposition_text, sourceChunkId: p.source_chunk_id, score: p.similarity }));
@@ -566,7 +567,7 @@ Classification:`;
             return { results: finalResultsMapped, propositionResults: propositionDataForReturn, searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog, predictedCategory };
         }
     } catch (error) {
-        console.error(`(DB Service) Error general durante la búsqueda híbrida para cliente ${clientId}:`, error.message, error.stack);
+        logger.error(`(DB Service) Error general durante la búsqueda híbrida para cliente ${clientId}:`, { message: error.message, stack: error.stack });
         const errorReturn = { results: [], propositionResults: [], searchParams: searchParamsForLog, queriesEmbeddedForLog: [originalUserQueryAtStart], rawRankedResultsForLog: [], predictedCategory }; // Use originalUserQueryAtStart
         if (returnPipelineDetails && pipelineDetails) {
             pipelineDetails.error = error.message;
@@ -601,7 +602,7 @@ export const logAiResolution = async (clientId, conversationId, billingCycleId, 
 export const logRagInteraction = async (logData) => {
     // Ensure required fields for the initial log are present
     if (!logData || !logData.client_id || !logData.user_query) { // Assuming user_query is essential for logging interaction
-        console.error('(DB Service) Invalid logData for RAG interaction: client_id and user_query are required.', logData);
+        logger.warn('(DB Service) Invalid logData for RAG interaction: client_id and user_query are required.', logData);
         return { error: 'Invalid logData: client_id and user_query are required for RAG interaction log.' };
     }
 
@@ -634,12 +635,12 @@ export const logRagInteraction = async (logData) => {
             .single(); // Assuming we want the inserted row, including its log_id
 
         if (insertError) {
-            console.error('(DB Service) Error logging RAG interaction (initial insert):', insertError);
+            logger.error('(DB Service) Error logging RAG interaction (initial insert):', insertError);
             return { error: insertError.message };
         }
 
         if (!insertedData || !insertedData.log_id) {
-            console.error('(DB Service) RAG interaction log insert did not return data or log_id.');
+            logger.error('(DB Service) RAG interaction log insert did not return data or log_id.');
             return { error: 'Failed to retrieve log_id after insert.' };
         }
 
@@ -650,7 +651,7 @@ export const logRagInteraction = async (logData) => {
             // Fire-and-forget style for embedding update
             (async () => {
                 try {
-                    console.log(`(DB Service) Generating embedding for user_query (log_id: ${log_id}): "${logEntry.user_query.substring(0, 50)}..."`);
+                    logger.debug(`(DB Service) Generating embedding for user_query (log_id: ${log_id}): "${logEntry.user_query.substring(0, 50)}..."`);
                     // getEmbedding is imported from './embeddingService.js'
                     const embedding = await getEmbedding(logEntry.user_query);
                     // embeddingService.getEmbedding returns the vector directly or throws an error.
@@ -662,17 +663,17 @@ export const logRagInteraction = async (logData) => {
                             .eq('log_id', log_id);
 
                         if (updateError) {
-                            console.error(`(DB Service) Error updating rag_interaction_logs with query_embedding for log_id ${log_id}:`, updateError);
+                            logger.error(`(DB Service) Error updating rag_interaction_logs with query_embedding for log_id ${log_id}:`, updateError);
                         } else {
-                            console.log(`(DB Service) Successfully updated log_id ${log_id} with query_embedding.`);
+                            logger.info(`(DB Service) Successfully updated log_id ${log_id} with query_embedding.`);
                         }
                     } else {
                         // This case might not be reachable if getEmbedding throws on failure,
                         // but included for robustness if it could return null/undefined.
-                        console.error(`(DB Service) Failed to generate query embedding for log_id ${log_id} (embedding was null/undefined).`);
+                        logger.error(`(DB Service) Failed to generate query embedding for log_id ${log_id} (embedding was null/undefined).`);
                     }
                 } catch (embeddingError) {
-                    console.error(`(DB Service) Exception during query embedding or update for log_id ${log_id}:`, embeddingError);
+                    logger.error(`(DB Service) Exception during query embedding or update for log_id ${log_id}:`, embeddingError);
                 }
             })();
         }
@@ -680,7 +681,7 @@ export const logRagInteraction = async (logData) => {
         return { data: insertedData, rag_interaction_log_id: log_id };
 
     } catch (err) {
-        console.error('(DB Service) General exception in logRagInteraction:', err);
+        logger.error('(DB Service) General exception in logRagInteraction:', err);
         return { error: 'An unexpected error occurred while logging RAG interaction.' };
     }
 };
@@ -688,7 +689,7 @@ export const logRagInteraction = async (logData) => {
 export const logRagFeedback = async (feedbackData) => {
     // 1. Validate input
     if (!feedbackData || !feedbackData.client_id || !feedbackData.feedback_type || typeof feedbackData.feedback_type !== 'string' || typeof feedbackData.rating !== 'number') {
-        console.error('(DB Service) Invalid feedbackData: client_id (string), feedback_type (string), and rating (number) are required.', feedbackData);
+        logger.warn('(DB Service) Invalid feedbackData: client_id (string), feedback_type (string), and rating (number) are required.', feedbackData);
         return { error: 'Invalid input: client_id, feedback_type, and a numeric rating are required.' };
     }
 
@@ -734,13 +735,13 @@ export const logRagFeedback = async (feedbackData) => {
             .select();
 
         if (error) {
-            console.error('(DB Service) Error logging RAG feedback:', error);
+            logger.error('(DB Service) Error logging RAG feedback:', error);
             return { error: error.message };
         }
         // .select() returns an array, so return the first element if successful
         return { data: data && data.length > 0 ? data[0] : null };
     } catch (err) {
-        console.error('(DB Service) Exception in logRagFeedback:', err);
+        logger.error('(DB Service) Exception in logRagFeedback:', err);
         return { error: 'An unexpected error occurred while logging feedback.' };
     }
 };
@@ -763,21 +764,21 @@ export const fetchFeedbackWithInteractionDetails = async (clientId, periodOption
         const { data, error } = await query.order('created_at', { ascending: false });
 
         if (error) {
-            console.error(`(DB Service) Error fetching feedback with interaction details (client: ${clientId || 'all'}):`, error);
+            logger.error(`(DB Service) Error fetching feedback with interaction details (client: ${clientId || 'all'}):`, error);
             return { error: error.message };
         }
 
         return { data };
 
     } catch (err) {
-        console.error(`(DB Service) Exception in fetchFeedbackWithInteractionDetails (client: ${clientId || 'all'}):`, err);
+        logger.error(`(DB Service) Exception in fetchFeedbackWithInteractionDetails (client: ${clientId || 'all'}):`, err);
         return { error: 'An unexpected error occurred while fetching feedback details.' };
     }
 };
 
 export const getUnprocessedRagLogsForClient = async (clientId, limit = 1000) => {
     if (!clientId) {
-        console.error('(DB Service) clientId is required for getUnprocessedRagLogsForClient.');
+        logger.warn('(DB Service) clientId is required for getUnprocessedRagLogsForClient.');
         return { error: 'clientId is required.' };
     }
 
@@ -791,19 +792,19 @@ export const getUnprocessedRagLogsForClient = async (clientId, limit = 1000) => 
             .limit(limit);
 
         if (error) {
-            console.error(`(DB Service) Error fetching unprocessed RAG logs for client ${clientId}:`, error);
+            logger.error(`(DB Service) Error fetching unprocessed RAG logs for client ${clientId}:`, error);
             return { error: error.message };
         }
         return { data };
     } catch (err) {
-        console.error(`(DB Service) Exception in getUnprocessedRagLogsForClient for client ${clientId}:`, err);
+        logger.error(`(DB Service) Exception in getUnprocessedRagLogsForClient for client ${clientId}:`, err);
         return { error: 'An unexpected error occurred while fetching unprocessed RAG logs.' };
     }
 };
 
 export const updateKnowledgeSourceMetadata = async (clientId, sourceId, metadataUpdates) => {
     if (!clientId || !sourceId) {
-        console.error('(DB Service) clientId and sourceId are required for updateKnowledgeSourceMetadata.');
+        logger.warn('(DB Service) clientId and sourceId are required for updateKnowledgeSourceMetadata.');
         return { error: 'Client ID and Source ID are required.', status: 400 };
     }
     if (!metadataUpdates || Object.keys(metadataUpdates).length === 0) {
@@ -839,17 +840,17 @@ export const updateKnowledgeSourceMetadata = async (clientId, sourceId, metadata
 
         if (error) {
             if (error.code === 'PGRST116' || error.details?.includes('0 rows')) { // PostgREST code for "No rows found"
-                console.warn(`(DB Service) Knowledge source not found or client ${clientId} does not own source ${sourceId}.`);
+                logger.warn(`(DB Service) Knowledge source not found or client ${clientId} does not own source ${sourceId}.`);
                 return { error: 'Knowledge source not found or access denied.', status: 404 };
             }
-            console.error(`(DB Service) Error updating knowledge source metadata for source ${sourceId}, client ${clientId}:`, error);
+            logger.error(`(DB Service) Error updating knowledge source metadata for source ${sourceId}, client ${clientId}:`, error);
             return { error: error.message, status: 500 };
         }
 
         return { data, error: null }; // Return data on success
 
     } catch (err) {
-        console.error(`(DB Service) Exception in updateKnowledgeSourceMetadata for source ${sourceId}, client ${clientId}:`, err);
+        logger.error(`(DB Service) Exception in updateKnowledgeSourceMetadata for source ${sourceId}, client ${clientId}:`, err);
         return { error: 'An unexpected error occurred while updating knowledge source metadata.', status: 500 };
     }
 };
@@ -881,7 +882,7 @@ export const getChunksForSource = async (clientId, sourceId, page = 1, pageSize 
             .single();
 
         if (sourceError || !sourceData) {
-            console.warn(`(DB Service) Source ${sourceId} not found for client ${clientId} or error:`, sourceError);
+            logger.warn(`(DB Service) Source ${sourceId} not found for client ${clientId} or error:`, sourceError);
             return { error: 'Source not found or access denied.', status: 404 };
         }
 
@@ -902,7 +903,7 @@ export const getChunksForSource = async (clientId, sourceId, page = 1, pageSize 
             .range(offset, offset + pageSize - 1);
 
         if (chunksError) {
-            console.error(`(DB Service) Error fetching chunks for source ${sourceId}, client ${clientId}:`, chunksError);
+            logger.error(`(DB Service) Error fetching chunks for source ${sourceId}, client ${clientId}:`, chunksError);
             return { error: chunksError.message, status: 500 };
         }
 
@@ -915,7 +916,7 @@ export const getChunksForSource = async (clientId, sourceId, page = 1, pageSize 
             .eq('client_id', clientId);
 
         if (countError) {
-             console.error(`(DB Service) Error fetching total chunk count for source ${sourceId}, client ${clientId}:`, countError);
+             logger.error(`(DB Service) Error fetching total chunk count for source ${sourceId}, client ${clientId}:`, countError);
             // Not fatal, but pagination info will be incomplete
         }
 
@@ -930,7 +931,7 @@ export const getChunksForSource = async (clientId, sourceId, page = 1, pageSize 
         };
 
     } catch (err) {
-        console.error(`(DB Service) Exception in getChunksForSource for source ${sourceId}, client ${clientId}:`, err);
+        logger.error(`(DB Service) Exception in getChunksForSource for source ${sourceId}, client ${clientId}:`, err);
         return { error: 'An unexpected error occurred while fetching chunks.', status: 500 };
     }
 };
@@ -940,7 +941,7 @@ export const getClientConversations = async (clientId, statusFilters = [], page 
 
 export const getMessagesForConversation = async (conversationId, clientId) => {
     if (!conversationId || !clientId) {
-        console.error('(DB Service) Invalid params for getMessagesForConversation: conversationId and clientId are required.');
+        logger.warn('(DB Service) Invalid params for getMessagesForConversation: conversationId and clientId are required.');
         return { error: 'conversationId and clientId are required.' };
     }
     try {
@@ -952,7 +953,7 @@ export const getMessagesForConversation = async (conversationId, clientId) => {
             .single();
 
         if (convError || !conversation) {
-            console.error(`(DB Service) Error fetching conversation or ownership verification failed for conv ${conversationId}, client ${clientId}:`, convError);
+            logger.error(`(DB Service) Error fetching conversation or ownership verification failed for conv ${conversationId}, client ${clientId}:`, convError);
             throw new Error('Conversation not found or access denied.');
         }
 
@@ -963,12 +964,12 @@ export const getMessagesForConversation = async (conversationId, clientId) => {
             .order('timestamp', { ascending: true });
 
         if (error) {
-            console.error(`(DB Service) Error fetching messages for conv ${conversationId}:`, error);
+            logger.error(`(DB Service) Error fetching messages for conv ${conversationId}:`, error);
             return { error: error.message };
         }
         return { data };
     } catch (err) {
-        console.error(`(DB Service) Exception in getMessagesForConversation for conv ${conversationId}:`, err);
+        logger.error(`(DB Service) Exception in getMessagesForConversation for conv ${conversationId}:`, err);
         // Ensure error message is passed through if it's a custom error like "Conversation not found..."
         return { error: err.message || 'An unexpected error occurred while fetching messages.' };
     }
@@ -999,7 +1000,7 @@ export const updateConversationStatusByAgent = async (conversationId, clientId, 
 
 export const getSentimentDistribution = async (clientId, periodOptions) => {
     if (!clientId || !periodOptions || !periodOptions.startDate || !periodOptions.endDate) {
-        console.error('(DB Service) Invalid params for getSentimentDistribution: clientId, startDate, and endDate are required.');
+        logger.warn('(DB Service) Invalid params for getSentimentDistribution: clientId, startDate, and endDate are required.');
         return { error: 'clientId and periodOptions (with startDate, endDate) are required.' };
     }
     try {
@@ -1010,20 +1011,20 @@ export const getSentimentDistribution = async (clientId, periodOptions) => {
         });
 
         if (error) {
-            console.error('(DB Service) Error calling get_sentiment_distribution_for_client RPC:', error);
+            logger.error('(DB Service) Error calling get_sentiment_distribution_for_client RPC:', error);
             return { error: error.message };
         }
-        console.log(`(DB Service) Sentiment distribution fetched for client ${clientId}`);
+        logger.info(`(DB Service) Sentiment distribution fetched for client ${clientId}`);
         return { data };
     } catch (err) {
-        console.error('(DB Service) Exception in getSentimentDistribution:', err);
+        logger.error('(DB Service) Exception in getSentimentDistribution:', err);
         return { error: 'An unexpected error occurred while fetching sentiment distribution.' };
     }
 };
 
 export const getTopicAnalytics = async (clientId, periodOptions, topN = 10) => {
     if (!clientId || !periodOptions || !periodOptions.startDate || !periodOptions.endDate) {
-        console.error('(DB Service) Invalid params for getTopicAnalytics: clientId and periodOptions (with startDate, endDate) are required.');
+        logger.warn('(DB Service) Invalid params for getTopicAnalytics: clientId and periodOptions (with startDate, endDate) are required.');
         return { error: 'clientId and periodOptions (with startDate, endDate) are required.' };
     }
 
@@ -1036,7 +1037,7 @@ export const getTopicAnalytics = async (clientId, periodOptions, topN = 10) => {
             .limit(topN);
 
         if (topicsError) {
-            console.error(`(DB Service) Error fetching top topics for client ${clientId}:`, topicsError);
+            logger.error(`(DB Service) Error fetching top topics for client ${clientId}:`, topicsError);
             return { error: topicsError.message };
         }
 
@@ -1062,7 +1063,7 @@ export const getTopicAnalytics = async (clientId, periodOptions, topN = 10) => {
                 .lte('rag_log.created_at', periodOptions.endDate + 'T23:59:59.999Z');
 
             if (logsError) {
-                console.error(`(DB Service) Error fetching RAG logs for topic ${topic.topic_id} via membership:`, logsError);
+                logger.error(`(DB Service) Error fetching RAG logs for topic ${topic.topic_id} via membership:`, logsError);
                 analyticsResults.push({
                     topic_id: topic.topic_id,
                     topic_name: topic.topic_name,
@@ -1100,7 +1101,7 @@ export const getTopicAnalytics = async (clientId, periodOptions, topN = 10) => {
                     .not('sentiment', 'is', null);
 
                 if (messagesError) {
-                    console.error(`(DB Service) Error fetching messages for sentiment (topic: ${topic.topic_name}, client: ${clientId}):`, messagesError);
+                    logger.error(`(DB Service) Error fetching messages for sentiment (topic: ${topic.topic_name}, client: ${clientId}):`, messagesError);
                 } else if (messagesForSentiment && messagesForSentiment.length > 0) {
                     let sentimentSum = 0;
                     let validSentimentCount = 0;
@@ -1127,14 +1128,14 @@ export const getTopicAnalytics = async (clientId, periodOptions, topN = 10) => {
     } catch (err) {
         // Ensure clientId is accessible in this catch block or remove it from the log message.
         // It's defined in the function's scope, so it should be fine.
-        console.error(`(DB Service) Exception in getTopicAnalytics for client ${clientId}:`, err);
+        logger.error(`(DB Service) Exception in getTopicAnalytics for client ${clientId}:`, err);
         return { error: 'An unexpected error occurred while fetching topic analytics.' };
     }
 };
 
 export const getKnowledgeSourcePerformance = async (clientId, periodOptions) => {
     if (!clientId || !periodOptions || !periodOptions.startDate || !periodOptions.endDate) {
-        console.error('(DB Service) Invalid params for getKnowledgeSourcePerformance: clientId and periodOptions (with startDate, endDate) are required.');
+        logger.warn('(DB Service) Invalid params for getKnowledgeSourcePerformance: clientId and periodOptions (with startDate, endDate) are required.');
         return { error: 'clientId and periodOptions (with startDate, endDate) are required.' };
     }
 
@@ -1148,7 +1149,7 @@ export const getKnowledgeSourcePerformance = async (clientId, periodOptions) => 
             .eq('client_id', clientId);
 
         if (sourcesError) {
-            console.error(`(DB Service) Error fetching knowledge sources for client ${clientId}:`, sourcesError);
+            logger.error(`(DB Service) Error fetching knowledge sources for client ${clientId}:`, sourcesError);
             return { error: `Failed to fetch knowledge sources: ${sourcesError.message}` };
         }
 
@@ -1182,7 +1183,7 @@ export const getKnowledgeSourcePerformance = async (clientId, periodOptions) => 
             .lte('created_at', periodOptions.endDate + 'T23:59:59.999Z');
 
         if (feedbackError) {
-            console.error(`(DB Service) Error fetching direct chunk feedback for client ${clientId}:`, feedbackError);
+            logger.error(`(DB Service) Error fetching direct chunk feedback for client ${clientId}:`, feedbackError);
             // Continue, as other metrics might still be calculable
         } else if (directFeedbackEntries) {
             for (const feedback of directFeedbackEntries) {
@@ -1206,7 +1207,7 @@ export const getKnowledgeSourcePerformance = async (clientId, periodOptions) => 
             .lte('response_timestamp', periodOptions.endDate + 'T23:59:59.999Z');
 
         if (ragLogsError) {
-            console.error(`(DB Service) Error fetching RAG interaction logs for client ${clientId}:`, ragLogsError);
+            logger.error(`(DB Service) Error fetching RAG interaction logs for client ${clientId}:`, ragLogsError);
         } else if (ragInteractions) {
             const conversationIds = [...new Set(ragInteractions.map(log => log.conversation_id).filter(id => id))];
             let conversationStats = {}; // Store status by conversation_id
@@ -1216,7 +1217,7 @@ export const getKnowledgeSourcePerformance = async (clientId, periodOptions) => 
                     .from('conversations') // Assuming this table exists and has 'status'
                     .select('conversation_id, status')
                     .in('conversation_id', conversationIds);
-                if (convError) console.error("(DB Service) Error fetching conversation statuses:", convError);
+                if (convError) logger.error("(DB Service) Error fetching conversation statuses:", convError);
                 else convData.forEach(c => conversationStats[c.conversation_id] = c.status);
             }
 
@@ -1229,7 +1230,7 @@ export const getKnowledgeSourcePerformance = async (clientId, periodOptions) => 
                     .in('rag_interaction_log_id', ragLogIdsForFeedback)
                     .eq('client_id', clientId) // ensure feedback is for this client
                     .eq('feedback_type', 'response_quality'); // Or other relevant overall types
-                 if (overallFeedbackError) console.error("(DB Service) Error fetching overall response feedback:", overallFeedbackError);
+                 if (overallFeedbackError) logger.error("(DB Service) Error fetching overall response feedback:", overallFeedbackError);
                  else {
                     overallFeedbacks.forEach(f => {
                         if (!overallFeedbackRatings[f.rag_interaction_log_id]) {
@@ -1286,7 +1287,7 @@ export const getKnowledgeSourcePerformance = async (clientId, periodOptions) => 
         return { data: finalResultsArray };
 
     } catch (err) {
-        console.error(`(DB Service) Exception in getKnowledgeSourcePerformance for client ${clientId}:`, err);
+        logger.error(`(DB Service) Exception in getKnowledgeSourcePerformance for client ${clientId}:`, err);
         return { error: 'An unexpected error occurred while fetching knowledge source performance.' };
     }
 };

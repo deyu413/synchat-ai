@@ -1,6 +1,7 @@
 // synchat-ai-backend/src/controllers/paymentsController.js
 // Controller for handling Stripe payment processing.
 
+import logger from '../utils/logger.js';
 import 'dotenv/config'; // Ensure environment variables are loaded
 import Stripe from 'stripe';
 import { supabase } from '../services/supabaseClient.js'; // Added for idempotency
@@ -16,7 +17,7 @@ const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
  * Creates a Stripe Checkout Session for a given priceId.
  */
 export const createCheckoutSession = async (req, res) => {
-    console.log('paymentsController.createCheckoutSession called');
+    logger.info('paymentsController.createCheckoutSession called');
     const { priceId, customerEmail } = req.body; // priceId from your Stripe Dashboard, customerEmail for Stripe customer
     const clientId = req.user?.id; // Assuming protectRoute adds user object with id
 
@@ -30,7 +31,7 @@ export const createCheckoutSession = async (req, res) => {
     
     const finalCustomerEmail = customerEmail || req.user?.email; 
     if (!finalCustomerEmail) {
-        console.warn('(Payments) Customer email not provided and not found in user token.');
+        logger.warn('(Payments) Customer email not provided and not found in user token.');
     }
 
     const YOUR_DOMAIN = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -41,7 +42,7 @@ export const createCheckoutSession = async (req, res) => {
             const existingCustomers = await stripe.customers.list({ email: finalCustomerEmail, limit: 1 });
             if (existingCustomers.data.length > 0) {
                 stripeCustomer = existingCustomers.data[0];
-                console.log(`(Payments) Existing Stripe customer found: ${stripeCustomer.id} for email ${finalCustomerEmail}`);
+                logger.info(`(Payments) Existing Stripe customer found: ${stripeCustomer.id} for email ${finalCustomerEmail}`);
             } else {
                 stripeCustomer = await stripe.customers.create({
                     email: finalCustomerEmail,
@@ -50,10 +51,10 @@ export const createCheckoutSession = async (req, res) => {
                         app_client_id: clientId, 
                     },
                 });
-                console.log(`(Payments) New Stripe customer created: ${stripeCustomer.id} for email ${finalCustomerEmail}`);
+                logger.info(`(Payments) New Stripe customer created: ${stripeCustomer.id} for email ${finalCustomerEmail}`);
             }
         } else {
-            console.warn('(Payments) Proceeding without specific Stripe customer due to missing email.');
+            logger.warn('(Payments) Proceeding without specific Stripe customer due to missing email.');
         }
 
         const sessionParams = {
@@ -80,11 +81,11 @@ export const createCheckoutSession = async (req, res) => {
 
         const session = await stripe.checkout.sessions.create(sessionParams);
 
-        console.log(`(Payments) Stripe Checkout session created: ${session.id}`);
+        logger.info(`(Payments) Stripe Checkout session created: ${session.id}`);
         res.status(200).json({ sessionId: session.id, checkoutUrl: session.url });
 
     } catch (error) {
-        console.error('(Payments) Error creating Stripe Checkout session:', error);
+        logger.error('(Payments) Error creating Stripe Checkout session:', error);
         res.status(500).json({ error: { message: error.message } });
     }
 };
@@ -93,19 +94,19 @@ export const createCheckoutSession = async (req, res) => {
  * Handles incoming webhooks from Stripe.
  */
 export const handleStripeWebhook = async (req, res) => {
-    console.log('paymentsController.handleStripeWebhook received a request');
+    logger.info('paymentsController.handleStripeWebhook received a request');
     const sig = req.headers['stripe-signature'];
 
     if (!endpointSecret) {
-        console.error('(Payments) CRITICAL: STRIPE_WEBHOOK_SECRET is not set. Cannot verify webhook.');
+        logger.error('(Payments) CRITICAL: STRIPE_WEBHOOK_SECRET is not set. Cannot verify webhook.');
         return res.status(400).send('Webhook secret not configured.');
     }
     if (!sig) {
-        console.warn('(Payments) Webhook received without stripe-signature. Ignoring.');
+        logger.warn('(Payments) Webhook received without stripe-signature. Ignoring.');
         return res.status(400).send('No signature provided.');
     }
     if (!req.body) {
-         console.warn('(Payments) Webhook received without body. Ignoring.');
+         logger.warn('(Payments) Webhook received without body. Ignoring.');
         return res.status(400).send('No body provided.');
     }
 
@@ -113,9 +114,9 @@ export const handleStripeWebhook = async (req, res) => {
 
     try {
         event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
-        console.log(`(Payments) Stripe webhook event verified: ${event.id}, type: ${event.type}`);
+        logger.info(`(Payments) Stripe webhook event verified: ${event.id}, type: ${event.type}`);
     } catch (err) {
-        console.error(`(Payments) Webhook signature verification failed: ${err.message}`);
+        logger.error(`(Payments) Webhook signature verification failed: ${err.message}`);
         return res.status(400).send(`Webhook Error: ${err.message}`);
     }
 
@@ -132,18 +133,18 @@ export const handleStripeWebhook = async (req, res) => {
             // PGRST116 means "Not a single row was found", which is fine for maybeSingle.
             // We only worry about other errors.
             if (checkError.code !== 'PGRST116') {
-                console.error(`(Payments) Error checking for existing event ${event.id} in DB:`, checkError);
+                logger.error(`(Payments) Error checking for existing event ${event.id} in DB:`, checkError);
                 // Return 500 to signal Stripe to retry, as we couldn't confirm idempotency.
                 return res.status(500).json({ error: 'Database error during idempotency check.' });
             }
         }
 
         if (existingEvent) {
-            console.log(`(Payments) Event ${event.id} (type: ${event.type}) already processed. Acknowledging with 200.`);
+            logger.info(`(Payments) Event ${event.id} (type: ${event.type}) already processed. Acknowledging with 200.`);
             return res.status(200).json({ received: true, status: 'already_processed' });
         }
     } catch (dbError) { // Catch any unexpected errors from the try block itself
-        console.error(`(Payments) Unexpected error during idempotency check for event ${event.id}:`, dbError);
+        logger.error(`(Payments) Unexpected error during idempotency check for event ${event.id}:`, dbError);
         return res.status(500).json({ error: 'Unexpected error during idempotency check.' });
     }
 
@@ -154,13 +155,13 @@ export const handleStripeWebhook = async (req, res) => {
     switch (event.type) {
         case 'checkout.session.completed':
             const session = event.data.object;
-            console.log(`(Payments) Checkout session completed: ${session.id}`);
+            logger.info(`(Payments) Checkout session completed: ${session.id}`);
             // TODO: (Original TODOs can be refined or removed if handled)
             // 1. Retrieve customer details (session.customer) and your internal clientId from session.metadata.app_client_id.
             // 2. Idempotency check is now done above.
             // 3. Provision the subscription or product for the customer.
             //    - Update your database: mark user as subscribed, store stripe_customer_id, subscription_id, plan_id, status, current_period_end.
-            console.log(`(Payments) Fulfilling order for session: ${session.id}, Client ID: ${session.metadata.app_client_id}, Stripe Customer ID: ${session.customer}, Stripe Subscription ID: ${session.subscription}`);
+            logger.info(`(Payments) Fulfilling order for session: ${session.id}, Client ID: ${session.metadata.app_client_id}, Stripe Customer ID: ${session.customer}, Stripe Subscription ID: ${session.subscription}`);
             // --- SIMULATE FULFILLMENT LOGIC ---
             // Example:
             // await databaseService.activateClientSubscription(
@@ -177,7 +178,7 @@ export const handleStripeWebhook = async (req, res) => {
 
         case 'invoice.payment_succeeded':
             const invoice = event.data.object;
-            console.log(`(Payments) Invoice payment succeeded: ${invoice.id} for customer ${invoice.customer}, Subscription: ${invoice.subscription}`);
+            logger.info(`(Payments) Invoice payment succeeded: ${invoice.id} for customer ${invoice.customer}, Subscription: ${invoice.subscription}`);
             // TODO:
             // - If this is for a subscription renewal, update current_period_end in your database.
             // - Log payment for records.
@@ -193,7 +194,7 @@ export const handleStripeWebhook = async (req, res) => {
 
         case 'invoice.payment_failed':
             const failedInvoice = event.data.object;
-            console.log(`(Payments) Invoice payment failed: ${failedInvoice.id} for customer ${failedInvoice.customer}`);
+            logger.info(`(Payments) Invoice payment failed: ${failedInvoice.id} for customer ${failedInvoice.customer}`);
             // TODO:
             // - Notify the customer about the payment failure.
             // - Update subscription status in your database (e.g., to 'past_due' or 'unpaid').
@@ -206,7 +207,7 @@ export const handleStripeWebhook = async (req, res) => {
 
         case 'customer.subscription.updated':
             const subscriptionUpdated = event.data.object;
-            console.log(`(Payments) Customer subscription updated: ${subscriptionUpdated.id}, Status: ${subscriptionUpdated.status}`);
+            logger.info(`(Payments) Customer subscription updated: ${subscriptionUpdated.id}, Status: ${subscriptionUpdated.status}`);
             // TODO:
             // - Handle changes in subscription status (e.g., 'active', 'past_due', 'canceled', 'unpaid').
             // - Update your database with the new status and current_period_end.
@@ -218,7 +219,7 @@ export const handleStripeWebhook = async (req, res) => {
 
         case 'customer.subscription.deleted':
             const subscriptionDeleted = event.data.object;
-            console.log(`(Payments) Customer subscription deleted: ${subscriptionDeleted.id}, Status: ${subscriptionDeleted.status}`);
+            logger.info(`(Payments) Customer subscription deleted: ${subscriptionDeleted.id}, Status: ${subscriptionDeleted.status}`);
             // TODO:
             // - Mark the subscription as 'canceled' in your database.
             // Example:
@@ -227,7 +228,7 @@ export const handleStripeWebhook = async (req, res) => {
             break;
             
         default:
-            console.log(`(Payments) Unhandled Stripe event type: ${event.type}. Not recording.`);
+            logger.warn(`(Payments) Unhandled Stripe event type: ${event.type}. Not recording.`);
             // For unhandled events, we typically don't record them as "processed" in our idempotency table
             // unless we are sure we want to ignore them permanently after seeing them once.
             // If it's truly unhandled and might be important later, not recording allows it to be re-processed
@@ -243,16 +244,16 @@ export const handleStripeWebhook = async (req, res) => {
                 .insert({ event_id: event.id });
 
             if (insertError) {
-                console.error(`(Payments) Error inserting event ${event.id} into processed_stripe_events:`, insertError);
+                logger.error(`(Payments) Error inserting event ${event.id} into processed_stripe_events:`, insertError);
                 // This is a non-critical error for the response to Stripe, as the primary action succeeded.
                 // However, it means idempotency might fail for a retry of *this specific event*.
                 // Depending on business logic, you might choose to return 500 here if recording is absolutely vital.
                 // For now, logging and still returning 200 to Stripe.
             } else {
-                console.log(`(Payments) Event ${event.id} successfully recorded in processed_stripe_events.`);
+                logger.info(`(Payments) Event ${event.id} successfully recorded in processed_stripe_events.`);
             }
         } catch (dbInsertError) {
-            console.error(`(Payments) Unexpected error while inserting event ${event.id} into processed_stripe_events:`, dbInsertError);
+            logger.error(`(Payments) Unexpected error while inserting event ${event.id} into processed_stripe_events:`, dbInsertError);
             // Similar to above, log but don't necessarily fail the webhook response to Stripe.
         }
     }

@@ -36,6 +36,13 @@ async function sendAlert(supabaseAdmin: SupabaseClient | null, functionName: str
 // --- User Agent for HTTP Requests ---
 const USER_AGENT = 'Mozilla/5.0 (compatible; SynChatSupabaseEdgeMonitor/1.0; +https://www.synchatai.com/bot-monitor)';
 
+// TODO: (Leve Issue #4 - Fragile HTML-to-Text Extraction)
+// The current regex-based HTML stripping in `basicHtmlToText` is basic and can be fragile
+// with complex HTML structures. For future improvement, integrate a more robust
+// Deno-compatible HTML parsing library (e.g., Deno DOM - https://deno.land/x/deno_dom)
+// for better text extraction. This would lead to more reliable content hashing and change detection.
+// For MVP, the current approach is acceptable if monitored for inaccuracies.
+// Original Issue Tracker Ref: [Link to original issue if available, e.g., GitHub Issue #XYZ]
 // --- Helper: Simplified Text Extraction (Conceptual for Deno) ---
 // Cheerio is a Node.js library. For Deno, one might use Deno DOM or regex.
 // This is a very basic placeholder. A more robust solution would be needed for real HTML parsing.

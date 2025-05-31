@@ -1,0 +1,23 @@
+{
+  "widget": {
+    "defaultWelcomeMessage": "Hello! How can I help you today?",
+    "defaultInputPlaceholder": "Escribe tu mensaje...",
+    "errorStartChat": "Lo siento, hubo un problema al iniciar el chat. Inténtalo de nuevo más tarde.",
+    "errorCriticalSession": "Error crítico: No se pudo establecer una sesión de chat.",
+    "errorProcessingMessage": "Lo siento, hubo un problema al procesar tu mensaje.",
+    "requestHumanSent": "Solicitud Enviada",
+    "requestHumanInitial": "Hablar con Humano",
+    "ariaLabelOpenChat": "Abrir chat de ayuda",
+    "ariaLabelCloseChat": "Cerrar Chat",
+    "ariaLabelSendMessage": "Enviar Mensaje",
+    "configFetching": "SynChat AI Widget: Fetching config from:",
+    "configErrorFetch": "SynChat AI Widget: Error fetching config. Status: {status}. Using default config.",
+    "configErrorInFetched": "SynChat AI Widget: Error in fetched config: {error}. Using default config.",
+    "configLoaded": "SynChat AI Widget: Configuration loaded:",
+    "configExceptionFetch": "SynChat AI Widget: Exception fetching config: {error}. Using default config.",
+    "criticalClientIdMissing": "SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize."
+  },
+  "dashboard": {
+    "loadingData": "Cargando datos del dashboard..."
+  }
+}

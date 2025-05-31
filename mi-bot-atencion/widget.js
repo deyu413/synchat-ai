@@ -1,12 +1,66 @@
 // widget.js
 
+// --- i18n Initialization ---
+let i18nStrings = {}; // To hold loaded strings
+async function loadI18nStrings() {
+    // Assuming widget.js is in mi-bot-atencion/ and locales/ is at mi-bot-atencion/locales/
+    // Adjust path if widget.js moves relative to locales/
+    const langFilePath = './locales/es.json';
+    try {
+        const response = await fetch(langFilePath);
+        if (!response.ok) {
+            // widgetLogger might not be defined here if loadI18nStrings is called BEFORE widgetLogger is defined.
+            // Using console.error as a safe fallback if this function is ever moved outside/before IIFE.
+            (typeof widgetLogger !== 'undefined' ? widgetLogger : console).error(`Failed to load language file from ${langFilePath}. Status: ${response.status}`);
+            return {}; // Return empty or default strings as fallback
+        }
+        return await response.json();
+    } catch (error) {
+        (typeof widgetLogger !== 'undefined' ? widgetLogger : console).error(`Error fetching language file from ${langFilePath}:`, error);
+        return {}; // Fallback
+    }
+}
+// Load strings immediately
+// i18nStrings = await loadI18nStrings(); // This needs to be inside the main async function
+
 (async function() {
+    i18nStrings = await loadI18nStrings();
+
+    // --- Debug Configuration & Logger ---
+    // Set window.SYNCHAT_WIDGET_DEBUG = true in browser console to enable debug logs.
+    const DEBUG = window.SYNCHAT_WIDGET_DEBUG || false; // Default to false
+
+    const widgetLogger = {
+        log: (...args) => { if (DEBUG) console.log("SynChat Widget:", ...args); },
+        warn: (...args) => console.warn("SynChat Widget WARNING:", ...args), // Warnings usually always shown
+        error: (...args) => console.error("SynChat Widget ERROR:", ...args)  // Errors always shown
+    };
+
+    // Fallback for i18n strings if loading failed or key is missing
+    const getString = (key, defaultString = '', params = {}) => {
+        const keys = key.split('.');
+        let current = i18nStrings;
+        for (const k of keys) {
+            current = current[k];
+            if (current === undefined) {
+                // getString is defined inside the IIFE where widgetLogger will be available.
+                widgetLogger.warn(`i18n: Missing string for key: ${key}. Using default: "${defaultString}"`);
+                return defaultString;
+            }
+        }
+        let str = typeof current === 'string' ? current : defaultString;
+        for (const pKey in params) {
+            str = str.replace(new RegExp(`{${pKey}}`, 'g'), params[pKey]);
+        }
+        return str;
+    };
+
     // --- Dynamic Client ID Retrieval ---
     const currentScript = document.currentScript;
     const dynamicClientId = currentScript ? currentScript.getAttribute('data-client-id') : null;
 
     if (!dynamicClientId) {
-        console.error("SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize.");
+        widgetLogger.error(getString('widget.criticalClientIdMissing', "SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize."));
         return; // Stop execution
     }
 
@@ -18,31 +72,31 @@
         clientId: dynamicClientId,
         backendUrl: `${VERCEL_BACKEND_BASE_URL}/api/public-chat`,
         publicConfigUrl: `${VERCEL_BACKEND_BASE_URL}/api/public-chat/widget-config`,
-        botName: "SynChat Bot",
-        welcomeMessage: "Hello! How can I help you today?",
-        inputPlaceholder: "Escribe tu mensaje...",
-        triggerLogoUrl: "[https://www.synchatai.com/zoe.png](https://www.synchatai.com/zoe.png)",
-        avatarUrl: "[https://www.synchatai.com/zoe.png](https://www.synchatai.com/zoe.png)"
+        botName: "SynChat Bot", // Not yet internationalized, as per instructions
+        welcomeMessage: getString('widget.defaultWelcomeMessage', "Hello! How can I help you today?"),
+        inputPlaceholder: getString('widget.defaultInputPlaceholder', "Escribe tu mensaje..."),
+        triggerLogoUrl: "https://www.synchatai.com/zoe.png",
+        avatarUrl: "https://www.synchatai.com/zoe.png"
     };
 
     async function fetchWidgetConfiguration(clientId) {
         const configUrl = `${WIDGET_CONFIG.publicConfigUrl}?clientId=${clientId}`;
-        console.log('SynChat AI Widget: Fetching config from:', configUrl);
+        widgetLogger.log(getString('widget.configFetching', 'SynChat AI Widget: Fetching config from:'), configUrl);
         try {
             const response = await fetch(configUrl);
             if (!response.ok) {
-                console.error(`SynChat AI Widget: Error fetching config. Status: ${response.status}. Using default config.`);
+                widgetLogger.error(getString('widget.configErrorFetch', 'SynChat AI Widget: Error fetching config. Status: {status}. Using default config.', {status: response.status}));
                 return null;
             }
             const fetchedConfig = await response.json();
             if (fetchedConfig.error) {
-                console.error(`SynChat AI Widget: Error in fetched config: ${fetchedConfig.error}. Using default config.`);
+                widgetLogger.error(getString('widget.configErrorInFetched', 'SynChat AI Widget: Error in fetched config: {error}. Using default config.', {error: fetchedConfig.error}));
                 return null;
             }
-            console.log('SynChat AI Widget: Configuration loaded:', fetchedConfig);
+            widgetLogger.log(getString('widget.configLoaded', 'SynChat AI Widget: Configuration loaded:'), fetchedConfig);
             return fetchedConfig;
         } catch (error) {
-            console.error('SynChat AI Widget: Exception fetching config:', error, '. Using default config.');
+            widgetLogger.error(getString('widget.configExceptionFetch', 'SynChat AI Widget: Exception fetching config: {error}. Using default config.', {error: error}));
             return null;
         }
     }
@@ -147,7 +201,7 @@
     function toggleChatWindow() { /* ... (existing as before) ... */ }
 
     async function startNewConversation() {
-        console.log("Iniciando nueva conversación...");
+        widgetLogger.log("Iniciando nueva conversación...");
         clearQuickReplyOptions(); // Clear options on new conversation
         const messagesContainer = document.getElementById('synchat-messages');
         if(messagesContainer) messagesContainer.innerHTML = '';
@@ -171,8 +225,8 @@
                  if(input) input.focus();
             } else { throw new Error("No se recibió conversationId del backend."); }
         } catch (error) {
-            console.error("Error al iniciar conversación:", error);
-            addMessageToChat("bot", "Lo siento, hubo un problema al iniciar el chat. Inténtalo de nuevo más tarde.", "system");
+            widgetLogger.error("Error al iniciar conversación:", error);
+            addMessageToChat("bot", getString('widget.errorStartChat', "Lo siento, hubo un problema al iniciar el chat. Inténtalo de nuevo más tarde."), "system");
         }
     }
 
@@ -185,7 +239,7 @@
         if (!conversationId && intent !== 'request_human_escalation') {
             await startNewConversation();
             if (!conversationId) {
-                addMessageToChat("bot", "Error crítico: No se pudo establecer una sesión de chat.", "system");
+                addMessageToChat("bot", getString('widget.errorCriticalSession', "Error crítico: No se pudo establecer una sesión de chat."), "system");
                 return;
             }
         }
@@ -210,7 +264,7 @@
             payload.intent = intent;
         }
 
-        console.log('SynChat AI Widget: Calling message endpoint:', messageUrl, 'with payload:', payload);
+        widgetLogger.log('SynChat AI Widget: Calling message endpoint:', messageUrl, 'with payload:', payload);
 
         try {
             const response = await fetch(messageUrl, {
@@ -232,7 +286,7 @@
                 addMessageToChat("bot", data.reply, "system");
                 const reqHumanBtn = document.getElementById('requestHumanBtn');
                 if (reqHumanBtn) {
-                    reqHumanBtn.textContent = 'Solicitud Enviada';
+                    reqHumanBtn.textContent = getString('widget.requestHumanSent', 'Solicitud Enviada');
                     reqHumanBtn.disabled = true;
                 }
             } else if (data.reply) {
@@ -241,8 +295,8 @@
                 throw new Error("No se recibió respuesta válida del backend.");
             }
         } catch (error) {
-            console.error("Error al enviar mensaje:", error);
-            addMessageToChat("bot", `Lo siento, hubo un problema al procesar tu mensaje.`, "system");
+            widgetLogger.error("Error al enviar mensaje:", error);
+            addMessageToChat("bot", getString('widget.errorProcessingMessage', "Lo siento, hubo un problema al procesar tu mensaje."), "system");
         }
     }
 
@@ -268,7 +322,7 @@
         trigger.classList.add('synchat-trigger');
         trigger.setAttribute('role', 'button');
         trigger.setAttribute('tabindex', '0');
-        trigger.setAttribute('aria-label', 'Abrir chat de ayuda');
+        trigger.setAttribute('aria-label', getString('widget.ariaLabelOpenChat', 'Abrir chat de ayuda'));
         trigger.innerHTML = `<img src="${WIDGET_CONFIG.triggerLogoUrl}" alt="Abrir Chat SynChat AI">`;
         trigger.addEventListener('click', toggleChatWindow);
         trigger.addEventListener('keydown', (e) => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleChatWindow(); } });
@@ -284,12 +338,12 @@
                     <span class="zoe-name">${WIDGET_CONFIG.botName}</span>
                     <span class="powered-by"> Potenciado por <img src="${WIDGET_CONFIG.triggerLogoUrl}" alt="SynChat AI" class="synchat-logo-header"> SynChat AI </span>
                 </div>
-                <button id="synchat-close-btn" class="synchat-close-btn" aria-label="Cerrar Chat">&times;</button>
+                <button id="synchat-close-btn" class="synchat-close-btn" aria-label="${getString('widget.ariaLabelCloseChat', 'Cerrar Chat')}">&times;</button>
             </div>
             <div id="synchat-messages" class="synchat-messages" aria-live="polite"></div>
             <div id="synchat-input-area" class="synchat-input-area">
                 <textarea id="synchat-input" placeholder="${WIDGET_CONFIG.inputPlaceholder}" rows="1" aria-label="Escribe tu mensaje"></textarea>
-                <button id="synchat-send-btn" class="synchat-send-btn" aria-label="Enviar Mensaje">
+                <button id="synchat-send-btn" class="synchat-send-btn" aria-label="${getString('widget.ariaLabelSendMessage', 'Enviar Mensaje')}">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
                 </button>
                 </div>
@@ -335,12 +389,12 @@
         if (inputArea) {
             const requestHumanBtn = document.createElement('button');
             requestHumanBtn.id = 'requestHumanBtn';
-            requestHumanBtn.title = 'Solicitar hablar con un agente';
-            requestHumanBtn.textContent = 'Hablar con Humano';
+            requestHumanBtn.title = 'Solicitar hablar con un agente'; // This title could also be internationalized if needed
+            requestHumanBtn.textContent = getString('widget.requestHumanInitial', 'Hablar con Humano');
             inputArea.appendChild(requestHumanBtn);
             requestHumanBtn.addEventListener('click', handleRequestHumanEscalation);
         } else {
-            console.warn("SynChat AI Widget: '#synchat-input-area' not found. Cannot append escalation button.");
+            widgetLogger.warn("SynChat AI Widget: '#synchat-input-area' not found. Cannot append escalation button.");
         }
     }
 

@@ -35,15 +35,6 @@ COMMENT ON COLUMN public.synchat_clients.subscription_status IS 'Current status 
 COMMENT ON COLUMN public.synchat_clients.created_at IS 'Timestamp of when the client record was created.';
 COMMENT ON COLUMN public.synchat_clients.updated_at IS 'Timestamp of when the client record was last updated.';
 
--- Trigger function to automatically update the updated_at column
-CREATE OR REPLACE FUNCTION public.handle_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
 -- Trigger to execute the function before any update on synchat_clients table
 CREATE TRIGGER on_synchat_clients_updated
 BEFORE UPDATE ON public.synchat_clients
