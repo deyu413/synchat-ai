@@ -214,7 +214,37 @@ function preprocessTextForEmbedding(text) {
         processedText = processedText.replace(regex, expansion);
     }
 
-    // 4. Regex-based cleaning
+    // --- NEW NORMALIZATION RULES START ---
+
+    // Ligature Expansion
+    const ligatureMap = {
+        'ﬀ': 'ff', // ff
+        'ﬁ': 'fi', // fi
+        'ﬂ': 'fl', // fl
+        'ﬃ': 'ffi', // ffi
+        'ﬄ': 'ffl', // ffl
+    };
+    processedText = processedText.replace(/[ﬀ-ﬄ]/g, (match) => ligatureMap[match] || match);
+
+    // Quote Normalization
+    processedText = processedText.replace(/[‘’‚‛‹›]/g, "'");
+    processedText = processedText.replace(/[“”„‟«»]/g, '"');
+
+    // Dash Normalization
+    processedText = processedText.replace(/[‐‑‒–—―]/g, '-');
+
+    // Zero-Width Space Removal
+    // The regex [​-‍﻿] includes:
+    // U+200B (ZERO WIDTH SPACE)
+    // U+200C (ZERO WIDTH NON-JOINER)
+    // U+200D (ZERO WIDTH JOINER)
+    // U+FEFF (ZERO WIDTH NO-BREAK SPACE or BOM)
+    processedText = processedText.replace(/\u200B|\u200C|\u200D|\uFEFF/g, '');
+
+
+    // --- NEW NORMALIZATION RULES END ---
+
+    // 4. Regex-based cleaning (renumbered from original)
     // Collapse excessive or repeated punctuation (e.g., !!! to !, ??? to ?, multiple commas/periods to a single one)
     processedText = processedText.replace(/([!?.,;:])\1+/g, '$1'); //  Example: !!! -> !,  .. -> .
 
