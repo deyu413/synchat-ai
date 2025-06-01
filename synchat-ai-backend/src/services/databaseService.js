@@ -614,7 +614,7 @@ Classification:`;
                 p_category_filter: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? [predictedCategory] : null
             };
             const { data: ftsSubData, error: ftsSubError } = await supabase.rpc('fts_search_with_rank', rpcParamsFts);
-    if (ftsSubError) { logger.error(`(DB Service) FTS error for query "${ftsQueryString.substring(0,50)}..." (original segment: "${processedQueryText.substring(0,50)}..."):`, ftsSubError.message); }
+    if (ftsSubError) { logger.error(`(DB Service) FTS error for query "${ftsQueryString.substring(0,50)}..." (based on loopCurrentQuery: "${loopCurrentQuery.substring(0,50)}..."):`, ftsSubError.message); }
             else if (ftsSubData) {
                 aggregatedFtsResults.push(...ftsSubData);
         if (returnPipelineDetails) currentQueryPipelineDetailsRef.ftsResults.push({ retrievedForQuery: ftsQueryString, results: ftsSubData.map(r => ({ id: r.id, contentSnippet: r.content?.substring(0,100)+'...', metadata: r.metadata, score: r.rank })) });
