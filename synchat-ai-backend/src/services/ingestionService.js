@@ -305,6 +305,7 @@ async function chunkTextContent(text, baseMetadata, sentenceOverlapCount = 1) {
     const sentenceEmbeddings = await getSentenceEmbeddings(sentences);
 
     let previousChunkFinalSentences = [];
+    // REMOVED previousChunkFinalSentences initialization from here
     let currentChunkSentences = [];
     let currentChunkWordCount = 0;
     let chunkIndex = 0;
@@ -391,7 +392,8 @@ async function chunkTextContent(text, baseMetadata, sentenceOverlapCount = 1) {
                     metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
                 }
                 chunks.push({ text: chunkText, metadata: metadata });
-                previousChunkFinalSentences = Array.from(currentChunkSentences); // Store sentences of the validated chunk
+                previousChunkFinalSentences = Array.from(currentChunkSentences);
+                // REMOVED previousChunkFinalSentences update from here
             } else {
                 // console.log(`(Ingestion Service) Discarding chunk (failed validation): "${chunkText.substring(0, 100)}..."`);
                 // If a chunk is discarded, we should not use its sentences for overlap in the next one.
@@ -405,6 +407,7 @@ async function chunkTextContent(text, baseMetadata, sentenceOverlapCount = 1) {
                 currentChunkSentences.push(...overlapSentences);
                 currentChunkWordCount += overlapSentences.join(' ').split(/\s+/).length;
             }
+            // REMOVED overlap logic from here
         }
     }
     console.log(`(Ingestion Service) SEMANTIC text chunking completed for ${baseMetadata.source_name}. Generated ${chunks.length} chunks.`);
@@ -1138,7 +1141,7 @@ export async function ingestSourceById(sourceId, clientId) {
             // Assuming default elementOverlapCount of 1, can be configured later
             chunksForEmbedding = chunkContent(htmlContent, source.source_name, baseMetadata, 1); // Stays non-async
         } else { // For 'pdf', 'txt', 'article' - now uses async semantic chunking
-            chunksForEmbedding = await chunkTextContent(textToProcess, baseMetadata, 1); // Explicitly pass 1 for sentenceOverlapCount
+            chunksForEmbedding = await chunkTextContent(textToProcess, baseMetadata, 1); // MODIFIED HERE
         }
 
         // Ensure chunksForEmbedding is an array even if chunking failed or returned nothing

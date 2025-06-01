@@ -5,6 +5,28 @@ import { getEmbedding } from './embeddingService.js'; // Necesario para búsqued
 import { getChatCompletion } from './openaiService.js'; // Import for query reformulation
 import { pipeline, env } from '@xenova/transformers';
 
+// Hardcoded Spanish Thesaurus for query expansion
+const THESAURUS_ES = {
+    "precio": ["costo", "tarifa", "valor"],
+    "soporte": ["ayuda", "asistencia", "atención"],
+    "problema": ["inconveniente", "error", "falla"],
+    "solución": ["respuesta", "resolución"],
+    "documento": ["archivo", "informe", "texto"],
+    "buscar": ["encontrar", "localizar", "consultar"]
+    // Add more domain-specific or common terms as needed
+};
+
+// Hardcoded Spanish Acronym/Abbreviation Dictionary for query expansion
+const ACRONYMS_ES = {
+    "IA": "Inteligencia Artificial",
+    "CRM": "Customer Relationship Management",
+    "FAQ": "Preguntas Frecuentes",
+    "API": "Application Programming Interface",
+    "SDK": "Software Development Kit",
+    "KPI": "Key Performance Indicator"
+    // Add more domain-specific or common acronyms as needed
+};
+
 // --- Transformers.js Configuration ---
 // env.allowLocalModels = false; // Optional: Disable local model loading
 // env.cacheDir = './.cache'; // Optional: Set cache directory for models
@@ -427,6 +449,71 @@ Classification:`;
         if (returnPipelineDetails) {
             pipelineDetails.queryDecomposition = { wasDecomposed: wasDecomposedForLog, subQueries: subQueriesForLog, finalQueriesProcessed: queriesToProcess };
         }
+
+        // Acronym Expansion
+        const queriesForExpansionRound = [...queriesToProcess];
+        const processedQueriesAfterAcronyms = [];
+
+        for (const queryStringToExpand of queriesForExpansionRound) {
+            let queryAfterAcronyms = queryStringToExpand;
+            let acronymExpansionPerformed = false;
+            for (const acronym in ACRONYMS_ES) {
+                if (ACRONYMS_ES.hasOwnProperty(acronym)) {
+                    const regex = new RegExp(`\\b${acronym}\\b`, 'g');
+                    if (queryAfterAcronyms.match(regex)) {
+                        queryAfterAcronyms = queryAfterAcronyms.replace(regex, `${acronym} (${ACRONYMS_ES[acronym]})`);
+                        acronymExpansionPerformed = true;
+                    }
+                }
+            }
+            if (acronymExpansionPerformed) {
+                console.log(`(DB Service) Query after acronym expansion: "${queryAfterAcronyms.substring(0,100)}..." (Original segment: "${queryStringToExpand.substring(0,100)}...")`);
+            }
+            processedQueriesAfterAcronyms.push(queryAfterAcronyms);
+        }
+
+        queriesToProcess = processedQueriesAfterAcronyms;
+
+        // Synonym Expansion (generates new query variations)
+        const queriesAfterAcronymsLoop = [...queriesToProcess];
+        const queriesWithSynonymVariations = [];
+
+        for (const baseQuery of queriesAfterAcronymsLoop) {
+            queriesWithSynonymVariations.push(baseQuery);
+
+            const keywords = tokenizeText(baseQuery, true);
+            let synonymVariationsAdded = 0;
+
+            for (const keyword of keywords) {
+                if (synonymVariationsAdded >= 2) {
+                    break;
+                }
+                if (THESAURUS_ES[keyword] && THESAURUS_ES[keyword].length > 0) {
+                    const firstSynonym = THESAURUS_ES[keyword][0];
+
+                    let newQueryVariation = "";
+                    const regex = new RegExp(`\\b${keyword}\\b`);
+                    if (baseQuery.match(regex)) {
+                         newQueryVariation = baseQuery.replace(regex, firstSynonym);
+                    }
+
+                    if (newQueryVariation && newQueryVariation !== baseQuery) {
+                        queriesWithSynonymVariations.push(newQueryVariation);
+                        synonymVariationsAdded++;
+                        console.log(`(DB Service) Synonym variation: "${newQueryVariation.substring(0,100)}...", Keyword: "${keyword}", Synonym: "${firstSynonym}"`);
+                    }
+                }
+            }
+        }
+        queriesToProcess = queriesWithSynonymVariations;
+
+        if (returnPipelineDetails) {
+            pipelineDetails.queryDecomposition.finalQueriesProcessed = [...queriesToProcess];
+        }
+
+        let aggregatedVectorResults = [];
+
+
 
         let aggregatedVectorResults = [];
         let aggregatedFtsResults = [];
