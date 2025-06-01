@@ -246,7 +246,10 @@ Responde ÚNICAMENTE con la etiqueta del tema, sin ninguna explicación adiciona
                     }
                 }
             }
-        }
+        // Removed one extra closing brace here that was prematurely ending the 'for (const client of activeClientIds)' loop
+        } // This brace now correctly closes the 'for (const client of activeClientIds)' loop.
+
+        // This response is now correctly positioned after iterating through all clients.
         res.status(200).json({
             message: `K-Means topic analysis completed. Clients processed: ${activeClientIds.length}. Logs considered: ${totalLogsConsidered}. Topics created: ${totalTopicsCreated}. Logs in created topics: ${totalLogsSuccessfullyClusteredAndProcessed}.`
         });
