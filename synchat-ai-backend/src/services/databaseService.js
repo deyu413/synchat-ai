@@ -593,17 +593,31 @@ Classification:`;
                     }
                 }
             }
+
+    // FTS Query Preparation with Thesaurus
+    const significantTokens = tokenizeText(loopCurrentQuery, true); // Assuming tokenizeText is available in scope
+    const ftsQueryParts = [];
+    for (const token of significantTokens) {
+        if (THESAURUS_ES[token] && THESAURUS_ES[token].length > 0) {
+            ftsQueryParts.push(`(${[token, ...THESAURUS_ES[token]].join(' | ')})`);
+        } else {
+            ftsQueryParts.push(token);
+        }
+    }
+    const ftsQueryString = ftsQueryParts.join(' & ');
+    logger.info(`(DB Service) Original FTS query text for loop: "${processedQueryText.substring(0,50)}...", Constructed FTS query string: "${ftsQueryString.substring(0,100)}..."`);
+
             const rpcParamsFts = {
                 client_id_param: clientId,
-                query_text: processedQueryText,
+        query_text: ftsQueryString, // Use the new ftsQueryString
                 match_count: initialRetrieveLimit,
                 p_category_filter: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? [predictedCategory] : null
             };
             const { data: ftsSubData, error: ftsSubError } = await supabase.rpc('fts_search_with_rank', rpcParamsFts);
-            if (ftsSubError) { logger.error(`(DB Service) FTS error for "${processedQueryText.substring(0,50)}...":`, ftsSubError.message); }
+    if (ftsSubError) { logger.error(`(DB Service) FTS error for query "${ftsQueryString.substring(0,50)}..." (original segment: "${processedQueryText.substring(0,50)}..."):`, ftsSubError.message); }
             else if (ftsSubData) {
                 aggregatedFtsResults.push(...ftsSubData);
-                if (returnPipelineDetails) currentQueryPipelineDetailsRef.ftsResults.push({ retrievedForQuery: processedQueryText, results: ftsSubData.map(r => ({ id: r.id, contentSnippet: r.content?.substring(0,100)+'...', metadata: r.metadata, score: r.rank })) });
+        if (returnPipelineDetails) currentQueryPipelineDetailsRef.ftsResults.push({ retrievedForQuery: ftsQueryString, results: ftsSubData.map(r => ({ id: r.id, contentSnippet: r.content?.substring(0,100)+'...', metadata: r.metadata, score: r.rank })) });
             }
         }
 
