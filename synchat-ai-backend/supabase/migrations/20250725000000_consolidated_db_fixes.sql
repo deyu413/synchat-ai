@@ -109,7 +109,7 @@ AS $$
 DECLARE
     ts_query_obj tsquery;
 BEGIN
-    ts_query_obj := plainto_tsquery('spanish', query_text); -- Assuming 'spanish' config
+    ts_query_obj := websearch_to_tsquery('spanish', query_text); -- Assuming 'spanish' config
 
     RETURN QUERY
     SELECT

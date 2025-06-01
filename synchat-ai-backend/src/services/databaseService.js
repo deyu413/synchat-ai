@@ -252,6 +252,36 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
 
     const finalVectorWeight = options.vectorWeight ?? HYBRID_SEARCH_VECTOR_WEIGHT;
     const finalFtsWeight = options.ftsWeight ?? HYBRID_SEARCH_FTS_WEIGHT;
+
+    // Default weights passed as parameters
+    let adjustedVectorWeight = finalVectorWeight;
+    let adjustedFtsWeight = finalFtsWeight;
+
+    // Lightweight query analysis
+    const queryTokens = currentQueryText.toLowerCase().split(' '); // Use currentQueryText (potentially corrected)
+    // Using RegExp constructor for potentially safer regex handling in embedded contexts
+    const hasQuotedPhrase = new RegExp("\"[^\"]+\"").test(currentQueryText);
+    const capitalLettersCount = (currentQueryText.match(/[A-Z]/g) || []).length;
+    const hasManyCapitals = capitalLettersCount > 3;
+
+    let adjustmentReason = "default";
+
+    if (hasQuotedPhrase || hasManyCapitals) {
+        adjustedFtsWeight = Math.min(1.0, finalFtsWeight + 0.15);
+        // Ensure adjustedVectorWeight is derived to maintain sum of 1.0 if that's the desired constraint
+        // If they don't need to sum to 1.0, this line can be: adjustedVectorWeight = Math.max(0.0, finalVectorWeight - 0.15);
+        adjustedVectorWeight = 1.0 - adjustedFtsWeight;
+        adjustmentReason = hasQuotedPhrase ? "quoted_phrase" : (hasManyCapitals ? "many_capitals" : "fts_boost");
+    } else if (queryTokens.length < 3 && queryTokens.length > 0) { // Very short query (but not empty)
+        adjustedFtsWeight = Math.min(1.0, finalFtsWeight + 0.1);
+        // Similar adjustment for vector weight
+        adjustedVectorWeight = 1.0 - adjustedFtsWeight;
+        adjustmentReason = "short_query";
+    }
+
+    // Log the adjusted weights using console.log
+    logger.info(`(DB Service) Hybrid Search: Query: "${currentQueryText.substring(0,50)}...", Original Weights: V=${finalVectorWeight.toFixed(2)}, F=${finalFtsWeight.toFixed(2)}. Adjusted Weights (Reason: ${adjustmentReason}): V=${adjustedVectorWeight.toFixed(2)}, F=${adjustedFtsWeight.toFixed(2)}`);
+
     const finalVectorMatchThreshold = options.vectorMatchThreshold ?? VECTOR_MATCH_THRESHOLD;
     const finalLimit = HYBRID_SEARCH_LIMIT;
     const initialRetrieveLimit = finalLimit * INITIAL_RETRIEVAL_MULTIPLIER;
@@ -357,8 +387,8 @@ Classification:`;
     // --- End Query Classification Logic ---
 
     const searchParamsForLog = {
-        vectorWeight: finalVectorWeight,
-        ftsWeight: finalFtsWeight,
+        vectorWeight: adjustedVectorWeight, // Log adjusted weight
+        ftsWeight: adjustedFtsWeight,     // Log adjusted weight
         threshold: finalVectorMatchThreshold,
         finalLimit: finalLimit,
         initialLimit: initialRetrieveLimit,
@@ -497,7 +527,7 @@ Classification:`;
         }
 
         const combinedResults = {}; /* ... as before ... */        vectorResults.forEach(row => { if (!row.id || (row.similarity && row.similarity < finalVectorMatchThreshold)) return; combinedResults[String(row.id)] = { ...row, vector_similarity: row.similarity || 0, fts_score: 0 }; }); ftsResults.forEach(row => { if (!row.id) return; const id = String(row.id); const ftsScore = row.rank || 0; if (!combinedResults[id]) { combinedResults[id] = { ...row, vector_similarity: 0, fts_score: ftsScore }; } else { combinedResults[id].fts_score = Math.max(combinedResults[id].fts_score || 0, ftsScore);  if (!combinedResults[id].content && row.content) combinedResults[id].content = row.content; if (!combinedResults[id].metadata && row.metadata) combinedResults[id].metadata = row.metadata; } });
-        let rankedResults = Object.values(combinedResults).filter(item => item.id && item.content).filter(item => !((item.fts_score || 0) === 0 && (item.vector_similarity || 0) < finalVectorMatchThreshold)).map(item => ({ ...item, hybrid_score: ((item.vector_similarity || 0) * finalVectorWeight) + ((item.fts_score || 0) * finalFtsWeight) }));
+    let rankedResults = Object.values(combinedResults).filter(item => item.id && item.content).filter(item => !((item.fts_score || 0) === 0 && (item.vector_similarity || 0) < finalVectorMatchThreshold)).map(item => ({ ...item, hybrid_score: ((item.vector_similarity || 0) * adjustedVectorWeight) + ((item.fts_score || 0) * adjustedFtsWeight) }));
         if (returnPipelineDetails) pipelineDetails.mergedAndPreRankedResultsPreview = rankedResults.slice(0,50).map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', metadata: item.metadata, initialHybridScore: item.hybrid_score, vectorSimilarity: item.vector_similarity, ftsScore: item.fts_score }));
 
         if (rankedResults.length === 0) {
