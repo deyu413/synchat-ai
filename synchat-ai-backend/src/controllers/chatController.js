@@ -265,7 +265,7 @@ export const handleChatMessage = async (req, res, next) => {
             let mutableConversationHistory = [...conversationHistory];
             let mutableRagContext = ragContext;
             const systemPromptBase = `Eres Zoe, el asistente virtual IA especializado... (full prompt as defined before, including ambiguity handling instructions if desired)`;
-            let finalSystemPromptContent = systemPromptBase + (/* ... context string construction ... */);
+            let finalSystemPromptContent = systemPromptBase  (/* ... context string construction ... */);
             // ... (Token counting and truncation logic as before) ...
 
             const messagesForAPI = [{ role: "system", content: finalSystemPromptContent }, ...mutableConversationHistory, { role: "user", content: effectiveQuery }]; // Use effectiveQuery for final LLM call
