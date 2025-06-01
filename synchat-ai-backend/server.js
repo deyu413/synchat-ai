@@ -27,7 +27,7 @@ if (widgetAllowedOriginsEnv === '*') {
     allowedWidgetOrigins = []; // Default to no specific widget origins if not set and not '*'
 }
 
-const frontendDashboardURL = process.env.FRONTEND_URL || 'https://www.synchatai.com';
+const frontendDashboardURL = process.env.FRONTEND_URL || 'https://synchat-ai.vercel.app/';
 
 const corsOptionsDelegate = function (req, callback) {
     let corsOptions = { origin: false }; // Default to disallow
@@ -157,3 +157,4 @@ app.listen(PORT, () => {
 
 // Final review pass complete.
 // Another trivial comment for re-commit purposes.
+// Re-commit attempt with new branch.

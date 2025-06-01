@@ -48,7 +48,7 @@ export const createCheckoutSession = async (req, res) => {
         logger.warn('(Payments) Customer email not provided and not found in user token.');
     }
 
-    const YOUR_DOMAIN = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const YOUR_DOMAIN = process.env.FRONTEND_URL || 'https://synchat-ai.vercel.app/';
 
     try {
         let stripeCustomer;
