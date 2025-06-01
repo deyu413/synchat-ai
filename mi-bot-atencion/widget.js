@@ -56,13 +56,25 @@ async function loadI18nStrings() {
     };
 
     // --- Dynamic Client ID Retrieval ---
-    const currentScript = document.currentScript;
-    const dynamicClientId = currentScript ? currentScript.getAttribute('data-client-id') : null;
-
-    if (!dynamicClientId) {
-        widgetLogger.error(getString('widget.criticalClientIdMissing', "SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize."));
-        return; // Stop execution
+let dynamicClientId = null;
+const scripts = document.getElementsByTagName('script');
+for (let i = 0; i < scripts.length; i++) {
+    const script = scripts[i];
+    if (script.src && script.src.includes('widget.js') && script.hasAttribute('data-client-id')) {
+        dynamicClientId = script.getAttribute('data-client-id');
+        break;
     }
+}
+
+// If still not found (e.g., script tag changed or data-client-id missing), fallback to document.currentScript
+if (!dynamicClientId && document.currentScript) {
+    dynamicClientId = document.currentScript.getAttribute('data-client-id');
+}
+
+if (!dynamicClientId) {
+    widgetLogger.error(getString('widget.criticalClientIdMissing', "SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize."));
+    return; // Stop execution
+}
 
     // --- Configuración del Backend ---
     const VERCEL_BACKEND_BASE_URL = window.SYNCHAT_CONFIG.API_BASE_URL;
