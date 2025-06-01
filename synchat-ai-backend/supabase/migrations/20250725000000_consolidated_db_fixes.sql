@@ -4,8 +4,8 @@
 BEGIN;
 
 -- 1. `knowledge_sources` Primary Key Rename
--- Renames the primary key column 'id' to 'source_id' in the 'public.knowledge_sources' table.
-ALTER TABLE public.knowledge_sources RENAME COLUMN id TO source_id;
+-- The operation to rename 'id' to 'source_id' in 'public.knowledge_sources'
+-- was previously applied and is now removed from this script to avoid re-execution.
 
 -- Note: PostgreSQL typically handles the renaming of associated PK constraint names (e.g., 'knowledge_sources_pkey')
 -- automatically when the column it references is renamed. If issues were to arise, the constraint

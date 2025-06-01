@@ -68,14 +68,23 @@ async function calculateSha256(text: string): Promise<string> {
 }
 
 // --- Core Logic (Adapted conceptual version of checkUrlSourceStatus) ---
-interface Source {
-  source_id: string; // Assuming id is UUID, but Supabase returns it as string from select
-  source_url: string;
+// This interface reflects the fields selected from the database
+interface SelectedSource {
+  source_id: string;
+  source_name: string; // Changed from source_url, as source_name contains the URL for 'url' type
   last_known_content_hash: string | null;
-  client_id: string; // For any per-client logic or detailed logging
+  client_id: string;
 }
 
-async function checkAndRecordSourceStatus(supabaseAdmin: SupabaseClient, source: Source): Promise<boolean> {
+// This interface is what checkAndRecordSourceStatus expects internally
+interface SourceForProcessing {
+  source_id: string;
+  source_url: string;
+  last_known_content_hash: string | null;
+  client_id: string;
+}
+
+async function checkAndRecordSourceStatus(supabaseAdmin: SupabaseClient, source: SourceForProcessing): Promise<boolean> {
   console.log(`(EdgeFunc) Checking source ID: ${source.source_id}, URL: ${source.source_url}`);
   let accessibilityStatus = 'UNKNOWN_ERROR_EDGE';
   let newHash = null;
@@ -175,7 +184,7 @@ serve(async (req) => {
     // If your knowledge_sources table uses 'source_id' as PK, adjust .eq('id', source.id) below.
     const { data: sources, error: queryError } = await supabaseAdmin
       .from('knowledge_sources')
-      .select('source_id, source_url, source_name, last_known_content_hash, client_id') // source_name is where URL is stored for type 'url'
+      .select('source_id, source_name, last_known_content_hash, client_id') // Removed source_url, using source_name
       .eq('source_type', 'url')
       // Check sources not checked in last 7 days OR never checked at all.
       .or(`last_accessibility_check_at.is.null,last_accessibility_check_at.<=${sevenDaysAgo}`)
@@ -198,12 +207,18 @@ serve(async (req) => {
     const totalSourcesAttempted = sources.length;
     let dbUpdateFailures = 0;
 
-    for (const source of sources) {
-      // For 'url' type sources, the URL is often stored in 'source_name'.
-      // Adjust if your schema uses 'source_url' column directly.
-      const urlToCheck = source.source_url || source.source_name;
+    for (const source of sources as SelectedSource[]) { // Cast to the new interface
+      // For 'url' type sources, the URL is stored in 'source_name'.
+      const urlToCheck = source.source_name; // Directly use source_name
       if (urlToCheck && urlToCheck.startsWith('http')) {
-        const updateSuccess = await checkAndRecordSourceStatus(supabaseAdmin, { ...source, source_url: urlToCheck });
+        // Construct the object expected by checkAndRecordSourceStatus
+        const sourceForProcessing: SourceForProcessing = {
+          source_id: source.source_id,
+          source_url: urlToCheck, // Map source_name to source_url for the function
+          last_known_content_hash: source.last_known_content_hash,
+          client_id: source.client_id,
+        };
+        const updateSuccess = await checkAndRecordSourceStatus(supabaseAdmin, sourceForProcessing);
         if (!updateSuccess) {
           dbUpdateFailures++;
         }

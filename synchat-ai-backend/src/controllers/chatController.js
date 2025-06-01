@@ -1,4 +1,5 @@
 // src/controllers/chatController.js
+import logger from '../utils/logger.js'; // Added logger import
 import { getChatCompletion } from '../services/openaiService.js';
 import * as db from '../services/databaseService.js';
 import { encode } from 'gpt-tokenizer';
@@ -30,12 +31,25 @@ const BOT_CANNOT_ANSWER_MSG = "Lo siento, no tengo información específica sobr
 const BOT_ESCALATION_NOTIFICATION_MSG = "Un momento, por favor. Voy a transferirte con un agente humano para que pueda ayudarte con tu consulta.";
 
 export const handleChatMessage = async (req, res, next) => {
-    const { message, conversationId, clientId, clarification_response_details, intent } = req.body; // Added intent
+    const { message, conversationId, clarification_response_details, intent } = req.body; // clientId removed from here
     let userMessageInput = message; // The actual text sent by the user in this turn
 
+    let effectiveClientId;
+    if (req.user && req.user.id) {
+        effectiveClientId = req.user.id;
+        if (req.body.clientId && req.body.clientId !== effectiveClientId) {
+            logger.warn(`(ChatCtrl) User ${effectiveClientId} attempted to use clientId ${req.body.clientId} in authenticated route.`);
+        }
+    } else if (req.body.clientId) {
+        effectiveClientId = req.body.clientId;
+    } else {
+        return res.status(400).json({ error: 'Falta clientId o no se pudo determinar.' });
+    }
+
     // Base checks for essential parameters
-    if (!conversationId || !clientId) {
-        console.warn('Petición inválida a /message: Missing conversationId or clientId.', req.body);
+    if (!conversationId || !effectiveClientId) { // Changed clientId to effectiveClientId
+        // This specific console.warn might be redundant given the logic above, but kept for safety.
+        logger.warn(`(ChatCtrl) Petición inválida a /message: Missing conversationId or effectiveClientId. CV_ID: ${conversationId}, Eff_CID: ${effectiveClientId}`, req.body);
         return res.status(400).json({ error: 'Faltan datos requeridos (conversationId, clientId).' });
     }
      // Check if there's any form of input or valid intent
@@ -78,7 +92,7 @@ export const handleChatMessage = async (req, res, next) => {
     }
 
     // Validate clientId format
-    if (!UUID_REGEX.test(clientId)) {
+    if (!UUID_REGEX.test(effectiveClientId)) { // Changed clientId to effectiveClientId
         return res.status(400).json({ error: 'clientId has an invalid format.' });
     }
 
@@ -101,18 +115,18 @@ export const handleChatMessage = async (req, res, next) => {
 
 
     if (intent && intent === 'request_human_escalation') { // Use validated intent variable
-        console.log(`(Controller) User initiated escalation for CV:${conversationId}, C:${clientId}`);
+        logger.log(`(ChatCtrl) User initiated escalation for CV:${conversationId}, C:${effectiveClientId}`); // Changed clientId to effectiveClientId
         try {
             // Even if userMessageInput is empty, we log a generic escalation message.
             const escalationMessage = userMessageInput ? `El usuario ha solicitado hablar con un agente humano. Mensaje: "${userMessageInput}"` : 'El usuario ha solicitado hablar con un agente humano.';
             await db.saveMessage(conversationId, 'user', escalationMessage);
-            db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => console.error(`Analytics: Failed to increment user message count for CV:${conversationId}`, err));
-            await db.updateConversationStatusByAgent(conversationId, clientId, null, 'escalated_to_human');
+            db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => logger.error(`(ChatCtrl) Analytics: Failed to increment user message count for CV:${conversationId}`, err));
+            await db.updateConversationStatusByAgent(conversationId, effectiveClientId, null, 'escalated_to_human'); // Changed clientId to effectiveClientId
             db.updateAnalyticOnEscalation(conversationId, new Date(), `User explicitly requested human escalation. Associated message: "${userMessageInput || ''}"`)
-                .catch(err => console.error(`Analytics: Failed to update escalation data for CV:${conversationId}`, err));
+                .catch(err => logger.error(`(ChatCtrl) Analytics: Failed to update escalation data for CV:${conversationId}`, err));
             return res.status(200).json({ status: "escalation_requested", reply: "Tu solicitud para hablar con un agente ha sido recibida. Alguien se pondrá en contacto contigo pronto." });
         } catch (escalationError) {
-            console.error(`(Controller) Error during user-initiated escalation for CV:${conversationId}:`, escalationError);
+        logger.error(`(ChatCtrl) Error during user-initiated escalation for CV:${conversationId}:`, escalationError);
             return res.status(500).json({ error: "No se pudo procesar tu solicitud de escalación en este momento." });
         }
     }
@@ -129,18 +143,18 @@ export const handleChatMessage = async (req, res, next) => {
     }
 
 
-    console.log(`(Controller) Mensaje (effectiveQuery) recibido C:${clientId}, CV:${conversationId}: "${effectiveQuery.substring(0, 100)}..."`);
+    logger.log(`(ChatCtrl) Mensaje (effectiveQuery) recibido C:${effectiveClientId}, CV:${conversationId}: "${effectiveQuery.substring(0, 100)}..."`); // Changed clientId to effectiveClientId
 
     try {
-        const cacheKey = `${clientId}:${conversationId}:${effectiveQuery}`; // Cache based on effective query
+        const cacheKey = `${effectiveClientId}:${conversationId}:${effectiveQuery}`; // Cache based on effective query, Changed clientId to effectiveClientId
         const cachedReply = db.getCache(cacheKey);
         if (cachedReply) {
             // Save user's actual typed message, not the effectiveQuery if it was combined
-            db.saveMessage(conversationId, 'user', userMessageInput).then(() => db.incrementAnalyticMessageCount(conversationId, 'user')).catch(err => console.error("Analytics save user msg err (cache):", err));
-            db.saveMessage(conversationId, 'bot', cachedReply).then(() => db.incrementAnalyticMessageCount(conversationId, 'bot')).catch(err => console.error("Analytics save bot msg err (cache):", err));
+            db.saveMessage(conversationId, 'user', userMessageInput).then(() => db.incrementAnalyticMessageCount(conversationId, 'user')).catch(err => logger.error("(ChatCtrl) Analytics save user msg err (cache):", err));
+            db.saveMessage(conversationId, 'bot', cachedReply).then(() => db.incrementAnalyticMessageCount(conversationId, 'bot')).catch(err => logger.error("(ChatCtrl) Analytics save bot msg err (cache):", err));
             return res.status(200).json({ reply: cachedReply });
         }
-        console.log("(Controller) No encontrado en caché. Procesando...");
+        logger.log("(ChatCtrl) No encontrado en caché. Procesando...");
 
         const conversationHistory = await db.getConversationHistory(conversationId);
         // Use effectiveQuery for the search
@@ -151,7 +165,7 @@ export const handleChatMessage = async (req, res, next) => {
             queriesEmbeddedForLog: queriesThatWereEmbedded,
             predictedCategory, // Capture predictedCategory
             rawRankedResultsForLog // Ensure this is also captured if it was part of hybridSearchResult
-        } = await db.hybridSearch(clientId, effectiveQuery, conversationId, {});
+        } = await db.hybridSearch(effectiveClientId, effectiveQuery, conversationId, {}); // Changed clientId to effectiveClientId
 
         let initialRelevantKnowledge = hybridSearchResultsOnly; // Use the renamed variable
 
@@ -173,8 +187,8 @@ export const handleChatMessage = async (req, res, next) => {
                     const ambiguityUserPrompt = `User Query: "${userQueryStringForAmbiguity}"\n\nRetrieved Context Snippets:\n${contextSnippets.join('\n')}\n\nAnaliza la User Query y los Retrieved Context Snippets y responde únicamente en el formato JSON especificado en las instrucciones del sistema.`;
                     const ambiguityMessages = [ { role: "system", content: ambiguitySystemPrompt }, { role: "user", content: ambiguityUserPrompt }];
 
-                    console.log(`(Controller) Calling LLM for ambiguity detection for CV:${conversationId}`);
-                    const ambiguityResponseString = await openaiService.getChatCompletion(ambiguityMessages, AMBIGUITY_LLM_MODEL, AMBIGUITY_LLM_TEMP, AMBIGUITY_LLM_MAX_TOKENS_OUTPUT);
+                    logger.log(`(ChatCtrl) Calling LLM for ambiguity detection for CV:${conversationId}`);
+                    const ambiguityResponseString = await getChatCompletion(ambiguityMessages, AMBIGUITY_LLM_MODEL, AMBIGUITY_LLM_TEMP, AMBIGUITY_LLM_MAX_TOKENS_OUTPUT); // Assuming openaiService.getChatCompletion was a typo and it's the imported getChatCompletion
 
                     if (ambiguityResponseString) {
                         try {
@@ -183,23 +197,23 @@ export const handleChatMessage = async (req, res, next) => {
                                 isAmbiguous = parsedResponse.is_ambiguous;
                                 clarificationQuestion = parsedResponse.clarification_question || null;
                                 clarificationOptions = Array.isArray(parsedResponse.options) ? parsedResponse.options : [];
-                                if (isAmbiguous) { console.log(`(Controller) Query deemed AMBIGUOUS for CV:${conversationId}. Question: '${clarificationQuestion}', Options: ${clarificationOptions.join(', ')}`); }
-                                else { console.log(`(Controller) Query deemed NOT AMBIGUOUS for CV:${conversationId}.`); }
-                            } else { console.warn("(Controller) Ambiguity LLM response invalid JSON or missing fields:", ambiguityResponseString); }
-                        } catch (parseError) { console.error("(Controller) Error parsing ambiguity LLM JSON:", parseError, "Raw:", ambiguityResponseString); }
-                    } else { console.warn("(Controller) Ambiguity LLM call returned empty."); }
-                } else { console.log("(Controller) No context snippets for ambiguity detection."); }
-            } catch (error) { console.error("(Controller) Error during ambiguity detection LLM call:", error.message); }
+                                if (isAmbiguous) { logger.log(`(ChatCtrl) Query deemed AMBIGUOUS for CV:${conversationId}. Question: '${clarificationQuestion}', Options: ${clarificationOptions.join(', ')}`); }
+                                else { logger.log(`(ChatCtrl) Query deemed NOT AMBIGUOUS for CV:${conversationId}.`); }
+                            } else { logger.warn("(ChatCtrl) Ambiguity LLM response invalid JSON or missing fields:", ambiguityResponseString); }
+                        } catch (parseError) { logger.error("(ChatCtrl) Error parsing ambiguity LLM JSON:", parseError, "Raw:", ambiguityResponseString); }
+                    } else { logger.warn("(ChatCtrl) Ambiguity LLM call returned empty."); }
+                } else { logger.log("(ChatCtrl) No context snippets for ambiguity detection."); }
+            } catch (error) { logger.error("(ChatCtrl) Error during ambiguity detection LLM call:", error.message); }
         }
 
         if (isAmbiguous && clarificationQuestion) {
-            console.log(`(Controller) Responding with clarification request for CV:${conversationId}. Original (or refined if applicable) query was: "${userQueryStringForAmbiguity}"`);
+            logger.log(`(ChatCtrl) Responding with clarification request for CV:${conversationId}. Original (or refined if applicable) query was: "${userQueryStringForAmbiguity}"`);
             // Save user's actual ambiguous message that LED to this clarification
             await db.saveMessage(conversationId, 'user', userMessageInput);
-            db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => console.error("Analytics err (ambig):", err));
+            db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => logger.error("(ChatCtrl) Analytics err (ambig):", err));
             // Save bot's clarification question
             await db.saveMessage(conversationId, 'bot', clarificationQuestion);
-            db.incrementAnalyticMessageCount(conversationId, 'bot').catch(err => console.error("Analytics err (ambig):", err));
+            db.incrementAnalyticMessageCount(conversationId, 'bot').catch(err => logger.error("(ChatCtrl) Analytics err (ambig):", err));
 
             return res.status(200).json({
                 reply: clarificationQuestion,
@@ -218,7 +232,7 @@ export const handleChatMessage = async (req, res, next) => {
                     try {
                         const relevancePrompt = `User Question: '${userQueryStringForAmbiguity}'. Is the following 'Text Snippet' directly relevant... Snippet: '${chunk.content}'`;
                         const relevanceMessages = [ { role: "system", content: "..." }, { role: "user", content: relevancePrompt }];
-                        const relevanceResponse = await openaiService.getChatCompletion(relevanceMessages, LLM_FILTER_MODEL, LLM_FILTER_TEMP_RELEVANCE, 10);
+                        const relevanceResponse = await getChatCompletion(relevanceMessages, LLM_FILTER_MODEL, LLM_FILTER_TEMP_RELEVANCE, 10);  // Assuming openaiService.getChatCompletion was a typo
                         if (relevanceResponse && relevanceResponse.trim().toLowerCase().startsWith('yes')) { filteredKnowledge.push(chunk); }
                     } catch (filterError) { filteredKnowledge.push(chunk); }
                 }
@@ -232,7 +246,7 @@ export const handleChatMessage = async (req, res, next) => {
                         const summaryPrompt = `User Question: '${userQueryStringForAmbiguity}'. From the 'Text Snippet' below, extract... Snippet: '${chunk.content}'`;
                         const summaryMessages = [ { role: "system", content: "..." }, { role: "user", content: summaryPrompt }];
                         const summaryMaxTokens = Math.min(encode(chunk.content || "").length + 50, 300);
-                        const summaryResponse = await openaiService.getChatCompletion(summaryMessages, LLM_FILTER_MODEL, LLM_FILTER_TEMP_SUMMARY, summaryMaxTokens);
+                        const summaryResponse = await getChatCompletion(summaryMessages, LLM_FILTER_MODEL, LLM_FILTER_TEMP_SUMMARY, summaryMaxTokens); // Assuming openaiService.getChatCompletion was a typo
                         if (summaryResponse && summaryResponse.trim().length > 0) { processedKnowledgeForContext.push({ ...chunk, extracted_content: summaryResponse.trim() }); }
                         else { processedKnowledgeForContext.push(chunk); }
                     } catch (summaryError) { processedKnowledgeForContext.push(chunk); }
@@ -260,15 +274,15 @@ export const handleChatMessage = async (req, res, next) => {
             const originalBotReplyText = botReplyText;
             let wasEscalated = false;
             if (originalBotReplyText && originalBotReplyText.trim() === BOT_CANNOT_ANSWER_MSG) { /* ... escalation logic as before, using effectiveQuery in analytics ... */
-                 db.updateAnalyticOnBotCannotAnswer(conversationId, effectiveQuery).catch(err => console.error(`Analytics: Failed to update bot_cannot_answer for CV:${conversationId}`, err));
-                 await db.updateConversationStatusByAgent(conversationId, clientId, null, 'escalated_to_human');
+                 db.updateAnalyticOnBotCannotAnswer(conversationId, effectiveQuery).catch(err => logger.error(`(ChatCtrl) Analytics: Failed to update bot_cannot_answer for CV:${conversationId}`, err));
+                 await db.updateConversationStatusByAgent(conversationId, effectiveClientId, null, 'escalated_to_human'); // Changed clientId to effectiveClientId
                  botReplyText = BOT_ESCALATION_NOTIFICATION_MSG; wasEscalated = true;
-                 db.updateAnalyticOnEscalation(conversationId, new Date(), effectiveQuery).catch(err => console.error(`Analytics: Failed to update escalation data for CV:${conversationId}`, err));
+                 db.updateAnalyticOnEscalation(conversationId, new Date(), effectiveQuery).catch(err => logger.error(`(ChatCtrl) Analytics: Failed to update escalation data for CV:${conversationId}`, err));
             }
 
             const retrievedContextForLog = rawRankedResultsForLog ? rawRankedResultsForLog.map(c => ({ id: c.id, content_preview: c.content.substring(0,150)+"...", score: c.reranked_score, metadata: c.metadata })) : [];
             const logData = {
-                clientId,
+                clientId: effectiveClientId, // Changed clientId to effectiveClientId
                 conversationId,
                 userQuery: effectiveQuery,
                 retrievedContext: retrievedContextForLog,
@@ -284,20 +298,20 @@ export const handleChatMessage = async (req, res, next) => {
                 const ragLogResult = await db.logRagInteraction(logData);
                 if (ragLogResult && ragLogResult.rag_interaction_log_id) {
                     ragLogId = ragLogResult.rag_interaction_log_id;
-                    console.log(`(Controller) RAG Interaction logged with ID: ${ragLogId}`);
+                    logger.log(`(ChatCtrl) RAG Interaction logged with ID: ${ragLogId}`);
                 } else {
-                    console.error("(Controller) Failed to get rag_interaction_log_id from logRagInteraction result:", ragLogResult);
+                    logger.error("(ChatCtrl) Failed to get rag_interaction_log_id from logRagInteraction result:", ragLogResult);
                 }
             } catch (err) {
-                console.error("(Controller) Error logging RAG interaction:", err.message);
+                logger.error("(ChatCtrl) Error logging RAG interaction:", err.message);
             }
 
             if (botReplyText) {
                 // Save the user's actual typed message, and bot's reply
                 await db.saveMessage(conversationId, 'user', userMessageInput); // User message does not get ragLogId
-                db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => console.error("Analytics err:", err));
+                db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => logger.error("(ChatCtrl) Analytics err:", err));
                 await db.saveMessage(conversationId, 'bot', botReplyText, ragLogId); // Pass ragLogId here for bot message
-                db.incrementAnalyticMessageCount(conversationId, 'bot').catch(err => console.error("Analytics err:", err));
+                db.incrementAnalyticMessageCount(conversationId, 'bot').catch(err => logger.error("(ChatCtrl) Analytics err:", err));
 
                 if (!(clarification_response_details && clarification_response_details.original_query)) { // Don't cache if it was a clarification cycle that led to this answer
                     db.setCache(cacheKey, botReplyText);
@@ -308,48 +322,60 @@ export const handleChatMessage = async (req, res, next) => {
             }
         }
     } catch (error) {
-        console.error(`(Controller) Error general en handleChatMessage para ${conversationId}:`, error);
+        logger.error(`(ChatCtrl) Error general en handleChatMessage para ${conversationId}:`, error);
         next(error);
     }
 };
 
-export const startConversation = async (req, res, next) => { /* ... existing ... */
-    console.log('>>> chatController.js: DENTRO de startConversation');
-    const { clientId } = req.body;
-    if (!clientId) {
-        console.warn('Petición inválida a /start. Falta clientId.');
+export const startConversation = async (req, res, next) => {
+    logger.log('>>> chatController.js: DENTRO de startConversation');
+    // const { clientId } = req.body; // Removed from here
+
+    let effectiveClientId;
+    if (req.user && req.user.id) {
+        effectiveClientId = req.user.id;
+        if (req.body.clientId && req.body.clientId !== effectiveClientId) {
+            logger.warn(`(ChatCtrl) User ${effectiveClientId} attempted to use clientId ${req.body.clientId} in authenticated route when starting a conversation.`);
+        }
+    } else if (req.body.clientId) {
+        effectiveClientId = req.body.clientId;
+    } else {
+        return res.status(400).json({ error: 'Falta clientId o no se pudo determinar.' });
+    }
+
+    if (!effectiveClientId) { // Should be caught by the logic above, but as a safeguard
+        logger.warn('(ChatCtrl) Petición inválida a /start. Falta effectiveClientId.');
         return res.status(400).json({ error: 'Falta clientId.' });
     }
 
-    // Validate clientId format
-    if (!UUID_REGEX.test(clientId)) {
+    // Validate effectiveClientId format
+    if (!UUID_REGEX.test(effectiveClientId)) {
         return res.status(400).json({ error: 'clientId has an invalid format.' });
     }
     try {
-        const clientExists = await db.getClientConfig(clientId);
+        const clientExists = await db.getClientConfig(effectiveClientId); // Changed clientId to effectiveClientId
         if (!clientExists) {
-            console.warn(`Intento de iniciar conversación para cliente inexistente: ${clientId}`);
+            logger.warn(`(ChatCtrl) Intento de iniciar conversación para cliente inexistente: ${effectiveClientId}`);
             return res.status(404).json({ error: 'Cliente inválido o no encontrado.' });
         }
-        const newConversationId = await db.createConversation(clientId); // Assuming this returns just the ID now
+        const newConversationId = await db.createConversation(effectiveClientId); // Changed clientId to effectiveClientId
         if (!newConversationId) {
             throw new Error("Failed to create conversation or retrieve its ID.");
         }
-        console.log(`(Controller) Conversación iniciada/creada: ${newConversationId} para cliente ${clientId}`);
+        logger.log(`(ChatCtrl) Conversación iniciada/creada: ${newConversationId} para cliente ${effectiveClientId}`);
 
         // Fetch the full conversation object to get created_at for analytics
         const convDetails = await supabase.from('conversations').select('created_at').eq('conversation_id', newConversationId).single();
         if (convDetails.data) {
-            db.createConversationAnalyticEntry(newConversationId, clientId, convDetails.data.created_at)
-             .catch(err => console.error(`Analytics: Failed to create entry for CV:${newConversationId}`, err));
+            db.createConversationAnalyticEntry(newConversationId, effectiveClientId, convDetails.data.created_at) // Changed clientId to effectiveClientId
+             .catch(err => logger.error(`(ChatCtrl) Analytics: Failed to create entry for CV:${newConversationId}`, err));
         } else {
-             console.error(`Analytics: Could not fetch created_at for new CV:${newConversationId}`);
+             logger.error(`(ChatCtrl) Analytics: Could not fetch created_at for new CV:${newConversationId}`);
         }
-
 
         res.status(201).json({ conversationId: newConversationId });
     } catch (error) {
-        console.error(`Error en startConversation para cliente ${clientId}:`, error);
+        logger.error(`(ChatCtrl) Error en startConversation para cliente ${effectiveClientId}:`, error); // Changed clientId to effectiveClientId
         next(error);
     }
 };
