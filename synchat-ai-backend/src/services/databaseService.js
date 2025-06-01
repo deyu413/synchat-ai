@@ -5,6 +5,10 @@ import { getEmbedding } from './embeddingService.js'; // Necesario para búsqued
 import { getChatCompletion } from './openaiService.js'; // Import for query reformulation
 import { pipeline, env } from '@xenova/transformers';
 
+// TODO: Future Enhancements for Query Expansion Dictionaries:
+// - Consider making the use of THESAURUS_ES and ACRONYMS_ES configurable (e.g., enable/disable globally or per client).
+// - Explore loading these dictionaries from a database or external configuration files instead of hardcoding.
+// - Investigate potential for client-specific thesauri or acronym lists.
 // Hardcoded Spanish Thesaurus for query expansion
 const THESAURUS_ES = {
     "precio": ["costo", "tarifa", "valor"],
@@ -234,6 +238,45 @@ export const getClientKnowledgeCategories = async (clientId) => {
 
 export const createConversation = async (clientId) => { /* ... */ };
 
+/**
+ * Performs a hybrid search combining vector search and Full-Text Search (FTS)
+ * to retrieve relevant knowledge base chunks for a given query.
+ *
+ * The process includes several stages:
+ * 1.  Optional advanced query correction using an LLM.
+ * 2.  Query classification to predict a category for filtering (if categories are available).
+ * 3.  Optional query decomposition into sub-queries for complex questions.
+ * 4.  Non-LLM Query Expansion:
+ *     a. Acronym expansion (e.g., "IA" -> "IA (Inteligencia Artificial)").
+ *     b. Synonym-based variations for vector search (generates a few alternative queries for embedding).
+ *     c. Specialized FTS query string construction (uses OR-groups for synonyms, ANDs terms).
+ * 5.  Execution of parallel vector and FTS searches for each processed query (original, decomposed, or expanded).
+ *     Vector search may further internally use techniques like HyDE or query reformulation for some variations.
+ * 6.  Merging and initial ranking of results based on hybrid scores (weighted combination of vector and FTS scores).
+ * 7.  Optional re-ranking using a Cross-Encoder model for the top N initial results.
+ * 8.  Final re-ranking using a weighted formula that includes the initial hybrid score, cross-encoder score (if available),
+ *     keyword match score (Jaccard similarity), metadata relevance, document recency, source authority, and chunk feedback scores.
+ * 9.  Retrieval of related propositions based on the primary query embedding.
+ *
+ * @async
+ * @function hybridSearch
+ * @param {string} clientId - The ID of the client for whom the search is being performed.
+ * @param {string} queryText - The original user query text.
+ * @param {string} [conversationId] - Optional ID of the current conversation, used for context or logging.
+ * @param {object} [options={}] - Optional parameters to customize search behavior.
+ * @param {number} [options.vectorWeight] - Weight for vector search results in the initial hybrid score.
+ * @param {number} [options.ftsWeight] - Weight for FTS results in the initial hybrid score.
+ * @param {number} [options.vectorMatchThreshold] - Similarity threshold for vector search matches.
+ * @param {boolean} [returnPipelineDetails=false] - If true, returns a detailed breakdown of the search pipeline's stages and intermediate results.
+ * @returns {Promise<object>} A promise that resolves to an object containing:
+ *                            - `results`: An array of final ranked search result chunks, each with content, metadata, and various scores.
+ *                            - `propositionResults`: An array of related propositions (if any found).
+ *                            - `searchParams`: An object detailing the parameters used for the search (weights, thresholds, limits).
+ *                            - `queriesEmbeddedForLog`: An array of query strings that were embedded during the process.
+ *                            - `predictedCategory`: The category predicted for the query by the classification step (or null if none).
+ *                            - `pipelineDetails`: (Only if `returnPipelineDetails` is true) An object containing detailed information about each stage of the search pipeline,
+ *                              including original query, corrected query, decomposed queries, expanded queries, intermediate search results, and final ranked lists.
+ */
 export const hybridSearch = async (clientId, queryText, conversationId, options = {}, returnPipelineDetails = false) => {
     const originalUserQueryAtStart = queryText; // Store the absolute original query
     let currentQueryText = originalUserQueryAtStart; // This will be used by subsequent steps, potentially corrected
@@ -450,62 +493,71 @@ Classification:`;
             pipelineDetails.queryDecomposition = { wasDecomposed: wasDecomposedForLog, subQueries: subQueriesForLog, finalQueriesProcessed: queriesToProcess };
         }
 
-        // Acronym Expansion
-        const queriesForExpansionRound = [...queriesToProcess];
-        const processedQueriesAfterAcronyms = [];
+        // --- Acronym Expansion ---
+        // Iterates through each query in the current list (which might be from decomposition or just the corrected original query).
+        // Expands known acronyms found in each query string.
+        const queriesForAcronymExpansion = [...queriesToProcess]; // Create a copy to iterate over while modifying the main list indirectly
+        const queriesPostAcronymExpansion = []; // Store results of this stage
 
-        for (const queryStringToExpand of queriesForExpansionRound) {
-            let queryAfterAcronyms = queryStringToExpand;
-            let acronymExpansionPerformed = false;
+        for (const queryToExpand of queriesForAcronymExpansion) {
+            let currentQueryWithAcronyms = queryToExpand; // The query string being processed in this iteration
+            let anAcronymWasExpanded = false; // Flag to log only if an expansion occurred for this query
+
+            // Check each known acronym
             for (const acronym in ACRONYMS_ES) {
                 if (ACRONYMS_ES.hasOwnProperty(acronym)) {
-                    const regex = new RegExp(`\\b${acronym}\\b`, 'g');
-                    if (queryAfterAcronyms.match(regex)) {
-                        queryAfterAcronyms = queryAfterAcronyms.replace(regex, `${acronym} (${ACRONYMS_ES[acronym]})`);
-                        acronymExpansionPerformed = true;
+                    const regex = new RegExp(`\\b${acronym}\\b`, 'g'); // Match whole word acronym
+                    if (currentQueryWithAcronyms.match(regex)) {
+                        currentQueryWithAcronyms = currentQueryWithAcronyms.replace(regex, `${acronym} (${ACRONYMS_ES[acronym]})`);
+                        anAcronymWasExpanded = true;
                     }
                 }
             }
-            if (acronymExpansionPerformed) {
-                console.log(`(DB Service) Query after acronym expansion: "${queryAfterAcronyms.substring(0,100)}..." (Original segment: "${queryStringToExpand.substring(0,100)}...")`);
+
+            if (anAcronymWasExpanded) {
+                logger.info(`(DB Service) Query after acronym expansion: "${currentQueryWithAcronyms.substring(0,100)}..." (Original segment: "${queryToExpand.substring(0,100)}...")`);
             }
-            processedQueriesAfterAcronyms.push(queryAfterAcronyms);
+            queriesPostAcronymExpansion.push(currentQueryWithAcronyms);
         }
+        queriesToProcess = queriesPostAcronymExpansion; // Update queriesToProcess with (potentially) acronym-expanded queries
 
-        queriesToProcess = processedQueriesAfterAcronyms;
+        // --- Synonym Expansion (for Vector Search Query Variations) ---
+        // Takes each query (now acronym-expanded) and generates a limited number of variations
+        // by replacing keywords with their first listed synonym. These variations are intended
+        // for generating separate embeddings to broaden vector search.
+        const queriesReadyForSynonymExpansion = [...queriesToProcess];
+        const queriesIncludingSynonymVariations = [];
+        const MAX_SYNONYM_VARIATIONS_PER_BASE_QUERY = 2; // Max variations to generate per single base query. Balances broadening search with embedding cost.
 
-        // Synonym Expansion (generates new query variations)
-        const queriesAfterAcronymsLoop = [...queriesToProcess];
-        const queriesWithSynonymVariations = [];
+        for (const baseQuery of queriesReadyForSynonymExpansion) {
+            queriesIncludingSynonymVariations.push(baseQuery); // Always include the base query itself
 
-        for (const baseQuery of queriesAfterAcronymsLoop) {
-            queriesWithSynonymVariations.push(baseQuery);
+            const keywordsInBase = tokenizeText(baseQuery, true); // Significant keywords from the base query
+            let variationsAddedForThisBase = 0;
 
-            const keywords = tokenizeText(baseQuery, true);
-            let synonymVariationsAdded = 0;
-
-            for (const keyword of keywords) {
-                if (synonymVariationsAdded >= 2) {
-                    break;
+            for (const keyword of keywordsInBase) {
+                if (variationsAddedForThisBase >= MAX_SYNONYM_VARIATIONS_PER_BASE_QUERY) {
+                    break; // Reached max variations for this particular baseQuery
                 }
                 if (THESAURUS_ES[keyword] && THESAURUS_ES[keyword].length > 0) {
-                    const firstSynonym = THESAURUS_ES[keyword][0];
+                    const firstSynonym = THESAURUS_ES[keyword][0]; // Using only the first synonym for simplicity and control
 
-                    let newQueryVariation = "";
-                    const regex = new RegExp(`\\b${keyword}\\b`);
-                    if (baseQuery.match(regex)) {
-                         newQueryVariation = baseQuery.replace(regex, firstSynonym);
-                    }
+                    // Create a new variation by replacing only the current keyword in the baseQuery
+                    // This helps maintain the context of other words in the query.
+                    const regex = new RegExp(`\\b${keyword}\\b`); // Match whole word
+                    const newQuerySynonymVariation = baseQuery.replace(regex, firstSynonym);
 
-                    if (newQueryVariation && newQueryVariation !== baseQuery) {
-                        queriesWithSynonymVariations.push(newQueryVariation);
-                        synonymVariationsAdded++;
-                        console.log(`(DB Service) Synonym variation: "${newQueryVariation.substring(0,100)}...", Keyword: "${keyword}", Synonym: "${firstSynonym}"`);
+                    // Add the new variation if it's genuinely different and not already added
+                    // (e.g. if baseQuery didn't actually contain the keyword, or synonym is identical)
+                    if (newQuerySynonymVariation !== baseQuery && !queriesIncludingSynonymVariations.includes(newQuerySynonymVariation)) {
+                        queriesIncludingSynonymVariations.push(newQuerySynonymVariation);
+                        variationsAddedForThisBase++;
+                        logger.info(`(DB Service) Synonym variation for vector search: "${newQuerySynonymVariation.substring(0,100)}...", Keyword: "${keyword}", Synonym: "${firstSynonym}"`);
                     }
                 }
             }
         }
-        queriesToProcess = queriesWithSynonymVariations;
+        queriesToProcess = queriesIncludingSynonymVariations; // Final list of queries (originals + variations) to process in the main search loop
 
         if (returnPipelineDetails) {
             pipelineDetails.queryDecomposition.finalQueriesProcessed = [...queriesToProcess];
@@ -594,18 +646,31 @@ Classification:`;
                 }
             }
 
-    // FTS Query Preparation with Thesaurus
-    const significantTokens = tokenizeText(loopCurrentQuery, true); // Assuming tokenizeText is available in scope
-    const ftsQueryParts = [];
-    for (const token of significantTokens) {
+    // FTS Query Preparation with Thesaurus (for the current loopCurrentQuery) ---
+    // Tokenize the current query (which might be an original, an acronym-expanded version, or a synonym variation for vector search)
+    // to get its significant terms for FTS.
+    const significantTokensForFTS = tokenizeText(loopCurrentQuery, true);
+    const ftsQueryParts = []; // Array to hold parts of the FTS query string
+
+    for (const token of significantTokensForFTS) {
         if (THESAURUS_ES[token] && THESAURUS_ES[token].length > 0) {
-            ftsQueryParts.push(`(${[token, ...THESAURUS_ES[token]].join(' | ')})`);
+            // If the token has synonyms, create an OR-group for FTS.
+            // This includes the original token plus all its synonyms.
+            // E.g., if token is "precio" and synonyms are ["costo", "tarifa"], part is "(precio | costo | tarifa)"
+            const ftsTokenWithSynonyms = [token, ...THESAURUS_ES[token]];
+            // Ensure uniqueness in case a token is listed as its own synonym (though not current practice)
+            const uniqueFtsTerms = [...new Set(ftsTokenWithSynonyms)];
+            ftsQueryParts.push(`(${uniqueFtsTerms.join(' | ')})`);
         } else {
+            // If no synonyms, the token is used as is.
             ftsQueryParts.push(token);
         }
     }
+    // Combine all parts with the FTS AND operator '&'
+    // E.g., "(termA_expanded) & termB & (termC_expanded)"
     const ftsQueryString = ftsQueryParts.join(' & ');
     logger.info(`(DB Service) Original FTS query text for loop: "${processedQueryText.substring(0,50)}...", Constructed FTS query string: "${ftsQueryString.substring(0,100)}..."`);
+            // logger.info(...) // This log is already in place and describes the constructed string.
 
             const rpcParamsFts = {
                 client_id_param: clientId,
