@@ -255,7 +255,7 @@ export const handleChatMessage = async (req, res, next) => {
 
             // --- Score-based Prioritization and Token-limited Truncation of Context Chunks ---
             const LLM_TOKEN_SAFETY_MARGIN = 200; // Safety margin for LLM response and other formatting.
-            const TOKENS_PER_CHUNK_OVERHEAD = 20; // Estimated overhead per chunk (e.g., "Context Snippet X:\n---\n...\n---\n")
+            const TOKENS_PER_CHUNK_OVERHEAD = 65; // Updated estimate for detailed chunk formatting (markers, ID, score, source, path, page)
 
             // Sort chunks by score (descending)
             let initialTotalTokensOfConsideredChunks = 0;
@@ -343,8 +343,30 @@ export const handleChatMessage = async (req, res, next) => {
             if (finalChunksForLLMContext.length > 0) {
                 fullChunksSectionText = "Fragmentos de Documentos Relevantes:\n";
                 finalChunksForLLMContext.forEach((chunk, index) => {
-                    const content = chunk.extracted_content || chunk.content; // Use summarized if available
-                    fullChunksSectionText += `Context Snippet ${index + 1} (ID: ${chunk.id}, Score: ${(chunk.reranked_score ?? chunk.hybrid_score ?? 0).toFixed(3)}):\n${content}\n---\n`;
+                    let chunkString = "";
+                    chunkString += `--- Document Start (ID: ${chunk.id}, Score: ${(chunk.reranked_score ?? chunk.hybrid_score ?? 0).toFixed(3)}) ---\n`;
+                    chunkString += `Source: ${chunk.metadata?.source_name || 'N/A'}\n`;
+
+                    if (chunk.metadata?.hierarchy && Array.isArray(chunk.metadata.hierarchy) && chunk.metadata.hierarchy.length > 0) {
+                        chunkString += `Section Path: ${chunk.metadata.hierarchy.map(h => h.text).join(' > ')}\n`;
+                    } else {
+                        chunkString += "Section Path: N/A\n";
+                    }
+
+                    if (chunk.metadata?.page_number) {
+                        chunkString += `Page: ${chunk.metadata.page_number}\n`;
+                    } else {
+                        chunkString += "Page: N/A\n";
+                    }
+
+                    const content = chunk.extracted_content || chunk.content || "No content available";
+                    chunkString += `Content: ${content}\n`;
+                    chunkString += `--- Document End (ID: ${chunk.id}) ---\n\n`;
+                    fullChunksSectionText += chunkString;
+
+                    if (index === 0) { // Log only the first formatted chunk for debugging
+                        logger.debug(`(ChatCtrl) [Context Formatting] Example of first formatted chunk string:\n${chunkString}`);
+                    }
                 });
             }
 
