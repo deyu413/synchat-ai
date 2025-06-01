@@ -564,22 +564,25 @@ Classification:`;
         }
 
         let aggregatedVectorResults = [];
-
-
-
-        let aggregatedVectorResults = [];
         let aggregatedFtsResults = [];
         let aggregatedQueriesEmbeddedForLog = [];
         let firstProcessedQueryEmbedding = null;
 
         for (let idx = 0; idx < queriesToProcess.length; idx++) {
             const loopCurrentQuery = queriesToProcess[idx]; // This is either a sub-query or the (potentially corrected) main query
+
+            // Ensure loopCurrentQuery is a string before processing
+            if (typeof loopCurrentQuery !== 'string') {
+                logger.warn(`(DB Service) hybridSearch: loopCurrentQuery at index ${idx} is not a string, skipping. Value: ${loopCurrentQuery}`);
+                continue; // Skip this iteration
+            }
+
             const processedQueryText = preprocessTextForEmbedding(loopCurrentQuery);
 
             let currentQueryPipelineDetailsRef = null;
             if (returnPipelineDetails) {
                 const detailEntry = {
-                    queryIdentifier: loopCurrentQuery.substring(0,75) + (loopCurrentQuery.length > 75 ? "..." : ""),
+                    queryIdentifier: loopCurrentQuery.substring(0,75) + (loopCurrentQuery.length > 75 ? "..." : ""), // Safe now
                     preprocessingOutput: processedQueryText,
                     enhancements: [], vectorSearchResults: [], ftsResults: []
                 };
@@ -766,7 +769,6 @@ Classification:`;
                     // console.warn(`(DB Service) source_authority_score for item ID ${item.id} was not a valid number: ${item.metadata.source_authority_score}`);
                 }
             }
-            }
             item.sourceAuthorityScore = calculatedSourceAuthorityScore;
 
             // Access and default Chunk Feedback Score
@@ -782,23 +784,22 @@ Classification:`;
                     // console.warn(`(DB Service) chunk_feedback_score for item ID ${item.id} was not a valid number: ${item.metadata.chunk_feedback_score}`);
                 }
             }
-            }
             item.chunkFeedbackScore = calculatedChunkFeedbackScore;
 
             // Access and default Chunk Feedback Score
             // Assumes chunk_feedback_score could be positive or negative (e.g., -1 to 1).
             // A default of 0.0 implies neutral feedback if not specified or invalid.
-            let calculatedChunkFeedbackScore = 0.0; // Default
-            if (item.metadata && item.metadata.chunk_feedback_score !== undefined && item.metadata.chunk_feedback_score !== null) {
-                const numericScore = parseFloat(item.metadata.chunk_feedback_score);
-                if (!isNaN(numericScore)) {
-                    calculatedChunkFeedbackScore = numericScore;
-                } else {
-                    // Optional: Log if it was present but not a number
-                    // console.warn(`(DB Service) chunk_feedback_score for item ID ${item.id} was not a valid number: ${item.metadata.chunk_feedback_score}`);
-                }
-            }
-            item.chunkFeedbackScore = calculatedChunkFeedbackScore;
+            // let calculatedChunkFeedbackScore = 0.0; // Default  // THIS LINE AND BLOCK IS DUPLICATED AND REMOVED
+            // if (item.metadata && item.metadata.chunk_feedback_score !== undefined && item.metadata.chunk_feedback_score !== null) {
+            //     const numericScore = parseFloat(item.metadata.chunk_feedback_score);
+            //     if (!isNaN(numericScore)) {
+            //         calculatedChunkFeedbackScore = numericScore;
+            //     } else {
+            //         // Optional: Log if it was present but not a number
+            //         // console.warn(`(DB Service) chunk_feedback_score for item ID ${item.id} was not a valid number: ${item.metadata.chunk_feedback_score}`);
+            //     }
+            // }
+            // item.chunkFeedbackScore = calculatedChunkFeedbackScore; // THIS LINE IS PART OF THE DUPLICATE BLOCK
 
             // Calculate the final reranked_score using all weighted components
             item.reranked_score =
@@ -887,10 +888,33 @@ export const incrementAnalyticMessageCount = async (conversationId, senderType) 
 export const updateAnalyticOnEscalation = async (conversationId, escalationTimestamp, lastUserQuery) => { /* ... */ };
 export const updateAnalyticOnBotCannotAnswer = async (conversationId, lastUserQuery) => { /* ... */ };
 export const finalizeConversationAnalyticRecord = async (conversationId, resolutionStatus, lastMessageAt) => { /* ... */ };
-function tokenizeText(text, removeStopWords = false) { /* ... */ }
+
+function tokenizeText(text, removeStopWords = false) {
+    if (typeof text !== 'string' || text.trim() === '') {
+        return [];
+    }
+    // Normalize: lowercase, remove punctuation (simple version)
+    const normalizedText = text.toLowerCase().replace(/[.,!?;:()\[\]{}"']/g, '');
+    let tokens = normalizedText.split(/\s+/).filter(token => token.length > 0);
+
+    if (removeStopWords) {
+        tokens = tokens.filter(token => !SPANISH_STOP_WORDS.has(token));
+    }
+    return tokens;
+}
+
 function calculateJaccardSimilarity(set1Tokens, set2Tokens) { /* ... */ }
 const SPANISH_ABBREVIATIONS = { /* ... */ };
-function preprocessTextForEmbedding(text) { /* ... */ }
+
+function preprocessTextForEmbedding(text) {
+    if (typeof text !== 'string') {
+        // console.warn("(DB Service) preprocessTextForEmbedding: input is not a string, returning empty string. Value:", text);
+        return ""; // Return an empty string for non-string inputs
+    }
+    // Simple preprocessing: lowercase and trim. More sophisticated steps could be added.
+    return text.toLowerCase().trim();
+}
+
 export const getConversationDetails = async (conversationId) => { /* ... */ };
 export const logAiResolution = async (clientId, conversationId, billingCycleId, detailsJson) => { /* ... */ };
 

@@ -1,0 +1,61 @@
+[
+  {
+    "test_id": "ES_FAQ_001",
+    "query": "¿Cuál es el horario de atención al cliente?",
+    "expected_keywords": [
+      "horario",
+      "atención",
+      "lunes",
+      "viernes",
+      "9am",
+      "6pm"
+    ],
+    "retrieved_chunks_preview": [],
+    "system_prompt_length_chars": 1376,
+    "rag_context_length_chars": 0,
+    "llm_response": "ERROR: LLM returned null or empty.",
+    "keywords_check": "FAIL",
+    "faithfulness_check": "N/A (LLM error)",
+    "answer_relevancy_check": "N/A (LLM error)",
+    "context_precision_at_K": 0,
+    "context_recall": 0,
+    "reciprocal_rank": 0
+  },
+  {
+    "test_id": "ES_PRODUCT_INFO_001",
+    "query": "Háblame sobre las características del producto X",
+    "expected_keywords": [
+      "producto X",
+      "característica A",
+      "beneficio B"
+    ],
+    "retrieved_chunks_preview": [],
+    "system_prompt_length_chars": 1376,
+    "rag_context_length_chars": 0,
+    "llm_response": "ERROR: LLM returned null or empty.",
+    "keywords_check": "FAIL",
+    "faithfulness_check": "N/A (LLM error)",
+    "answer_relevancy_check": "N/A (LLM error)",
+    "context_precision_at_K": 0,
+    "context_recall": 0,
+    "reciprocal_rank": 0
+  },
+  {
+    "test_id": "ES_NO_CONTEXT_001",
+    "query": "¿Cuál es el sentido de la vida según SynChat?",
+    "expected_keywords": [
+      "puedo responder",
+      "información disponible"
+    ],
+    "retrieved_chunks_preview": [],
+    "system_prompt_length_chars": 1376,
+    "rag_context_length_chars": 0,
+    "llm_response": "ERROR: LLM returned null or empty.",
+    "keywords_check": "FAIL",
+    "faithfulness_check": "N/A (LLM error)",
+    "answer_relevancy_check": "N/A (LLM error)",
+    "context_precision_at_K": "N/A",
+    "context_recall": "N/A",
+    "reciprocal_rank": 0
+  }
+]
