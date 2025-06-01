@@ -31,12 +31,16 @@ const ENABLE_ADVANCED_QUERY_CORRECTION = process.env.ENABLE_ADVANCED_QUERY_CORRE
 const QUERY_CORRECTION_MODEL = "gpt-3.5-turbo";
 const QUERY_CORRECTION_TEMP = 0.1;
 
-// Adjusted Re-ranking Weights to include Cross-Encoder
-const W_CROSS_ENCODER_SCORE = 0.4;      // Weight for the cross-encoder score
-const W_ORIGINAL_HYBRID_SCORE = 0.3;    // Adjusted weight for initial hybrid score
-const W_KEYWORD_MATCH_SCORE = 0.15;   // Adjusted weight for keyword match
-const W_METADATA_RELEVANCE_SCORE = 0.15; // Adjusted weight for metadata relevance
-// Sum of weights = 0.4 + 0.3 + 0.15 + 0.15 = 1.0
+// Define weights for the final re-ranking formula
+// Adjusted to include new features and ensure sum is 1.0
+const W_ORIGINAL_HYBRID_SCORE_ADJ = 0.20;       // Weight for the initial hybrid search score
+const W_CROSS_ENCODER_SCORE_ADJ = 0.30;     // Weight for the cross-encoder score (normalized)
+const W_KEYWORD_MATCH_SCORE_ADJ = 0.10;     // Weight for direct keyword match score
+const W_METADATA_RELEVANCE_SCORE_ADJ = 0.10; // Weight for metadata relevance (e.g., title match)
+const W_RECENCY_SCORE = 0.10;               // Weight for document recency
+const W_SOURCE_AUTHORITY_SCORE = 0.10;      // Weight for source authority
+const W_CHUNK_FEEDBACK_SCORE = 0.10;        // Weight for user feedback score on the chunk
+// Sum of new weights: 0.20 + 0.30 + 0.10 + 0.10 + 0.10 + 0.10 + 0.10 = 1.0
 
 // Simple Spanish Stop Words List (customize as needed)
 const SPANISH_STOP_WORDS = new Set([ // This is the existing one, used by hybridSearch's tokenizeText
@@ -564,16 +568,112 @@ Classification:`;
             if (item.metadata?.custom_metadata && Array.isArray(item.metadata.custom_metadata.tags)) { detailedMetadataScore += (item.metadata.custom_metadata.tags.flatMap(tag => tokenizeText(String(tag), true)).filter(tt => correctedQueryTokens.includes(tt)).length * 0.15); }
             item.metadataRelevanceScore = detailedMetadataScore;
             const itemCrossEncoderScoreNormalized = item.cross_encoder_score_normalized !== undefined ? item.cross_encoder_score_normalized : sigmoid(0);
-            const reranked_score = ((item.hybrid_score || 0) * W_ORIGINAL_HYBRID_SCORE) + (keywordMatchScore * W_KEYWORD_MATCH_SCORE) + (item.metadataRelevanceScore * W_METADATA_RELEVANCE_SCORE) + (itemCrossEncoderScoreNormalized * W_CROSS_ENCODER_SCORE);
-            item.keywordMatchScore = keywordMatchScore;
-            return { ...item, cross_encoder_score_normalized: itemCrossEncoderScoreNormalized, reranked_score };
+
+            // Calculate Document Recency Score
+            const MS_PER_DAY = 1000 * 60 * 60 * 24;
+            let recencyScore = 0.5; // Default score if date is missing or invalid
+
+            if (item.metadata && item.metadata.source_document_updated_at) {
+                const docDate = new Date(item.metadata.source_document_updated_at);
+                // Check if docDate is a valid date
+                if (!isNaN(docDate.getTime())) {
+                    const ageInDays = (new Date().getTime() - docDate.getTime()) / MS_PER_DAY;
+                    // Linear decay over a year (365 days)
+                    // Score is 1 if age is 0 days, 0 if age is >= 365 days.
+                    // Score is higher for more recent documents.
+                    recencyScore = Math.max(0, 1 - (ageInDays / 365));
+                } else {
+                    // Optional: Log invalid date format if needed
+                    // console.warn(`(DB Service) Invalid source_document_updated_at format for item ID ${item.id}: ${item.metadata.source_document_updated_at}`);
+                }
+            }
+            item.recencyScore = recencyScore; // Add to item for use in final score and potential logging
+
+            // Access and default Source Authority Score
+            let calculatedSourceAuthorityScore = 0.5; // Default
+            if (item.metadata && item.metadata.source_authority_score !== undefined && item.metadata.source_authority_score !== null) {
+                const numericScore = parseFloat(item.metadata.source_authority_score);
+                if (!isNaN(numericScore)) {
+                    calculatedSourceAuthorityScore = numericScore;
+                } else {
+                    // Optional: Log if it was present but not a number
+                    // console.warn(`(DB Service) source_authority_score for item ID ${item.id} was not a valid number: ${item.metadata.source_authority_score}`);
+                }
+            }
+            }
+            item.sourceAuthorityScore = calculatedSourceAuthorityScore;
+
+            // Access and default Chunk Feedback Score
+            // Assumes chunk_feedback_score could be positive or negative (e.g., -1 to 1).
+            // A default of 0.0 implies neutral feedback if not specified or invalid.
+            let calculatedChunkFeedbackScore = 0.0; // Default
+            if (item.metadata && item.metadata.chunk_feedback_score !== undefined && item.metadata.chunk_feedback_score !== null) {
+                const numericScore = parseFloat(item.metadata.chunk_feedback_score);
+                if (!isNaN(numericScore)) {
+                    calculatedChunkFeedbackScore = numericScore;
+                } else {
+                    // Optional: Log if it was present but not a number
+                    // console.warn(`(DB Service) chunk_feedback_score for item ID ${item.id} was not a valid number: ${item.metadata.chunk_feedback_score}`);
+                }
+            }
+            }
+            item.chunkFeedbackScore = calculatedChunkFeedbackScore;
+
+            // Access and default Chunk Feedback Score
+            // Assumes chunk_feedback_score could be positive or negative (e.g., -1 to 1).
+            // A default of 0.0 implies neutral feedback if not specified or invalid.
+            let calculatedChunkFeedbackScore = 0.0; // Default
+            if (item.metadata && item.metadata.chunk_feedback_score !== undefined && item.metadata.chunk_feedback_score !== null) {
+                const numericScore = parseFloat(item.metadata.chunk_feedback_score);
+                if (!isNaN(numericScore)) {
+                    calculatedChunkFeedbackScore = numericScore;
+                } else {
+                    // Optional: Log if it was present but not a number
+                    // console.warn(`(DB Service) chunk_feedback_score for item ID ${item.id} was not a valid number: ${item.metadata.chunk_feedback_score}`);
+                }
+            }
+            item.chunkFeedbackScore = calculatedChunkFeedbackScore;
+
+            // Calculate the final reranked_score using all weighted components
+            item.reranked_score =
+                (item.hybrid_score || 0) * W_ORIGINAL_HYBRID_SCORE_ADJ +
+                (item.cross_encoder_score_normalized || 0) * W_CROSS_ENCODER_SCORE_ADJ +
+                (item.keywordMatchScore || 0) * W_KEYWORD_MATCH_SCORE_ADJ +
+                (item.metadataRelevanceScore || 0) * W_METADATA_RELEVANCE_SCORE_ADJ +
+                (item.recencyScore) * W_RECENCY_SCORE +               // Defaulting handled during item.recencyScore assignment
+                (item.sourceAuthorityScore) * W_SOURCE_AUTHORITY_SCORE + // Defaulting handled during item.sourceAuthorityScore assignment
+                (item.chunkFeedbackScore) * W_CHUNK_FEEDBACK_SCORE;    // Defaulting handled during item.chunkFeedbackScore assignment
+
+            // Ensure a final score is a number, default to 0 if somehow NaN
+            if (isNaN(item.reranked_score)) {
+                // console.warn(`(DB Service) Calculated reranked_score is NaN for item ID ${item.id}. Defaulting to 0.`);
+                item.reranked_score = 0;
+            }
+            // item.keywordMatchScore = keywordMatchScore; // keywordMatchScore is already part of item.
+            return { ...item, reranked_score: item.reranked_score }; // Return the item with all scores
         });
 
         rerankedList.sort((a, b) => b.reranked_score - a.reranked_score);
-        if (DEBUG_RERANKING) { rerankedList.slice(0, finalLimit + 5).forEach(r => { logger.debug(`  ID: ${r.id}, Reranked: ${r.reranked_score?.toFixed(4)}, Hybrid: ${r.hybrid_score?.toFixed(4)}, CE_norm: ${r.cross_encoder_score_normalized?.toFixed(4)}, KW: ${r.keywordMatchScore?.toFixed(4)}, MetaDetailed: ${r.metadataRelevanceScore?.toFixed(4)}`); });}
+        if (DEBUG_RERANKING) {
+            rerankedList.slice(0, finalLimit + 5).forEach(r => {
+                logger.debug(`  ID: ${r.id}, Reranked: ${r.reranked_score?.toFixed(4)}, Hybrid: ${r.hybrid_score?.toFixed(4)}, CE_norm: ${r.cross_encoder_score_normalized?.toFixed(4)}, KW: ${r.keywordMatchScore?.toFixed(4)}, MetaDetailed: ${r.metadataRelevanceScore?.toFixed(4)}, Recency: ${r.recencyScore?.toFixed(4)}, Authority: ${r.sourceAuthorityScore?.toFixed(4)}, Feedback: ${r.chunkFeedbackScore?.toFixed(4)}`);
+            });
+        }
 
         const finalResults = rerankedList.slice(0, finalLimit);
-        const finalResultsMapped = finalResults.map(r => ({ id: r.id, content: r.content, metadata: r.metadata, reranked_score: r.reranked_score, hybrid_score: r.hybrid_score, keywordMatchScore: r.keywordMatchScore, metadataRelevanceScore: r.metadataRelevanceScore, cross_encoder_score_normalized: r.cross_encoder_score_normalized }));
+        const finalResultsMapped = finalResults.map(r => ({
+            id: r.id,
+            content: r.content,
+            metadata: r.metadata,
+            reranked_score: r.reranked_score,
+            hybrid_score: r.hybrid_score,
+            keywordMatchScore: r.keywordMatchScore,
+            metadataRelevanceScore: r.metadataRelevanceScore,
+            cross_encoder_score_normalized: r.cross_encoder_score_normalized, // Kept for transparency
+            recencyScore: r.recencyScore,
+            sourceAuthorityScore: r.sourceAuthorityScore,
+            chunkFeedbackScore: r.chunkFeedbackScore
+        }));
 
         if (returnPipelineDetails) pipelineDetails.finalRankedResultsForPlayground = finalResultsMapped.slice(0, 15).map(item => ({ ...item, contentSnippet: item.content?.substring(0,250)+'...' }));
 
