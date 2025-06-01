@@ -83,6 +83,7 @@
         API_BASE_URL: "https://synchat-ai-s8cf.vercel.app" 
       };
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <header>
@@ -296,9 +297,11 @@
                 <table id="topicAnalyticsTable" class="styled-table" style="display:none; margin-top: 20px; width: 100%; border-collapse: collapse;"> <!-- Initially hidden if chart is primary -->
                     <thead>
                         <tr>
-                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Tema Identificado</th>
-                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Número de Consultas</th>
-                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Consultas de Ejemplo</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="topic_name" data-sortable="true">Tema Identificado</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="queries_in_period" data-sortable="true">Consultas en Periodo</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="escalation_rate" data-sortable="true">Tasa Escalación</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="average_sentiment" data-sortable="true">Sentimiento Prom.</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="representative_queries">Consultas Ejemplo</th>
                         </tr>
                     </thead>
                     <tbody id="topicAnalyticsTableBody">
@@ -319,10 +322,16 @@
                 <table id="sourcePerformanceTable" class="styled-table" style="display:none; margin-top: 20px; width: 100%; border-collapse: collapse;">
                     <thead>
                         <tr>
-                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">ID del Chunk de Conocimiento</th>
-                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Feedback Positivo</th>
-                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Feedback Negativo</th>
-                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;">Fuente Original (si disponible)</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="source_name" data-sortable="true">Nombre Fuente</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="total_chunks_in_source" data-sortable="true">Total Chunks</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="direct_positive_chunk_feedback_count" data-sortable="true">Feedback Pos. (Chunk)</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="direct_negative_chunk_feedback_count" data-sortable="true">Feedback Neg. (Chunk)</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="direct_neutral_chunk_feedback_count" data-sortable="true">Feedback Neu. (Chunk)</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="total_direct_chunk_feedback_count" data-sortable="true">Total Feedbacks (Chunk)</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="retrieval_count_in_rag_interactions" data-sortable="true">Usado en RAG</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="retrieval_in_ia_resolved_convos_count" data-sortable="true">En Convos IA Resueltas</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="retrieval_in_escalated_convos_count" data-sortable="true">En Convos Escaladas</th>
+                            <th style="border: 1px solid #ddd; padding: 8px; background-color: #f2f2f2;" data-key="avg_overall_response_rating_when_used" data-sortable="true">Rating Prom. Respuesta (cuando usada)</th>
                         </tr>
                     </thead>
                     <tbody id="sourcePerformanceTableBody">

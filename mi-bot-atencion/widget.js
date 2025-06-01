@@ -56,25 +56,26 @@ async function loadI18nStrings() {
     };
 
     // --- Dynamic Client ID Retrieval ---
-let dynamicClientId = null;
-const scripts = document.getElementsByTagName('script');
-for (let i = 0; i < scripts.length; i++) {
-    const script = scripts[i];
-    if (script.src && script.src.includes('widget.js') && script.hasAttribute('data-client-id')) {
-        dynamicClientId = script.getAttribute('data-client-id');
-        break;
+    let dynamicClientId = null;
+    const scripts = document.getElementsByTagName('script');
+    for (let i = 0; i < scripts.length; i++) {
+        const script = scripts[i];
+        // Ensure script.src exists and is a string before calling .includes()
+        if (script.src && typeof script.src === 'string' && script.src.includes('widget.js') && script.hasAttribute('data-client-id')) {
+            dynamicClientId = script.getAttribute('data-client-id');
+            break;
+        }
     }
-}
 
-// If still not found (e.g., script tag changed or data-client-id missing), fallback to document.currentScript
-if (!dynamicClientId && document.currentScript) {
-    dynamicClientId = document.currentScript.getAttribute('data-client-id');
-}
-
-if (!dynamicClientId) {
-    widgetLogger.error(getString('widget.criticalClientIdMissing', "SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize."));
-    return; // Stop execution
-}
+    // Error if not found after the loop
+    if (!dynamicClientId) {
+        // Ensure widgetLogger is available or fallback to console.error
+        const logError = (typeof widgetLogger !== 'undefined' ? widgetLogger.error : console.error);
+        // Ensure getString is available or use a hardcoded string
+        const errorMessage = (typeof getString !== 'undefined' ? getString('widget.criticalClientIdMissing', "SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize.") : "SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize.");
+        logError(errorMessage);
+        return; // Stop execution
+    }
 
     // --- Configuración del Backend ---
     const VERCEL_BACKEND_BASE_URL = window.SYNCHAT_CONFIG.API_BASE_URL;
