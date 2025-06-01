@@ -1,7 +1,10 @@
 // src/services/ingestionService.js
 import 'dotenv/config';
 import axios from 'axios';
+import puppeteer from 'puppeteer';
 import { load } from 'cheerio';
+import { Readability } from '@mozilla/readability';
+import { JSDOM } from 'jsdom';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import pdfParse from 'pdf-parse'; // Added for PDF parsing
@@ -355,7 +358,26 @@ async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount pa
 function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // baseMetadata is new, elementOverlapCount added
     // TODO: Explore sentence-level semantic splitting for long text content within HTML elements.
     console.log(`(Ingestion Service) Starting HTML chunking for URL: ${url}, source_id: ${baseMetadata.original_source_id}, elementOverlap: ${elementOverlapCount}`);
-    const $ = load(html);
+
+    let htmlToProcess = html; // Default to original HTML from Puppeteer
+    try {
+        const doc = new JSDOM(html, { url: url });
+        const reader = new Readability(doc.window.document);
+        const article = reader.parse();
+
+        if (article && article.content) {
+            htmlToProcess = article.content;
+            console.log(`(Ingestion Service) Readability successfully extracted main content for URL: ${url}. Using article content for chunking.`);
+            // Optional: Log title and author if needed: console.log(`Title: ${article.title}, Author: ${article.byline}`);
+        } else {
+            console.warn(`(Ingestion Service) Readability could not extract main content for URL: ${url}. Falling back to processing raw HTML.`);
+        }
+    } catch (readabilityError) {
+        console.warn(`(Ingestion Service) Error during Readability processing for URL: ${url}. Error: ${readabilityError.message}. Falling back to raw HTML.`);
+        // htmlToProcess remains the original html
+    }
+
+    const $ = load(htmlToProcess); // Use htmlToProcess which is either original or from Readability
     const chunks = [];
     let contextStack = []; // Will store {level, text} objects
     let currentChunkLines = [];
@@ -863,8 +885,18 @@ export async function ingestSourceById(sourceId, clientId) {
         } else if (source.source_type === 'url') {
             const urlToIngest = source.source_name; // Assuming source_name is the URL for 'url' type
             if (!urlToIngest || !urlToIngest.startsWith('http')) throw new Error(`Invalid URL in source_name: ${urlToIngest}`);
-            const response = await axios.get(urlToIngest, { headers: { 'User-Agent': USER_AGENT }, timeout: 20000 });
-            htmlContent = response.data;
+
+            // --- Puppeteer logic start ---
+            console.log(`(Ingestion Service) Fetching URL with Puppeteer: ${urlToIngest}`);
+            const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] }); // Added args for typical CI environments
+            const page = await browser.newPage();
+            await page.setUserAgent(USER_AGENT);
+            await page.goto(urlToIngest, { waitUntil: 'networkidle2', timeout: 30000 });
+            htmlContent = await page.content();
+            await browser.close();
+            console.log(`(Ingestion Service) Successfully fetched URL with Puppeteer. HTML length: ${htmlContent.length}`);
+            // --- Puppeteer logic end ---
+
             charCount = htmlContent.length; // For URL, charCount is HTML length before stripping
         } else if (source.source_type === 'article') {
             if (!source.content_text) throw new Error("Article source has no content_text.");
@@ -1032,7 +1064,12 @@ export async function ingestSourceById(sourceId, clientId) {
 
     } catch (error) {
         let errorMessage = `Unknown error during ingestion of source ${sourceId}.`;
-        if (axios.isAxiosError(error)) { // Check if it's an Axios error specifically for URL fetching
+        // Note: The specific axios.isAxiosError check might be less relevant if Puppeteer is the primary fetcher for URLs.
+        // However, keeping a general error instanceof Error check is good.
+        // Puppeteer errors (e.g., TimeoutError) will be caught by `error instanceof Error`.
+        if (error.name === 'TimeoutError') { // Example of catching a specific Puppeteer error
+            errorMessage = `Puppeteer navigation timeout for source ${sourceId} (URL: ${source?.source_name}): ${error.message}`;
+        } else if (axios.isAxiosError(error)) { // Keep for other potential axios uses or if Puppeteer fails and falls back (not current design)
             errorMessage = `Network/HTTP error for source ${sourceId} (URL: ${source?.source_name}): ${error.message}`;
              if (error.response) {
                  errorMessage += ` Status: ${error.response.status}`;
