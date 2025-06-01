@@ -889,7 +889,7 @@ export const getChunksForSource = async (clientId, sourceId, page = 1, pageSize 
         const { data: chunks, error: chunksError } = await supabase
             .from('knowledge_base')
             .select('id, content, metadata, embedding, created_at', { count: 'exact' }) // Request total count here
-            .eq('knowledge_source_id', sourceId)
+            .eq('metadata->>original_source_id', sourceId)
             .eq('client_id', clientId)
             .order('metadata->>chunk_index', { ascending: true, nullsFirst: false }) // Ensure numeric sort if chunk_index is number-like string
             // For true numeric sort if metadata->>'chunk_index' is actually a number stored as text:
@@ -911,7 +911,7 @@ export const getChunksForSource = async (clientId, sourceId, page = 1, pageSize 
         const { count: totalCount, error: countError } = await supabase
             .from('knowledge_base')
             .select('id', { count: 'exact', head: true })
-            .eq('knowledge_source_id', sourceId)
+            .eq('metadata->>original_source_id', sourceId)
             .eq('client_id', clientId);
 
         if (countError) {

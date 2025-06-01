@@ -1,8 +1,4 @@
--- Rename the primary key column 'id' to 'source_id' in the 'public.knowledge_sources' table.
-ALTER TABLE public.knowledge_sources
-RENAME COLUMN id TO source_id;
-
--- Note: If the primary key constraint was explicitly named (e.g., 'knowledge_sources_pkey' referencing 'id'),
+-- Note: If a primary key constraint was explicitly named (e.g., 'knowledge_sources_pkey' referencing a column that was renamed),
 -- that constraint will typically automatically adapt to the renamed column in PostgreSQL.
 -- However, in some other SQL databases, or for very old PostgreSQL versions,
 -- you might need to drop and recreate the constraint:

@@ -166,79 +166,224 @@ export const handleStripeWebhook = async (req, res) => {
     let eventShouldBeRecorded = false;
 
     // Handle the event
+    // ASSUMPTION: A column named 'subscription_current_period_end' of type TIMESTAMPTZ exists in 'synchat_clients' table.
+    // Other columns like 'stripe_customer_id', 'subscription_id', 'subscription_status' are also assumed to exist.
+    logger.info("(Payments) Using assumed column 'subscription_current_period_end' for subscription period end date.");
+
     switch (event.type) {
         case 'checkout.session.completed':
             const session = event.data.object;
-            logger.info(`(Payments) Checkout session completed: ${session.id}`);
-            // TODO: (Original TODOs can be refined or removed if handled)
-            // 1. Retrieve customer details (session.customer) and your internal clientId from session.metadata.app_client_id.
-            // 2. Idempotency check is now done above.
-            // 3. Provision the subscription or product for the customer.
-            //    - Update your database: mark user as subscribed, store stripe_customer_id, subscription_id, plan_id, status, current_period_end.
-            logger.info(`(Payments) Fulfilling order for session: ${session.id}, Client ID: ${session.metadata.app_client_id}, Stripe Customer ID: ${session.customer}, Stripe Subscription ID: ${session.subscription}`);
-            // --- SIMULATE FULFILLMENT LOGIC ---
-            // Example:
-            // await databaseService.activateClientSubscription(
-            //    session.metadata.app_client_id,
-            //    session.customer,
-            //    session.subscription,
-            //    session.display_items[0].plan.id, // This might not be robust, check Stripe object structure
-            //    'active',
-            //    new Date(session.current_period_end * 1000) // current_period_end might not be on session, but on subscription
-            // );
-            // --- END SIMULATE FULFILLMENT ---
-            eventShouldBeRecorded = true; // Mark for recording
+            logger.info(`(Payments) Processing checkout.session.completed: ${session.id}`);
+            try {
+                const clientId = session.metadata.app_client_id;
+                const stripeCustomerId = session.customer;
+                const subscriptionId = session.subscription;
+
+                if (!clientId || !stripeCustomerId || !subscriptionId) {
+                    logger.error(`(Payments) Missing critical data in checkout.session.completed: clientId: ${clientId}, stripeCustomerId: ${stripeCustomerId}, subscriptionId: ${subscriptionId}`);
+                    // Do not record event if critical data is missing for processing
+                    eventShouldBeRecorded = false;
+                    break;
+                }
+
+                const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+                const currentPeriodEnd = new Date(subscription.current_period_end * 1000);
+
+                const { error: updateError } = await supabase
+                    .from('synchat_clients')
+                    .update({
+                        stripe_customer_id: stripeCustomerId,
+                        subscription_id: subscriptionId,
+                        subscription_status: 'active',
+                        subscription_current_period_end: currentPeriodEnd.toISOString(),
+                    })
+                    .eq('client_id', clientId);
+
+                if (updateError) {
+                    logger.error(`(Payments) Error updating synchat_clients for clientId ${clientId} on checkout.session.completed:`, updateError);
+                } else {
+                    logger.info(`(Payments) Fulfilled checkout.session.completed for clientId ${clientId}: Stripe CustomerID ${stripeCustomerId}, SubscriptionID ${subscriptionId}, PeriodEnd ${currentPeriodEnd.toISOString()}`);
+                }
+            } catch (e) {
+                logger.error(`(Payments) Exception processing checkout.session.completed ${session.id}:`, e);
+            }
+            eventShouldBeRecorded = true;
             break;
 
         case 'invoice.payment_succeeded':
             const invoice = event.data.object;
-            logger.info(`(Payments) Invoice payment succeeded: ${invoice.id} for customer ${invoice.customer}, Subscription: ${invoice.subscription}`);
-            // TODO:
-            // - If this is for a subscription renewal, update current_period_end in your database.
-            // - Log payment for records.
-            // - Handle if subscription was past_due and is now active.
-            // Example:
-            // if (invoice.subscription) {
-            //   const subscriptionDetails = await stripe.subscriptions.retrieve(invoice.subscription);
-            //   const newPeriodEnd = new Date(subscriptionDetails.current_period_end * 1000);
-            //   await databaseService.updateSubscriptionPeriod(invoice.subscription, newPeriodEnd, 'active');
-            // }
-            eventShouldBeRecorded = true; // Mark for recording
+            logger.info(`(Payments) Processing invoice.payment_succeeded: ${invoice.id}`);
+            if (invoice.subscription && invoice.customer) {
+                try {
+                    const stripeCustomerId = invoice.customer;
+                    const subscriptionId = invoice.subscription;
+
+                    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+                    const currentPeriodEnd = new Date(subscription.current_period_end * 1000);
+                    const newStatus = subscription.status; // e.g., 'active'
+
+                    const { data: client, error: fetchError } = await supabase
+                        .from('synchat_clients')
+                        .select('client_id')
+                        .eq('stripe_customer_id', stripeCustomerId)
+                        .single();
+
+                    if (fetchError) {
+                        logger.error(`(Payments) Error fetching client_id for stripe_customer_id ${stripeCustomerId} on invoice.payment_succeeded:`, fetchError);
+                    } else if (client) {
+                        const { error: updateError } = await supabase
+                            .from('synchat_clients')
+                            .update({
+                                subscription_status: newStatus,
+                                subscription_current_period_end: currentPeriodEnd.toISOString(),
+                            })
+                            .eq('client_id', client.client_id);
+
+                        if (updateError) {
+                            logger.error(`(Payments) Error updating synchat_clients for clientId ${client.client_id} on invoice.payment_succeeded:`, updateError);
+                        } else {
+                            logger.info(`(Payments) Updated subscription for clientId ${client.client_id} on invoice.payment_succeeded: Status ${newStatus}, PeriodEnd ${currentPeriodEnd.toISOString()}`);
+                        }
+                    } else {
+                        logger.warn(`(Payments) No client found with stripe_customer_id ${stripeCustomerId} for invoice.payment_succeeded.`);
+                    }
+                } catch (e) {
+                    logger.error(`(Payments) Exception processing invoice.payment_succeeded ${invoice.id}:`, e);
+                }
+            } else {
+                logger.info(`(Payments) Invoice ${invoice.id} (payment_succeeded) does not have a subscription or customer. Skipping detailed processing.`);
+            }
+            eventShouldBeRecorded = true;
             break;
 
         case 'invoice.payment_failed':
             const failedInvoice = event.data.object;
-            logger.info(`(Payments) Invoice payment failed: ${failedInvoice.id} for customer ${failedInvoice.customer}`);
-            // TODO:
-            // - Notify the customer about the payment failure.
-            // - Update subscription status in your database (e.g., to 'past_due' or 'unpaid').
-            // Example:
-            // if (failedInvoice.subscription) {
-            //    await databaseService.updateSubscriptionStatus(failedInvoice.subscription, 'past_due');
-            // }
-            eventShouldBeRecorded = true; // Mark for recording, as state might change
+            logger.info(`(Payments) Processing invoice.payment_failed: ${failedInvoice.id}`);
+            if (failedInvoice.subscription && failedInvoice.customer) {
+                try {
+                    const stripeCustomerId = failedInvoice.customer;
+                    const subscriptionId = failedInvoice.subscription;
+
+                    const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+                    const currentStatus = subscription.status; // e.g., 'past_due', 'unpaid'
+
+                    const { data: client, error: fetchError } = await supabase
+                        .from('synchat_clients')
+                        .select('client_id')
+                        .eq('stripe_customer_id', stripeCustomerId)
+                        .single();
+
+                    if (fetchError) {
+                        logger.error(`(Payments) Error fetching client_id for stripe_customer_id ${stripeCustomerId} on invoice.payment_failed:`, fetchError);
+                    } else if (client) {
+                        const { error: updateError } = await supabase
+                            .from('synchat_clients')
+                            .update({
+                                subscription_status: currentStatus,
+                            })
+                            .eq('client_id', client.client_id);
+                        if (updateError) {
+                            logger.error(`(Payments) Error updating synchat_clients for clientId ${client.client_id} on invoice.payment_failed:`, updateError);
+                        } else {
+                            logger.info(`(Payments) Updated subscription status for clientId ${client.client_id} to ${currentStatus} on invoice.payment_failed.`);
+                        }
+                    } else {
+                        logger.warn(`(Payments) No client found with stripe_customer_id ${stripeCustomerId} for invoice.payment_failed.`);
+                    }
+                } catch (e) {
+                    logger.error(`(Payments) Exception processing invoice.payment_failed ${failedInvoice.id}:`, e);
+                }
+            } else {
+                logger.info(`(Payments) Invoice ${failedInvoice.id} (payment_failed) does not have a subscription or customer. Skipping detailed processing.`);
+            }
+            eventShouldBeRecorded = true;
             break;
 
         case 'customer.subscription.updated':
             const subscriptionUpdated = event.data.object;
-            logger.info(`(Payments) Customer subscription updated: ${subscriptionUpdated.id}, Status: ${subscriptionUpdated.status}`);
-            // TODO:
-            // - Handle changes in subscription status (e.g., 'active', 'past_due', 'canceled', 'unpaid').
-            // - Update your database with the new status and current_period_end.
-            // Example:
-            // const { id, status, current_period_end, customer, plan } = subscriptionUpdated;
-            // await databaseService.updateClientSubscriptionStatus(id, status, new Date(current_period_end * 1000));
-            eventShouldBeRecorded = true; // Mark for recording
+            logger.info(`(Payments) Processing customer.subscription.updated: ${subscriptionUpdated.id}`);
+            try {
+                const subscriptionId = subscriptionUpdated.id;
+                const newStatus = subscriptionUpdated.status;
+                const newPeriodEnd = new Date(subscriptionUpdated.current_period_end * 1000);
+                const stripeCustomerId = subscriptionUpdated.customer;
+
+                // Prefer updating by subscription_id if it's reliably stored and unique. Otherwise, use customer_id.
+                const { data: client, error: fetchError } = await supabase
+                    .from('synchat_clients')
+                    .select('client_id')
+                    .eq('stripe_customer_id', stripeCustomerId) // Could also use .eq('subscription_id', subscriptionId) if preferred
+                    .single();
+
+                if (fetchError) {
+                     logger.error(`(Payments) Error fetching client_id for stripe_customer_id ${stripeCustomerId} (or sub_id ${subscriptionId}) on customer.subscription.updated:`, fetchError);
+                } else if (client) {
+                    const { error: updateError } = await supabase
+                        .from('synchat_clients')
+                        .update({
+                            subscription_status: newStatus,
+                            subscription_current_period_end: newPeriodEnd.toISOString(),
+                            // Ensure subscription_id is also updated if it changed, though less common for 'updated' event itself.
+                            // If this event can change the subscription_id for a customer (rare), more complex logic needed.
+                            subscription_id: subscriptionId
+                        })
+                        .eq('client_id', client.client_id);
+
+                    if (updateError) {
+                        logger.error(`(Payments) Error updating synchat_clients for clientId ${client.client_id} on customer.subscription.updated:`, updateError);
+                    } else {
+                        logger.info(`(Payments) Updated subscription for clientId ${client.client_id} on customer.subscription.updated: Status ${newStatus}, PeriodEnd ${newPeriodEnd.toISOString()}`);
+                    }
+                } else {
+                     logger.warn(`(Payments) No client found for stripe_customer_id ${stripeCustomerId} (or sub_id ${subscriptionId}) for customer.subscription.updated.`);
+                }
+            } catch (e) {
+                logger.error(`(Payments) Exception processing customer.subscription.updated ${subscriptionUpdated.id}:`, e);
+            }
+            eventShouldBeRecorded = true;
             break;
 
         case 'customer.subscription.deleted':
             const subscriptionDeleted = event.data.object;
-            logger.info(`(Payments) Customer subscription deleted: ${subscriptionDeleted.id}, Status: ${subscriptionDeleted.status}`);
-            // TODO:
-            // - Mark the subscription as 'canceled' in your database.
-            // Example:
-            // await databaseService.cancelClientSubscription(subscriptionDeleted.id, subscriptionDeleted.status);
-            eventShouldBeRecorded = true; // Mark for recording
+            logger.info(`(Payments) Processing customer.subscription.deleted: ${subscriptionDeleted.id}`);
+            try {
+                const subscriptionId = subscriptionDeleted.id;
+                const stripeCustomerId = subscriptionDeleted.customer;
+                // status from event is usually 'canceled' but could be other things if ended due to non-payment.
+                // We'll use a consistent internal status.
+                const finalStatus = 'cancelled';
+
+                const { data: client, error: fetchError } = await supabase
+                    .from('synchat_clients')
+                    .select('client_id')
+                    .eq('stripe_customer_id', stripeCustomerId) // Or .eq('subscription_id', subscriptionId)
+                    .single();
+
+                if (fetchError) {
+                    logger.error(`(Payments) Error fetching client_id for stripe_customer_id ${stripeCustomerId} (or sub_id ${subscriptionId}) on customer.subscription.deleted:`, fetchError);
+                } else if (client) {
+                    const { error: updateError } = await supabase
+                        .from('synchat_clients')
+                        .update({
+                            subscription_status: finalStatus,
+                            // Optionally, clear subscription_id and subscription_current_period_end or leave as is for history
+                            // subscription_id: null,
+                            // subscription_current_period_end: null
+                        })
+                        .eq('client_id', client.client_id);
+
+                    if (updateError) {
+                        logger.error(`(Payments) Error updating synchat_clients for clientId ${client.client_id} to status ${finalStatus} on customer.subscription.deleted:`, updateError);
+                    } else {
+                        logger.info(`(Payments) Marked subscription as ${finalStatus} for clientId ${client.client_id} on customer.subscription.deleted (SubID: ${subscriptionId}).`);
+                    }
+                } else {
+                    logger.warn(`(Payments) No client found for stripe_customer_id ${stripeCustomerId} (or sub_id ${subscriptionId}) for customer.subscription.deleted.`);
+                }
+            } catch (e) {
+                logger.error(`(Payments) Exception processing customer.subscription.deleted ${subscriptionDeleted.id}:`, e);
+            }
+            eventShouldBeRecorded = true;
             break;
             
         default:
