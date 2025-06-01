@@ -8,6 +8,12 @@ import { JSDOM } from 'jsdom';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import pdfParse from 'pdf-parse'; // Added for PDF parsing
+import pdfTableExtractor from 'pdf-table-extractor';
+import { PDFImage } from 'pdf-image';
+import Tesseract from 'tesseract.js';
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
 
 // --- Configuración ---
 const MIN_CHUNK_LENGTH_CHARS = 50;    // Mínimo caracteres para considerar un chunk
@@ -873,7 +879,130 @@ export async function ingestSourceById(sourceId, clientId) {
             if (downloadError) throw new Error(`Failed to download PDF ${source.storage_path}: ${downloadError.message}`);
             const pdfData = await pdfParse(fileBuffer);
             textToProcess = pdfData.text;
-            charCount = textToProcess.length;
+            charCount = textToProcess.length; // Original text length
+
+            // --- PDF Table Extraction Logic ---
+            let tableMarkdown = "";
+            try {
+                console.log(`(Ingestion Service) Starting table extraction for PDF source: ${source.source_id}`);
+                const tablesResult = await new Promise((resolve, reject) => {
+                    const nodeBuffer = Buffer.from(fileBuffer); // Convert ArrayBuffer to Node.js Buffer
+                    pdfTableExtractor(nodeBuffer, (result) => resolve(result), (err) => reject(err));
+                });
+
+                if (tablesResult && tablesResult.pageTables && tablesResult.pageTables.length > 0) {
+                    console.log(`(Ingestion Service) Found ${tablesResult.numPages} pages, ${tablesResult.numTablesFound} tables in PDF: ${source.source_id}`);
+                    tablesResult.pageTables.forEach(pageTable => {
+                        if (pageTable.tables && pageTable.tables.length > 0) { // Ensure pageTable.tables is defined
+                            tableMarkdown += `\n\n--- Table (Page ${pageTable.page}) ---\n\n`;
+                            pageTable.tables.forEach((table, tableIndex) => {
+                                // Convert table (array of arrays) to Markdown
+                                if (table.length > 0) {
+                                    const headerRow = table[0];
+                                    tableMarkdown += `| ${headerRow.join(' | ')} |\n`;
+                                    tableMarkdown += `| ${headerRow.map(() => '---').join(' | ')} |\n`;
+                                    table.slice(1).forEach(row => {
+                                        tableMarkdown += `| ${row.join(' | ')} |\n`;
+                                    });
+                                    tableMarkdown += `\n`; // Add a newline after each table
+                                }
+                            });
+                        }
+                    });
+                    if (tableMarkdown) {
+                         console.log(`(Ingestion Service) Successfully extracted and formatted tables into Markdown for PDF: ${source.source_id}`);
+                    }
+                } else {
+                    console.log(`(Ingestion Service) No tables found or pdf-table-extractor returned empty result for PDF: ${source.source_id}`);
+                }
+            } catch (tableError) {
+                console.warn(`(Ingestion Service) Error during PDF table extraction for source ${source.source_id}: ${tableError.message || tableError}. Tables will not be included.`);
+                // tableMarkdown remains ""
+            }
+            // Append to textToProcess
+            if (tableMarkdown) {
+                textToProcess += tableMarkdown;
+                // Note: charCount is NOT updated here to reflect original text length only.
+            }
+            // --- End PDF Table Extraction Logic ---
+
+            // --- PDF Image Extraction and OCR Logic ---
+            let ocrTextAccumulator = "";
+            // Ensure fileBuffer is defined from the pdfParse step
+            const nodeBufferForImages = Buffer.from(fileBuffer);
+            const tempImageDir = path.join(os.tmpdir(), `synchat_ocr_${source.source_id}_${Date.now()}`);
+            let tempPdfPath = null;
+
+            try {
+                console.log(`(Ingestion Service) Starting image extraction and OCR for PDF: ${source.source_id}`);
+                await fs.mkdir(tempImageDir, { recursive: true });
+                tempPdfPath = path.join(tempImageDir, 'temp_source_for_ocr.pdf');
+                await fs.writeFile(tempPdfPath, nodeBufferForImages);
+
+                const pdfImage = new PDFImage(tempPdfPath, {
+                    outputDirectory: tempImageDir,
+                    convertOptions: {
+                        "-density": "300",
+                        "-quality": "90",
+                        "-background": "white",
+                        "-alpha": "remove"
+                    }
+                });
+                const imageFilePaths = await pdfImage.convertFile();
+
+                if (imageFilePaths && imageFilePaths.length > 0) {
+                    ocrTextAccumulator += "\n\n--- OCR Extracted Text from Images ---\n\n";
+                    const worker = await Tesseract.createWorker('eng');
+                    // Note: For Tesseract.js v4+, loadLanguage and initialize are part of createWorker or not needed explicitly for the first language.
+                    // If using older versions or more complex setups, loadLanguage/initialize might be needed.
+
+                    for (const imagePath of imageFilePaths) {
+                        try {
+                            const { data: { text } } = await worker.recognize(imagePath);
+                            if (text && text.trim().length > 0) {
+                                ocrTextAccumulator += text.trim() + "\n---\n"; // Separator
+                                console.log(`(Ingestion Service) OCR successful for ${path.basename(imagePath)}, text length: ${text.trim().length}`);
+                            } else {
+                                console.log(`(Ingestion Service) OCR for ${path.basename(imagePath)} produced no text.`);
+                            }
+                            await fs.unlink(imagePath);
+                        } catch (singleOcrError) {
+                            console.warn(`(Ingestion Service) Error during OCR for image ${imagePath}: ${singleOcrError.message}`);
+                            try { await fs.unlink(imagePath); } catch (e) { /* ignore cleanup error */ }
+                        }
+                    }
+                    await worker.terminate();
+                    console.log(`(Ingestion Service) OCR processing completed for PDF: ${source.source_id}`);
+                } else {
+                    console.log(`(Ingestion Service) No images extracted from PDF: ${source.source_id}`);
+                }
+
+            } catch (ocrError) {
+                console.warn(`(Ingestion Service) Error during PDF image extraction/OCR for source ${source.source_id}: ${ocrError.message}. OCR text will not be included.`);
+            } finally {
+                if (tempPdfPath) {
+                    try { await fs.unlink(tempPdfPath); } catch (e) { console.warn(`(Ingestion Service) Could not delete temp PDF for OCR: ${tempPdfPath}`, e.message); }
+                }
+                // Try to remove the directory and its contents if any images failed to delete individually
+                try {
+                    const remainingFiles = await fs.readdir(tempImageDir).catch(() => []);
+                     for (const file of remainingFiles) {
+                        try { await fs.unlink(path.join(tempImageDir, file)); } catch (e) { /* ignore */ }
+                    }
+                    await fs.rmdir(tempImageDir);
+                } catch (e) {
+                    // Log if directory removal fails but don't let it crash the main process
+                    // It might fail if some files are still locked or due to other reasons
+                    console.warn(`(Ingestion Service) Could not fully delete temp image directory: ${tempImageDir}. Manual cleanup might be needed. Error: ${e.message}`);
+                }
+            }
+
+            if (ocrTextAccumulator.length > "\n\n--- OCR Extracted Text from Images ---\n\n".length + 5) { // Check if more than just header was added
+                textToProcess += ocrTextAccumulator;
+                 // Note: charCount is NOT updated here.
+            }
+            // --- End PDF Image Extraction and OCR Logic ---
+
         } else if (source.source_type === 'txt') {
             if (!source.storage_path) throw new Error("TXT source has no storage_path.");
             const { data: fileBuffer, error: downloadError } = await supabase.storage
