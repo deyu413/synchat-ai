@@ -506,7 +506,8 @@ function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // bas
                         hierarchy: currentHierarchy,
                         chunk_index: chunkIndex++,
                         chunk_char_length: processedChunkText.length,
-                        content_type_hint: currentHierarchy && currentHierarchy.length > 0 ? "structured_html" : "html_content"
+                        content_type_hint: currentHierarchy && currentHierarchy.length > 0 ? "structured_html" : "html_content",
+                        contributing_tags: Array.from(new Set(currentChunkRawElements.map(e => e.tag).filter(tag => tag)))
                     };
                     if (baseMetadata.source_document_updated_at) {
                         metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
@@ -555,7 +556,8 @@ function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // bas
                     hierarchy: lastElementInChunkHierarchy,
                     chunk_index: chunkIndex++,
                     chunk_char_length: processedChunkText.length,
-                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content",
+                    contributing_tags: Array.from(new Set(currentChunkRawElements.map(e => e.tag).filter(tag => tag)))
                 };
                 if (baseMetadata.source_document_updated_at) {
                     metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
@@ -596,7 +598,8 @@ function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // bas
                     hierarchy: lastElementInChunkHierarchy,
                     chunk_index: chunkIndex++,
                     chunk_char_length: processedChunkText.length,
-                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content",
+                    contributing_tags: Array.from(new Set(currentChunkRawElements.map(e => e.tag).filter(tag => tag)))
                 };
                 if (baseMetadata.source_document_updated_at) {
                     metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
@@ -663,7 +666,8 @@ function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // bas
                     hierarchy: lastElementInChunkHierarchy,
                     chunk_index: chunkIndex++,
                     chunk_char_length: processedChunkText.length,
-                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content",
+                    contributing_tags: Array.from(new Set(currentChunkRawElements.map(e => e.tag).filter(tag => tag)))
                 };
                 if (baseMetadata.source_document_updated_at) {
                     metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
@@ -1178,6 +1182,21 @@ export async function ingestSourceById(sourceId, clientId) {
             console.log(`(Ingestion Service) Successfully cleared old propositions for source ${sourceId}.`);
         }
 
+        // NEW LOGIC STARTS HERE:
+        if (Array.isArray(chunksForEmbedding) && chunksForEmbedding.length > 0) {
+            const totalChunksInDoc = chunksForEmbedding.length;
+            console.log(`(Ingestion Service) Adding total_document_chunks metadata. Total chunks for source ${sourceId}: ${totalChunksInDoc}`);
+            chunksForEmbedding.forEach(chunk => {
+                if (chunk.metadata) {
+                    chunk.metadata.total_document_chunks = totalChunksInDoc;
+                    // chunk.metadata.chunk_index should already be set by the chunking functions.
+                } else {
+                    // This case should ideally not happen if chunks are formed correctly
+                    console.warn(`(Ingestion Service) Chunk found without metadata while trying to add total_document_chunks. Source ID: ${sourceId}, Chunk text (first 50 chars): "${chunk.text ? chunk.text.substring(0,50) : 'N/A'}"`);
+                }
+            });
+        }
+        // NEW LOGIC ENDS HERE.
 
         // 6. Generate Embeddings for Chunks
         const embeddingResult = await generateEmbeddings(chunksForEmbedding); // Pass chunksForEmbedding
