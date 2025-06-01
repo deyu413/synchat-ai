@@ -27,6 +27,10 @@ const SENTENCE_EMBEDDING_BATCH_SIZE = 50; // Batch size specific for sentence em
 const USER_AGENT = 'Mozilla/5.0 (compatible; SynChatBot/1.1; +https://www.synchatai.com/bot)';
 const DEBUG_PREPROCESSING = false; // Controla el logging de preprocesamiento
 
+const MIN_CHUNK_WORDS_BEFORE_SPLIT = 50;
+const SHORT_SENTENCE_WORD_THRESHOLD = 5;
+const ORPHAN_SIMILARITY_THRESHOLD = 0.90;
+
 // --- Inicialización de Clientes ---
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
@@ -277,8 +281,11 @@ function validateChunk(text) {
 /**
  * Chunks plain text content (from PDF, TXT, or article) using semantic similarity.
  */
-async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount parameter removed
-    console.log(`(Ingestion Service) Starting SEMANTIC text chunking for source_id: ${baseMetadata.original_source_id}, name: ${baseMetadata.source_name}`);
+async function chunkTextContent(text, baseMetadata, sentenceOverlapCount = 1) {
+    if (sentenceOverlapCount < 0) {
+        sentenceOverlapCount = 0;
+    }
+    console.log(`(Ingestion Service) Starting SEMANTIC text chunking for source_id: ${baseMetadata.original_source_id}, name: ${baseMetadata.source_name}, sentenceOverlap: ${sentenceOverlapCount}`);
     const chunks = [];
     let originalSentences = text.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 0);
 
@@ -297,6 +304,7 @@ async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount pa
 
     const sentenceEmbeddings = await getSentenceEmbeddings(sentences);
 
+    let previousChunkFinalSentences = [];
     let currentChunkSentences = [];
     let currentChunkWordCount = 0;
     let chunkIndex = 0;
@@ -315,38 +323,56 @@ async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount pa
         currentChunkSentences.push(sentence);
         currentChunkWordCount += sentenceWordCount;
 
+        // New split point logic starts here
         let splitPoint = false;
 
-        // Check for split conditions
         if (i < sentences.length - 1) {
-            const nextSentence = sentences[i+1];
-            const nextEmbedding = sentenceEmbeddings[i+1];
-            const nextSentenceWordCount = nextSentence.split(/\s+/).length;
+            const nextSentence = sentences[i+1]; // Ensure this uses the existing variable or definition
+            const nextEmbedding = sentenceEmbeddings[i+1]; // Ensure this uses the existing variable
+            const nextSentenceWordCount = nextSentence.split(/\s+/).length; // Ensure this uses the existing variable
 
-            if (!nextEmbedding) { // If next sentence has no embedding, treat as a semantic break
-                console.warn(`(Ingestion Service) Potential split point: Next sentence "${nextSentence.substring(0,30)}..." has no embedding.`);
-                splitPoint = true;
+            if (!nextEmbedding) {
+                splitPoint = true; // Split if next sentence has no embedding
             } else {
-                const similarity = cosineSimilarity(embedding, nextEmbedding);
-                // console.log(`Similarity between "${sentence.substring(0,20)}..." and "${nextSentence.substring(0,20)}...": ${similarity.toFixed(3)}`);
+                const similarity = cosineSimilarity(embedding, nextEmbedding); // 'embedding' is for sentences[i]
+                let reasonForSplit = "";
 
                 if (similarity < SEMANTIC_SIMILARITY_THRESHOLD) {
-                    // console.log("Split: Similarity below threshold");
                     splitPoint = true;
+                    reasonForSplit = "low_similarity";
                 } else if (currentChunkWordCount + nextSentenceWordCount > MAX_CHUNK_WORDS) {
-                    // console.log("Split: Next sentence exceeds MAX_CHUNK_WORDS");
                     splitPoint = true;
+                    reasonForSplit = "max_words_exceeded";
                 } else if (currentChunkWordCount >= TARGET_CHUNK_WORDS && similarity < (SEMANTIC_SIMILARITY_THRESHOLD + 0.05)) {
-                    // If already over target, be a bit more lenient to split even if reasonably similar
-                    // This helps prevent overly long chunks if sentences are all quite similar.
-                    // console.log("Split: Over TARGET_CHUNK_WORDS and similarity is not extremely high");
                     splitPoint = true;
+                    reasonForSplit = "target_words_met_low_ish_similarity";
+                }
+
+                // Refinement 1: Minimum Chunk Size Consideration
+                if (splitPoint && reasonForSplit === "low_similarity") {
+                    if (currentChunkWordCount < MIN_CHUNK_WORDS_BEFORE_SPLIT &&
+                        (currentChunkWordCount + nextSentenceWordCount <= MAX_CHUNK_WORDS)) {
+                        splitPoint = false; // Defer split
+                    }
+                }
+
+                // Refinement 2: Avoid Orphaned Short Sentences
+                if (splitPoint && (currentChunkWordCount + nextSentenceWordCount <= MAX_CHUNK_WORDS)) {
+                    if (nextSentenceWordCount < SHORT_SENTENCE_WORD_THRESHOLD && nextSentenceWordCount > 0) {
+                        if (embedding && nextEmbedding) {
+                            const orphanSimilarity = cosineSimilarity(embedding, nextEmbedding);
+                            if (orphanSimilarity > ORPHAN_SIMILARITY_THRESHOLD) {
+                                splitPoint = false; // Defer split
+                            }
+                        }
+                    }
                 }
             }
-        } else { // Last sentence, always finalize the chunk
-            splitPoint = true;
-            // console.log("Split: Last sentence");
+        } else {
+            splitPoint = true; // Last sentence, always split
         }
+        // New split point logic ends here.
+        // The existing 'if (splitPoint) { ... }' block for finalizing chunks follows this.
 
         if (splitPoint) {
             let chunkText = currentChunkSentences.join(' ').trim();
@@ -365,11 +391,20 @@ async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount pa
                     metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
                 }
                 chunks.push({ text: chunkText, metadata: metadata });
+                previousChunkFinalSentences = Array.from(currentChunkSentences); // Store sentences of the validated chunk
             } else {
                 // console.log(`(Ingestion Service) Discarding chunk (failed validation): "${chunkText.substring(0, 100)}..."`);
+                // If a chunk is discarded, we should not use its sentences for overlap in the next one.
+                // However, previousChunkFinalSentences would still hold sentences from the *last valid* chunk.
             }
             currentChunkSentences = [];
             currentChunkWordCount = 0;
+
+            if (previousChunkFinalSentences.length > 0 && sentenceOverlapCount > 0) {
+                const overlapSentences = previousChunkFinalSentences.slice(-sentenceOverlapCount);
+                currentChunkSentences.push(...overlapSentences);
+                currentChunkWordCount += overlapSentences.join(' ').split(/\s+/).length;
+            }
         }
     }
     console.log(`(Ingestion Service) SEMANTIC text chunking completed for ${baseMetadata.source_name}. Generated ${chunks.length} chunks.`);
@@ -1099,7 +1134,7 @@ export async function ingestSourceById(sourceId, clientId) {
             // Assuming default elementOverlapCount of 1, can be configured later
             chunksForEmbedding = chunkContent(htmlContent, source.source_name, baseMetadata, 1); // Stays non-async
         } else { // For 'pdf', 'txt', 'article' - now uses async semantic chunking
-            chunksForEmbedding = await chunkTextContent(textToProcess, baseMetadata); // No more sentenceOverlapCount
+            chunksForEmbedding = await chunkTextContent(textToProcess, baseMetadata, 1); // Explicitly pass 1 for sentenceOverlapCount
         }
 
         // Ensure chunksForEmbedding is an array even if chunking failed or returned nothing
