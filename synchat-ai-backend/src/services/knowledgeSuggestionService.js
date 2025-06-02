@@ -421,7 +421,7 @@ export async function analyzeAndFlagProblematicChunks(clientId, options = {}) {
                     title: suggestionTitle,
                     description: suggestionDescription,
                     related_knowledge_source_ids: originalSourceId ? [originalSourceId] : [],
-                    related_chunk_ids: [chunkId], // Store the flagged chunk ID
+                    related_chunk_id: chunkId, // Store the flagged chunk ID (singular)
                     status: 'new',
                     // source_queries: stats.comments, // Optionally store comments here if useful
                 };
