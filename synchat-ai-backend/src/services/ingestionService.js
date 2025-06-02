@@ -1,10 +1,19 @@
 // src/services/ingestionService.js
 import 'dotenv/config';
 import axios from 'axios';
+import puppeteer from 'puppeteer';
 import { load } from 'cheerio';
+import { Readability } from '@mozilla/readability';
+import { JSDOM } from 'jsdom';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import pdfParse from 'pdf-parse'; // Added for PDF parsing
+import pdfTableExtractor from 'pdf-table-extractor';
+import { PDFImage } from 'pdf-image';
+import Tesseract from 'tesseract.js';
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
 
 // --- Configuración ---
 const MIN_CHUNK_LENGTH_CHARS = 50;    // Mínimo caracteres para considerar un chunk
@@ -17,6 +26,10 @@ const SEMANTIC_SIMILARITY_THRESHOLD = 0.85; // Threshold for keeping sentences t
 const SENTENCE_EMBEDDING_BATCH_SIZE = 50; // Batch size specific for sentence embeddings
 const USER_AGENT = 'Mozilla/5.0 (compatible; SynChatBot/1.1; +https://www.synchatai.com/bot)';
 const DEBUG_PREPROCESSING = false; // Controla el logging de preprocesamiento
+
+const MIN_CHUNK_WORDS_BEFORE_SPLIT = 50;
+const SHORT_SENTENCE_WORD_THRESHOLD = 5;
+const ORPHAN_SIMILARITY_THRESHOLD = 0.90;
 
 // --- Inicialización de Clientes ---
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -205,7 +218,37 @@ function preprocessTextForEmbedding(text) {
         processedText = processedText.replace(regex, expansion);
     }
 
-    // 4. Regex-based cleaning
+    // --- NEW NORMALIZATION RULES START ---
+
+    // Ligature Expansion
+    const ligatureMap = {
+        'ﬀ': 'ff', // ff
+        'ﬁ': 'fi', // fi
+        'ﬂ': 'fl', // fl
+        'ﬃ': 'ffi', // ffi
+        'ﬄ': 'ffl', // ffl
+    };
+    processedText = processedText.replace(/[ﬀ-ﬄ]/g, (match) => ligatureMap[match] || match);
+
+    // Quote Normalization
+    processedText = processedText.replace(/[‘’‚‛‹›]/g, "'");
+    processedText = processedText.replace(/[“”„‟«»]/g, '"');
+
+    // Dash Normalization
+    processedText = processedText.replace(/[‐‑‒–—―]/g, '-');
+
+    // Zero-Width Space Removal
+    // The regex [​-‍﻿] includes:
+    // U+200B (ZERO WIDTH SPACE)
+    // U+200C (ZERO WIDTH NON-JOINER)
+    // U+200D (ZERO WIDTH JOINER)
+    // U+FEFF (ZERO WIDTH NO-BREAK SPACE or BOM)
+    processedText = processedText.replace(/\u200B|\u200C|\u200D|\uFEFF/g, '');
+
+
+    // --- NEW NORMALIZATION RULES END ---
+
+    // 4. Regex-based cleaning (renumbered from original)
     // Collapse excessive or repeated punctuation (e.g., !!! to !, ??? to ?, multiple commas/periods to a single one)
     processedText = processedText.replace(/([!?.,;:])\1+/g, '$1'); //  Example: !!! -> !,  .. -> .
 
@@ -238,8 +281,11 @@ function validateChunk(text) {
 /**
  * Chunks plain text content (from PDF, TXT, or article) using semantic similarity.
  */
-async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount parameter removed
-    console.log(`(Ingestion Service) Starting SEMANTIC text chunking for source_id: ${baseMetadata.original_source_id}, name: ${baseMetadata.source_name}`);
+async function chunkTextContent(text, baseMetadata, sentenceOverlapCount = 1) {
+    if (sentenceOverlapCount < 0) {
+        sentenceOverlapCount = 0;
+    }
+    console.log(`(Ingestion Service) Starting SEMANTIC text chunking for source_id: ${baseMetadata.original_source_id}, name: ${baseMetadata.source_name}, sentenceOverlap: ${sentenceOverlapCount}`);
     const chunks = [];
     let originalSentences = text.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 0);
 
@@ -258,6 +304,8 @@ async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount pa
 
     const sentenceEmbeddings = await getSentenceEmbeddings(sentences);
 
+    let previousChunkFinalSentences = [];
+    // REMOVED previousChunkFinalSentences initialization from here
     let currentChunkSentences = [];
     let currentChunkWordCount = 0;
     let chunkIndex = 0;
@@ -276,38 +324,56 @@ async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount pa
         currentChunkSentences.push(sentence);
         currentChunkWordCount += sentenceWordCount;
 
+        // New split point logic starts here
         let splitPoint = false;
 
-        // Check for split conditions
         if (i < sentences.length - 1) {
-            const nextSentence = sentences[i+1];
-            const nextEmbedding = sentenceEmbeddings[i+1];
-            const nextSentenceWordCount = nextSentence.split(/\s+/).length;
+            const nextSentence = sentences[i+1]; // Ensure this uses the existing variable or definition
+            const nextEmbedding = sentenceEmbeddings[i+1]; // Ensure this uses the existing variable
+            const nextSentenceWordCount = nextSentence.split(/\s+/).length; // Ensure this uses the existing variable
 
-            if (!nextEmbedding) { // If next sentence has no embedding, treat as a semantic break
-                console.warn(`(Ingestion Service) Potential split point: Next sentence "${nextSentence.substring(0,30)}..." has no embedding.`);
-                splitPoint = true;
+            if (!nextEmbedding) {
+                splitPoint = true; // Split if next sentence has no embedding
             } else {
-                const similarity = cosineSimilarity(embedding, nextEmbedding);
-                // console.log(`Similarity between "${sentence.substring(0,20)}..." and "${nextSentence.substring(0,20)}...": ${similarity.toFixed(3)}`);
+                const similarity = cosineSimilarity(embedding, nextEmbedding); // 'embedding' is for sentences[i]
+                let reasonForSplit = "";
 
                 if (similarity < SEMANTIC_SIMILARITY_THRESHOLD) {
-                    // console.log("Split: Similarity below threshold");
                     splitPoint = true;
+                    reasonForSplit = "low_similarity";
                 } else if (currentChunkWordCount + nextSentenceWordCount > MAX_CHUNK_WORDS) {
-                    // console.log("Split: Next sentence exceeds MAX_CHUNK_WORDS");
                     splitPoint = true;
+                    reasonForSplit = "max_words_exceeded";
                 } else if (currentChunkWordCount >= TARGET_CHUNK_WORDS && similarity < (SEMANTIC_SIMILARITY_THRESHOLD + 0.05)) {
-                    // If already over target, be a bit more lenient to split even if reasonably similar
-                    // This helps prevent overly long chunks if sentences are all quite similar.
-                    // console.log("Split: Over TARGET_CHUNK_WORDS and similarity is not extremely high");
                     splitPoint = true;
+                    reasonForSplit = "target_words_met_low_ish_similarity";
+                }
+
+                // Refinement 1: Minimum Chunk Size Consideration
+                if (splitPoint && reasonForSplit === "low_similarity") {
+                    if (currentChunkWordCount < MIN_CHUNK_WORDS_BEFORE_SPLIT &&
+                        (currentChunkWordCount + nextSentenceWordCount <= MAX_CHUNK_WORDS)) {
+                        splitPoint = false; // Defer split
+                    }
+                }
+
+                // Refinement 2: Avoid Orphaned Short Sentences
+                if (splitPoint && (currentChunkWordCount + nextSentenceWordCount <= MAX_CHUNK_WORDS)) {
+                    if (nextSentenceWordCount < SHORT_SENTENCE_WORD_THRESHOLD && nextSentenceWordCount > 0) {
+                        if (embedding && nextEmbedding) {
+                            const orphanSimilarity = cosineSimilarity(embedding, nextEmbedding);
+                            if (orphanSimilarity > ORPHAN_SIMILARITY_THRESHOLD) {
+                                splitPoint = false; // Defer split
+                            }
+                        }
+                    }
                 }
             }
-        } else { // Last sentence, always finalize the chunk
-            splitPoint = true;
-            // console.log("Split: Last sentence");
+        } else {
+            splitPoint = true; // Last sentence, always split
         }
+        // New split point logic ends here.
+        // The existing 'if (splitPoint) { ... }' block for finalizing chunks follows this.
 
         if (splitPoint) {
             let chunkText = currentChunkSentences.join(' ').trim();
@@ -326,11 +392,22 @@ async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount pa
                     metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
                 }
                 chunks.push({ text: chunkText, metadata: metadata });
+                previousChunkFinalSentences = Array.from(currentChunkSentences);
+                // REMOVED previousChunkFinalSentences update from here
             } else {
                 // console.log(`(Ingestion Service) Discarding chunk (failed validation): "${chunkText.substring(0, 100)}..."`);
+                // If a chunk is discarded, we should not use its sentences for overlap in the next one.
+                // However, previousChunkFinalSentences would still hold sentences from the *last valid* chunk.
             }
             currentChunkSentences = [];
             currentChunkWordCount = 0;
+
+            if (previousChunkFinalSentences.length > 0 && sentenceOverlapCount > 0) {
+                const overlapSentences = previousChunkFinalSentences.slice(-sentenceOverlapCount);
+                currentChunkSentences.push(...overlapSentences);
+                currentChunkWordCount += overlapSentences.join(' ').split(/\s+/).length;
+            }
+            // REMOVED overlap logic from here
         }
     }
     console.log(`(Ingestion Service) SEMANTIC text chunking completed for ${baseMetadata.source_name}. Generated ${chunks.length} chunks.`);
@@ -355,7 +432,26 @@ async function chunkTextContent(text, baseMetadata) { // sentenceOverlapCount pa
 function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // baseMetadata is new, elementOverlapCount added
     // TODO: Explore sentence-level semantic splitting for long text content within HTML elements.
     console.log(`(Ingestion Service) Starting HTML chunking for URL: ${url}, source_id: ${baseMetadata.original_source_id}, elementOverlap: ${elementOverlapCount}`);
-    const $ = load(html);
+
+    let htmlToProcess = html; // Default to original HTML from Puppeteer
+    try {
+        const doc = new JSDOM(html, { url: url });
+        const reader = new Readability(doc.window.document);
+        const article = reader.parse();
+
+        if (article && article.content) {
+            htmlToProcess = article.content;
+            console.log(`(Ingestion Service) Readability successfully extracted main content for URL: ${url}. Using article content for chunking.`);
+            // Optional: Log title and author if needed: console.log(`Title: ${article.title}, Author: ${article.byline}`);
+        } else {
+            console.warn(`(Ingestion Service) Readability could not extract main content for URL: ${url}. Falling back to processing raw HTML.`);
+        }
+    } catch (readabilityError) {
+        console.warn(`(Ingestion Service) Error during Readability processing for URL: ${url}. Error: ${readabilityError.message}. Falling back to raw HTML.`);
+        // htmlToProcess remains the original html
+    }
+
+    const $ = load(htmlToProcess); // Use htmlToProcess which is either original or from Readability
     const chunks = [];
     let contextStack = []; // Will store {level, text} objects
     let currentChunkLines = [];
@@ -413,7 +509,8 @@ function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // bas
                         hierarchy: currentHierarchy,
                         chunk_index: chunkIndex++,
                         chunk_char_length: processedChunkText.length,
-                        content_type_hint: currentHierarchy && currentHierarchy.length > 0 ? "structured_html" : "html_content"
+                        content_type_hint: currentHierarchy && currentHierarchy.length > 0 ? "structured_html" : "html_content",
+                        contributing_tags: Array.from(new Set(currentChunkRawElements.map(e => e.tag).filter(tag => tag)))
                     };
                     if (baseMetadata.source_document_updated_at) {
                         metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
@@ -462,7 +559,8 @@ function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // bas
                     hierarchy: lastElementInChunkHierarchy,
                     chunk_index: chunkIndex++,
                     chunk_char_length: processedChunkText.length,
-                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content",
+                    contributing_tags: Array.from(new Set(currentChunkRawElements.map(e => e.tag).filter(tag => tag)))
                 };
                 if (baseMetadata.source_document_updated_at) {
                     metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
@@ -503,7 +601,8 @@ function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // bas
                     hierarchy: lastElementInChunkHierarchy,
                     chunk_index: chunkIndex++,
                     chunk_char_length: processedChunkText.length,
-                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content",
+                    contributing_tags: Array.from(new Set(currentChunkRawElements.map(e => e.tag).filter(tag => tag)))
                 };
                 if (baseMetadata.source_document_updated_at) {
                     metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
@@ -570,7 +669,8 @@ function chunkContent(html, url, baseMetadata, elementOverlapCount = 1) { // bas
                     hierarchy: lastElementInChunkHierarchy,
                     chunk_index: chunkIndex++,
                     chunk_char_length: processedChunkText.length,
-                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content"
+                    content_type_hint: lastElementInChunkHierarchy && lastElementInChunkHierarchy.length > 0 ? "structured_html" : "html_content",
+                    contributing_tags: Array.from(new Set(currentChunkRawElements.map(e => e.tag).filter(tag => tag)))
                 };
                 if (baseMetadata.source_document_updated_at) {
                     metadata.source_document_updated_at = baseMetadata.source_document_updated_at;
@@ -851,7 +951,130 @@ export async function ingestSourceById(sourceId, clientId) {
             if (downloadError) throw new Error(`Failed to download PDF ${source.storage_path}: ${downloadError.message}`);
             const pdfData = await pdfParse(fileBuffer);
             textToProcess = pdfData.text;
-            charCount = textToProcess.length;
+            charCount = textToProcess.length; // Original text length
+
+            // --- PDF Table Extraction Logic ---
+            let tableMarkdown = "";
+            try {
+                console.log(`(Ingestion Service) Starting table extraction for PDF source: ${source.source_id}`);
+                const tablesResult = await new Promise((resolve, reject) => {
+                    const nodeBuffer = Buffer.from(fileBuffer); // Convert ArrayBuffer to Node.js Buffer
+                    pdfTableExtractor(nodeBuffer, (result) => resolve(result), (err) => reject(err));
+                });
+
+                if (tablesResult && tablesResult.pageTables && tablesResult.pageTables.length > 0) {
+                    console.log(`(Ingestion Service) Found ${tablesResult.numPages} pages, ${tablesResult.numTablesFound} tables in PDF: ${source.source_id}`);
+                    tablesResult.pageTables.forEach(pageTable => {
+                        if (pageTable.tables && pageTable.tables.length > 0) { // Ensure pageTable.tables is defined
+                            tableMarkdown += `\n\n--- Table (Page ${pageTable.page}) ---\n\n`;
+                            pageTable.tables.forEach((table, tableIndex) => {
+                                // Convert table (array of arrays) to Markdown
+                                if (table.length > 0) {
+                                    const headerRow = table[0];
+                                    tableMarkdown += `| ${headerRow.join(' | ')} |\n`;
+                                    tableMarkdown += `| ${headerRow.map(() => '---').join(' | ')} |\n`;
+                                    table.slice(1).forEach(row => {
+                                        tableMarkdown += `| ${row.join(' | ')} |\n`;
+                                    });
+                                    tableMarkdown += `\n`; // Add a newline after each table
+                                }
+                            });
+                        }
+                    });
+                    if (tableMarkdown) {
+                         console.log(`(Ingestion Service) Successfully extracted and formatted tables into Markdown for PDF: ${source.source_id}`);
+                    }
+                } else {
+                    console.log(`(Ingestion Service) No tables found or pdf-table-extractor returned empty result for PDF: ${source.source_id}`);
+                }
+            } catch (tableError) {
+                console.warn(`(Ingestion Service) Error during PDF table extraction for source ${source.source_id}: ${tableError.message || tableError}. Tables will not be included.`);
+                // tableMarkdown remains ""
+            }
+            // Append to textToProcess
+            if (tableMarkdown) {
+                textToProcess += tableMarkdown;
+                // Note: charCount is NOT updated here to reflect original text length only.
+            }
+            // --- End PDF Table Extraction Logic ---
+
+            // --- PDF Image Extraction and OCR Logic ---
+            let ocrTextAccumulator = "";
+            // Ensure fileBuffer is defined from the pdfParse step
+            const nodeBufferForImages = Buffer.from(fileBuffer);
+            const tempImageDir = path.join(os.tmpdir(), `synchat_ocr_${source.source_id}_${Date.now()}`);
+            let tempPdfPath = null;
+
+            try {
+                console.log(`(Ingestion Service) Starting image extraction and OCR for PDF: ${source.source_id}`);
+                await fs.mkdir(tempImageDir, { recursive: true });
+                tempPdfPath = path.join(tempImageDir, 'temp_source_for_ocr.pdf');
+                await fs.writeFile(tempPdfPath, nodeBufferForImages);
+
+                const pdfImage = new PDFImage(tempPdfPath, {
+                    outputDirectory: tempImageDir,
+                    convertOptions: {
+                        "-density": "300",
+                        "-quality": "90",
+                        "-background": "white",
+                        "-alpha": "remove"
+                    }
+                });
+                const imageFilePaths = await pdfImage.convertFile();
+
+                if (imageFilePaths && imageFilePaths.length > 0) {
+                    ocrTextAccumulator += "\n\n--- OCR Extracted Text from Images ---\n\n";
+                    const worker = await Tesseract.createWorker('eng');
+                    // Note: For Tesseract.js v4+, loadLanguage and initialize are part of createWorker or not needed explicitly for the first language.
+                    // If using older versions or more complex setups, loadLanguage/initialize might be needed.
+
+                    for (const imagePath of imageFilePaths) {
+                        try {
+                            const { data: { text } } = await worker.recognize(imagePath);
+                            if (text && text.trim().length > 0) {
+                                ocrTextAccumulator += text.trim() + "\n---\n"; // Separator
+                                console.log(`(Ingestion Service) OCR successful for ${path.basename(imagePath)}, text length: ${text.trim().length}`);
+                            } else {
+                                console.log(`(Ingestion Service) OCR for ${path.basename(imagePath)} produced no text.`);
+                            }
+                            await fs.unlink(imagePath);
+                        } catch (singleOcrError) {
+                            console.warn(`(Ingestion Service) Error during OCR for image ${imagePath}: ${singleOcrError.message}`);
+                            try { await fs.unlink(imagePath); } catch (e) { /* ignore cleanup error */ }
+                        }
+                    }
+                    await worker.terminate();
+                    console.log(`(Ingestion Service) OCR processing completed for PDF: ${source.source_id}`);
+                } else {
+                    console.log(`(Ingestion Service) No images extracted from PDF: ${source.source_id}`);
+                }
+
+            } catch (ocrError) {
+                console.warn(`(Ingestion Service) Error during PDF image extraction/OCR for source ${source.source_id}: ${ocrError.message}. OCR text will not be included.`);
+            } finally {
+                if (tempPdfPath) {
+                    try { await fs.unlink(tempPdfPath); } catch (e) { console.warn(`(Ingestion Service) Could not delete temp PDF for OCR: ${tempPdfPath}`, e.message); }
+                }
+                // Try to remove the directory and its contents if any images failed to delete individually
+                try {
+                    const remainingFiles = await fs.readdir(tempImageDir).catch(() => []);
+                     for (const file of remainingFiles) {
+                        try { await fs.unlink(path.join(tempImageDir, file)); } catch (e) { /* ignore */ }
+                    }
+                    await fs.rmdir(tempImageDir);
+                } catch (e) {
+                    // Log if directory removal fails but don't let it crash the main process
+                    // It might fail if some files are still locked or due to other reasons
+                    console.warn(`(Ingestion Service) Could not fully delete temp image directory: ${tempImageDir}. Manual cleanup might be needed. Error: ${e.message}`);
+                }
+            }
+
+            if (ocrTextAccumulator.length > "\n\n--- OCR Extracted Text from Images ---\n\n".length + 5) { // Check if more than just header was added
+                textToProcess += ocrTextAccumulator;
+                 // Note: charCount is NOT updated here.
+            }
+            // --- End PDF Image Extraction and OCR Logic ---
+
         } else if (source.source_type === 'txt') {
             if (!source.storage_path) throw new Error("TXT source has no storage_path.");
             const { data: fileBuffer, error: downloadError } = await supabase.storage
@@ -863,8 +1086,18 @@ export async function ingestSourceById(sourceId, clientId) {
         } else if (source.source_type === 'url') {
             const urlToIngest = source.source_name; // Assuming source_name is the URL for 'url' type
             if (!urlToIngest || !urlToIngest.startsWith('http')) throw new Error(`Invalid URL in source_name: ${urlToIngest}`);
-            const response = await axios.get(urlToIngest, { headers: { 'User-Agent': USER_AGENT }, timeout: 20000 });
-            htmlContent = response.data;
+
+            // --- Puppeteer logic start ---
+            console.log(`(Ingestion Service) Fetching URL with Puppeteer: ${urlToIngest}`);
+            const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] }); // Added args for typical CI environments
+            const page = await browser.newPage();
+            await page.setUserAgent(USER_AGENT);
+            await page.goto(urlToIngest, { waitUntil: 'networkidle2', timeout: 30000 });
+            htmlContent = await page.content();
+            await browser.close();
+            console.log(`(Ingestion Service) Successfully fetched URL with Puppeteer. HTML length: ${htmlContent.length}`);
+            // --- Puppeteer logic end ---
+
             charCount = htmlContent.length; // For URL, charCount is HTML length before stripping
         } else if (source.source_type === 'article') {
             if (!source.content_text) throw new Error("Article source has no content_text.");
@@ -908,7 +1141,7 @@ export async function ingestSourceById(sourceId, clientId) {
             // Assuming default elementOverlapCount of 1, can be configured later
             chunksForEmbedding = chunkContent(htmlContent, source.source_name, baseMetadata, 1); // Stays non-async
         } else { // For 'pdf', 'txt', 'article' - now uses async semantic chunking
-            chunksForEmbedding = await chunkTextContent(textToProcess, baseMetadata); // No more sentenceOverlapCount
+            chunksForEmbedding = await chunkTextContent(textToProcess, baseMetadata, 1); // MODIFIED HERE
         }
 
         // Ensure chunksForEmbedding is an array even if chunking failed or returned nothing
@@ -952,6 +1185,21 @@ export async function ingestSourceById(sourceId, clientId) {
             console.log(`(Ingestion Service) Successfully cleared old propositions for source ${sourceId}.`);
         }
 
+        // NEW LOGIC STARTS HERE:
+        if (Array.isArray(chunksForEmbedding) && chunksForEmbedding.length > 0) {
+            const totalChunksInDoc = chunksForEmbedding.length;
+            console.log(`(Ingestion Service) Adding total_document_chunks metadata. Total chunks for source ${sourceId}: ${totalChunksInDoc}`);
+            chunksForEmbedding.forEach(chunk => {
+                if (chunk.metadata) {
+                    chunk.metadata.total_document_chunks = totalChunksInDoc;
+                    // chunk.metadata.chunk_index should already be set by the chunking functions.
+                } else {
+                    // This case should ideally not happen if chunks are formed correctly
+                    console.warn(`(Ingestion Service) Chunk found without metadata while trying to add total_document_chunks. Source ID: ${sourceId}, Chunk text (first 50 chars): "${chunk.text ? chunk.text.substring(0,50) : 'N/A'}"`);
+                }
+            });
+        }
+        // NEW LOGIC ENDS HERE.
 
         // 6. Generate Embeddings for Chunks
         const embeddingResult = await generateEmbeddings(chunksForEmbedding); // Pass chunksForEmbedding
@@ -1032,7 +1280,12 @@ export async function ingestSourceById(sourceId, clientId) {
 
     } catch (error) {
         let errorMessage = `Unknown error during ingestion of source ${sourceId}.`;
-        if (axios.isAxiosError(error)) { // Check if it's an Axios error specifically for URL fetching
+        // Note: The specific axios.isAxiosError check might be less relevant if Puppeteer is the primary fetcher for URLs.
+        // However, keeping a general error instanceof Error check is good.
+        // Puppeteer errors (e.g., TimeoutError) will be caught by `error instanceof Error`.
+        if (error.name === 'TimeoutError') { // Example of catching a specific Puppeteer error
+            errorMessage = `Puppeteer navigation timeout for source ${sourceId} (URL: ${source?.source_name}): ${error.message}`;
+        } else if (axios.isAxiosError(error)) { // Keep for other potential axios uses or if Puppeteer fails and falls back (not current design)
             errorMessage = `Network/HTTP error for source ${sourceId} (URL: ${source?.source_name}): ${error.message}`;
              if (error.response) {
                  errorMessage += ` Status: ${error.response.status}`;

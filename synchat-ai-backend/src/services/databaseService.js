@@ -5,6 +5,32 @@ import { getEmbedding } from './embeddingService.js'; // Necesario para búsqued
 import { getChatCompletion } from './openaiService.js'; // Import for query reformulation
 import { pipeline, env } from '@xenova/transformers';
 
+// TODO: Future Enhancements for Query Expansion Dictionaries:
+// - Consider making the use of THESAURUS_ES and ACRONYMS_ES configurable (e.g., enable/disable globally or per client).
+// - Explore loading these dictionaries from a database or external configuration files instead of hardcoding.
+// - Investigate potential for client-specific thesauri or acronym lists.
+// Hardcoded Spanish Thesaurus for query expansion
+const THESAURUS_ES = {
+    "precio": ["costo", "tarifa", "valor"],
+    "soporte": ["ayuda", "asistencia", "atención"],
+    "problema": ["inconveniente", "error", "falla"],
+    "solución": ["respuesta", "resolución"],
+    "documento": ["archivo", "informe", "texto"],
+    "buscar": ["encontrar", "localizar", "consultar"]
+    // Add more domain-specific or common terms as needed
+};
+
+// Hardcoded Spanish Acronym/Abbreviation Dictionary for query expansion
+const ACRONYMS_ES = {
+    "IA": "Inteligencia Artificial",
+    "CRM": "Customer Relationship Management",
+    "FAQ": "Preguntas Frecuentes",
+    "API": "Application Programming Interface",
+    "SDK": "Software Development Kit",
+    "KPI": "Key Performance Indicator"
+    // Add more domain-specific or common acronyms as needed
+};
+
 // --- Transformers.js Configuration ---
 // env.allowLocalModels = false; // Optional: Disable local model loading
 // env.cacheDir = './.cache'; // Optional: Set cache directory for models
@@ -31,12 +57,16 @@ const ENABLE_ADVANCED_QUERY_CORRECTION = process.env.ENABLE_ADVANCED_QUERY_CORRE
 const QUERY_CORRECTION_MODEL = "gpt-3.5-turbo";
 const QUERY_CORRECTION_TEMP = 0.1;
 
-// Adjusted Re-ranking Weights to include Cross-Encoder
-const W_CROSS_ENCODER_SCORE = 0.4;      // Weight for the cross-encoder score
-const W_ORIGINAL_HYBRID_SCORE = 0.3;    // Adjusted weight for initial hybrid score
-const W_KEYWORD_MATCH_SCORE = 0.15;   // Adjusted weight for keyword match
-const W_METADATA_RELEVANCE_SCORE = 0.15; // Adjusted weight for metadata relevance
-// Sum of weights = 0.4 + 0.3 + 0.15 + 0.15 = 1.0
+// Define weights for the final re-ranking formula
+// Adjusted to include new features and ensure sum is 1.0
+const W_ORIGINAL_HYBRID_SCORE_ADJ = 0.20;       // Weight for the initial hybrid search score
+const W_CROSS_ENCODER_SCORE_ADJ = 0.30;     // Weight for the cross-encoder score (normalized)
+const W_KEYWORD_MATCH_SCORE_ADJ = 0.10;     // Weight for direct keyword match score
+const W_METADATA_RELEVANCE_SCORE_ADJ = 0.10; // Weight for metadata relevance (e.g., title match)
+const W_RECENCY_SCORE = 0.10;               // Weight for document recency
+const W_SOURCE_AUTHORITY_SCORE = 0.10;      // Weight for source authority
+const W_CHUNK_FEEDBACK_SCORE = 0.10;        // Weight for user feedback score on the chunk
+// Sum of new weights: 0.20 + 0.30 + 0.10 + 0.10 + 0.10 + 0.10 + 0.10 = 1.0
 
 // Simple Spanish Stop Words List (customize as needed)
 const SPANISH_STOP_WORDS = new Set([ // This is the existing one, used by hybridSearch's tokenizeText
@@ -208,6 +238,45 @@ export const getClientKnowledgeCategories = async (clientId) => {
 
 export const createConversation = async (clientId) => { /* ... */ };
 
+/**
+ * Performs a hybrid search combining vector search and Full-Text Search (FTS)
+ * to retrieve relevant knowledge base chunks for a given query.
+ *
+ * The process includes several stages:
+ * 1.  Optional advanced query correction using an LLM.
+ * 2.  Query classification to predict a category for filtering (if categories are available).
+ * 3.  Optional query decomposition into sub-queries for complex questions.
+ * 4.  Non-LLM Query Expansion:
+ *     a. Acronym expansion (e.g., "IA" -> "IA (Inteligencia Artificial)").
+ *     b. Synonym-based variations for vector search (generates a few alternative queries for embedding).
+ *     c. Specialized FTS query string construction (uses OR-groups for synonyms, ANDs terms).
+ * 5.  Execution of parallel vector and FTS searches for each processed query (original, decomposed, or expanded).
+ *     Vector search may further internally use techniques like HyDE or query reformulation for some variations.
+ * 6.  Merging and initial ranking of results based on hybrid scores (weighted combination of vector and FTS scores).
+ * 7.  Optional re-ranking using a Cross-Encoder model for the top N initial results.
+ * 8.  Final re-ranking using a weighted formula that includes the initial hybrid score, cross-encoder score (if available),
+ *     keyword match score (Jaccard similarity), metadata relevance, document recency, source authority, and chunk feedback scores.
+ * 9.  Retrieval of related propositions based on the primary query embedding.
+ *
+ * @async
+ * @function hybridSearch
+ * @param {string} clientId - The ID of the client for whom the search is being performed.
+ * @param {string} queryText - The original user query text.
+ * @param {string} [conversationId] - Optional ID of the current conversation, used for context or logging.
+ * @param {object} [options={}] - Optional parameters to customize search behavior.
+ * @param {number} [options.vectorWeight] - Weight for vector search results in the initial hybrid score.
+ * @param {number} [options.ftsWeight] - Weight for FTS results in the initial hybrid score.
+ * @param {number} [options.vectorMatchThreshold] - Similarity threshold for vector search matches.
+ * @param {boolean} [returnPipelineDetails=false] - If true, returns a detailed breakdown of the search pipeline's stages and intermediate results.
+ * @returns {Promise<object>} A promise that resolves to an object containing:
+ *                            - `results`: An array of final ranked search result chunks, each with content, metadata, and various scores.
+ *                            - `propositionResults`: An array of related propositions (if any found).
+ *                            - `searchParams`: An object detailing the parameters used for the search (weights, thresholds, limits).
+ *                            - `queriesEmbeddedForLog`: An array of query strings that were embedded during the process.
+ *                            - `predictedCategory`: The category predicted for the query by the classification step (or null if none).
+ *                            - `pipelineDetails`: (Only if `returnPipelineDetails` is true) An object containing detailed information about each stage of the search pipeline,
+ *                              including original query, corrected query, decomposed queries, expanded queries, intermediate search results, and final ranked lists.
+ */
 export const hybridSearch = async (clientId, queryText, conversationId, options = {}, returnPipelineDetails = false) => {
     const originalUserQueryAtStart = queryText; // Store the absolute original query
     let currentQueryText = originalUserQueryAtStart; // This will be used by subsequent steps, potentially corrected
@@ -252,6 +321,36 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
 
     const finalVectorWeight = options.vectorWeight ?? HYBRID_SEARCH_VECTOR_WEIGHT;
     const finalFtsWeight = options.ftsWeight ?? HYBRID_SEARCH_FTS_WEIGHT;
+
+    // Default weights passed as parameters
+    let adjustedVectorWeight = finalVectorWeight;
+    let adjustedFtsWeight = finalFtsWeight;
+
+    // Lightweight query analysis
+    const queryTokens = currentQueryText.toLowerCase().split(' '); // Use currentQueryText (potentially corrected)
+    // Using RegExp constructor for potentially safer regex handling in embedded contexts
+    const hasQuotedPhrase = new RegExp("\"[^\"]+\"").test(currentQueryText);
+    const capitalLettersCount = (currentQueryText.match(/[A-Z]/g) || []).length;
+    const hasManyCapitals = capitalLettersCount > 3;
+
+    let adjustmentReason = "default";
+
+    if (hasQuotedPhrase || hasManyCapitals) {
+        adjustedFtsWeight = Math.min(1.0, finalFtsWeight + 0.15);
+        // Ensure adjustedVectorWeight is derived to maintain sum of 1.0 if that's the desired constraint
+        // If they don't need to sum to 1.0, this line can be: adjustedVectorWeight = Math.max(0.0, finalVectorWeight - 0.15);
+        adjustedVectorWeight = 1.0 - adjustedFtsWeight;
+        adjustmentReason = hasQuotedPhrase ? "quoted_phrase" : (hasManyCapitals ? "many_capitals" : "fts_boost");
+    } else if (queryTokens.length < 3 && queryTokens.length > 0) { // Very short query (but not empty)
+        adjustedFtsWeight = Math.min(1.0, finalFtsWeight + 0.1);
+        // Similar adjustment for vector weight
+        adjustedVectorWeight = 1.0 - adjustedFtsWeight;
+        adjustmentReason = "short_query";
+    }
+
+    // Log the adjusted weights using console.log
+    logger.info(`(DB Service) Hybrid Search: Query: "${currentQueryText.substring(0,50)}...", Original Weights: V=${finalVectorWeight.toFixed(2)}, F=${finalFtsWeight.toFixed(2)}. Adjusted Weights (Reason: ${adjustmentReason}): V=${adjustedVectorWeight.toFixed(2)}, F=${adjustedFtsWeight.toFixed(2)}`);
+
     const finalVectorMatchThreshold = options.vectorMatchThreshold ?? VECTOR_MATCH_THRESHOLD;
     const finalLimit = HYBRID_SEARCH_LIMIT;
     const initialRetrieveLimit = finalLimit * INITIAL_RETRIEVAL_MULTIPLIER;
@@ -357,8 +456,8 @@ Classification:`;
     // --- End Query Classification Logic ---
 
     const searchParamsForLog = {
-        vectorWeight: finalVectorWeight,
-        ftsWeight: finalFtsWeight,
+        vectorWeight: adjustedVectorWeight, // Log adjusted weight
+        ftsWeight: adjustedFtsWeight,     // Log adjusted weight
         threshold: finalVectorMatchThreshold,
         finalLimit: finalLimit,
         initialLimit: initialRetrieveLimit,
@@ -394,6 +493,76 @@ Classification:`;
             pipelineDetails.queryDecomposition = { wasDecomposed: wasDecomposedForLog, subQueries: subQueriesForLog, finalQueriesProcessed: queriesToProcess };
         }
 
+        // --- Acronym Expansion ---
+        // Iterates through each query in the current list (which might be from decomposition or just the corrected original query).
+        // Expands known acronyms found in each query string.
+        const queriesForAcronymExpansion = [...queriesToProcess]; // Create a copy to iterate over while modifying the main list indirectly
+        const queriesPostAcronymExpansion = []; // Store results of this stage
+
+        for (const queryToExpand of queriesForAcronymExpansion) {
+            let currentQueryWithAcronyms = queryToExpand; // The query string being processed in this iteration
+            let anAcronymWasExpanded = false; // Flag to log only if an expansion occurred for this query
+
+            // Check each known acronym
+            for (const acronym in ACRONYMS_ES) {
+                if (ACRONYMS_ES.hasOwnProperty(acronym)) {
+                    const regex = new RegExp(`\\b${acronym}\\b`, 'g'); // Match whole word acronym
+                    if (currentQueryWithAcronyms.match(regex)) {
+                        currentQueryWithAcronyms = currentQueryWithAcronyms.replace(regex, `${acronym} (${ACRONYMS_ES[acronym]})`);
+                        anAcronymWasExpanded = true;
+                    }
+                }
+            }
+
+            if (anAcronymWasExpanded) {
+                logger.info(`(DB Service) Query after acronym expansion: "${currentQueryWithAcronyms.substring(0,100)}..." (Original segment: "${queryToExpand.substring(0,100)}...")`);
+            }
+            queriesPostAcronymExpansion.push(currentQueryWithAcronyms);
+        }
+        queriesToProcess = queriesPostAcronymExpansion; // Update queriesToProcess with (potentially) acronym-expanded queries
+
+        // --- Synonym Expansion (for Vector Search Query Variations) ---
+        // Takes each query (now acronym-expanded) and generates a limited number of variations
+        // by replacing keywords with their first listed synonym. These variations are intended
+        // for generating separate embeddings to broaden vector search.
+        const queriesReadyForSynonymExpansion = [...queriesToProcess];
+        const queriesIncludingSynonymVariations = [];
+        const MAX_SYNONYM_VARIATIONS_PER_BASE_QUERY = 2; // Max variations to generate per single base query. Balances broadening search with embedding cost.
+
+        for (const baseQuery of queriesReadyForSynonymExpansion) {
+            queriesIncludingSynonymVariations.push(baseQuery); // Always include the base query itself
+
+            const keywordsInBase = tokenizeText(baseQuery, true); // Significant keywords from the base query
+            let variationsAddedForThisBase = 0;
+
+            for (const keyword of keywordsInBase) {
+                if (variationsAddedForThisBase >= MAX_SYNONYM_VARIATIONS_PER_BASE_QUERY) {
+                    break; // Reached max variations for this particular baseQuery
+                }
+                if (THESAURUS_ES[keyword] && THESAURUS_ES[keyword].length > 0) {
+                    const firstSynonym = THESAURUS_ES[keyword][0]; // Using only the first synonym for simplicity and control
+
+                    // Create a new variation by replacing only the current keyword in the baseQuery
+                    // This helps maintain the context of other words in the query.
+                    const regex = new RegExp(`\\b${keyword}\\b`); // Match whole word
+                    const newQuerySynonymVariation = baseQuery.replace(regex, firstSynonym);
+
+                    // Add the new variation if it's genuinely different and not already added
+                    // (e.g. if baseQuery didn't actually contain the keyword, or synonym is identical)
+                    if (newQuerySynonymVariation !== baseQuery && !queriesIncludingSynonymVariations.includes(newQuerySynonymVariation)) {
+                        queriesIncludingSynonymVariations.push(newQuerySynonymVariation);
+                        variationsAddedForThisBase++;
+                        logger.info(`(DB Service) Synonym variation for vector search: "${newQuerySynonymVariation.substring(0,100)}...", Keyword: "${keyword}", Synonym: "${firstSynonym}"`);
+                    }
+                }
+            }
+        }
+        queriesToProcess = queriesIncludingSynonymVariations; // Final list of queries (originals + variations) to process in the main search loop
+
+        if (returnPipelineDetails) {
+            pipelineDetails.queryDecomposition.finalQueriesProcessed = [...queriesToProcess];
+        }
+
         let aggregatedVectorResults = [];
         let aggregatedFtsResults = [];
         let aggregatedQueriesEmbeddedForLog = [];
@@ -401,12 +570,19 @@ Classification:`;
 
         for (let idx = 0; idx < queriesToProcess.length; idx++) {
             const loopCurrentQuery = queriesToProcess[idx]; // This is either a sub-query or the (potentially corrected) main query
+
+            // Ensure loopCurrentQuery is a string before processing
+            if (typeof loopCurrentQuery !== 'string') {
+                logger.warn(`(DB Service) hybridSearch: loopCurrentQuery at index ${idx} is not a string, skipping. Value: ${loopCurrentQuery}`);
+                continue; // Skip this iteration
+            }
+
             const processedQueryText = preprocessTextForEmbedding(loopCurrentQuery);
 
             let currentQueryPipelineDetailsRef = null;
             if (returnPipelineDetails) {
                 const detailEntry = {
-                    queryIdentifier: loopCurrentQuery.substring(0,75) + (loopCurrentQuery.length > 75 ? "..." : ""),
+                    queryIdentifier: loopCurrentQuery.substring(0,75) + (loopCurrentQuery.length > 75 ? "..." : ""), // Safe now
                     preprocessingOutput: processedQueryText,
                     enhancements: [], vectorSearchResults: [], ftsResults: []
                 };
@@ -472,33 +648,81 @@ Classification:`;
                     }
                 }
             }
+
+    // FTS Query Preparation with Thesaurus (for the current loopCurrentQuery) ---
+    // Tokenize the current query (which might be an original, an acronym-expanded version, or a synonym variation for vector search)
+    // to get its significant terms for FTS.
+    const significantTokensForFTS = tokenizeText(loopCurrentQuery, true);
+    const ftsQueryParts = []; // Array to hold parts of the FTS query string
+
+    for (const token of significantTokensForFTS) {
+        if (THESAURUS_ES[token] && THESAURUS_ES[token].length > 0) {
+            // If the token has synonyms, create an OR-group for FTS.
+            // This includes the original token plus all its synonyms.
+            // E.g., if token is "precio" and synonyms are ["costo", "tarifa"], part is "(precio | costo | tarifa)"
+            const ftsTokenWithSynonyms = [token, ...THESAURUS_ES[token]];
+            // Ensure uniqueness in case a token is listed as its own synonym (though not current practice)
+            const uniqueFtsTerms = [...new Set(ftsTokenWithSynonyms)];
+            ftsQueryParts.push(`(${uniqueFtsTerms.join(' | ')})`);
+        } else {
+            // If no synonyms, the token is used as is.
+            ftsQueryParts.push(token);
+        }
+    }
+    // Combine all parts with the FTS AND operator '&'
+    // E.g., "(termA_expanded) & termB & (termC_expanded)"
+    const ftsQueryString = ftsQueryParts.join(' & ');
+    logger.info(`(DB Service) Original FTS query text for loop: "${processedQueryText.substring(0,50)}...", Constructed FTS query string: "${ftsQueryString.substring(0,100)}..."`);
+            // logger.info(...) // This log is already in place and describes the constructed string.
+
             const rpcParamsFts = {
                 client_id_param: clientId,
-                query_text: processedQueryText,
+        query_text: ftsQueryString, // Use the new ftsQueryString
                 match_count: initialRetrieveLimit,
                 p_category_filter: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? [predictedCategory] : null
             };
             const { data: ftsSubData, error: ftsSubError } = await supabase.rpc('fts_search_with_rank', rpcParamsFts);
-            if (ftsSubError) { logger.error(`(DB Service) FTS error for "${processedQueryText.substring(0,50)}...":`, ftsSubError.message); }
+    if (ftsSubError) { logger.error(`(DB Service) FTS error for query "${ftsQueryString.substring(0,50)}..." (based on loopCurrentQuery: "${loopCurrentQuery.substring(0,50)}..."):`, ftsSubError.message); }
             else if (ftsSubData) {
                 aggregatedFtsResults.push(...ftsSubData);
-                if (returnPipelineDetails) currentQueryPipelineDetailsRef.ftsResults.push({ retrievedForQuery: processedQueryText, results: ftsSubData.map(r => ({ id: r.id, contentSnippet: r.content?.substring(0,100)+'...', metadata: r.metadata, score: r.rank })) });
+        if (returnPipelineDetails) currentQueryPipelineDetailsRef.ftsResults.push({ retrievedForQuery: ftsQueryString, results: ftsSubData.map(r => ({ id: r.id, contentSnippet: r.content?.substring(0,100)+'...', metadata: r.metadata, score: r.rank, highlighted_content: r.highlighted_content })) });
             }
         }
 
         const uniqueVectorResults = {}; /* ... as before ... */ aggregatedVectorResults.forEach(row => { if (!row.id || (row.similarity && row.similarity < finalVectorMatchThreshold)) return; const id = String(row.id); if (!uniqueVectorResults[id] || row.similarity > uniqueVectorResults[id].similarity) { uniqueVectorResults[id] = row; } });
         const vectorResults = Object.values(uniqueVectorResults);
-        const ftsResults = aggregatedFtsResults;
+        const ftsResults = aggregatedFtsResults; // ftsResults now contains highlighted_content from RPC
         if (returnPipelineDetails) {
             pipelineDetails.aggregatedResults = {
                 uniqueVectorResultsPreview: vectorResults.slice(0,50).map(r => ({id: r.id, score: r.similarity, contentSnippet: r.content?.substring(0,100)+'...'})),
-                uniqueFtsResultsPreview: ftsResults.slice(0,50).map(r => ({id: r.id, score: r.rank, contentSnippet: r.content?.substring(0,100)+'...'}))
+                uniqueFtsResultsPreview: ftsResults.slice(0,50).map(r => ({id: r.id, score: r.rank, contentSnippet: r.content?.substring(0,100)+'...', highlighted_content: r.highlighted_content}))
             };
         }
 
-        const combinedResults = {}; /* ... as before ... */        vectorResults.forEach(row => { if (!row.id || (row.similarity && row.similarity < finalVectorMatchThreshold)) return; combinedResults[String(row.id)] = { ...row, vector_similarity: row.similarity || 0, fts_score: 0 }; }); ftsResults.forEach(row => { if (!row.id) return; const id = String(row.id); const ftsScore = row.rank || 0; if (!combinedResults[id]) { combinedResults[id] = { ...row, vector_similarity: 0, fts_score: ftsScore }; } else { combinedResults[id].fts_score = Math.max(combinedResults[id].fts_score || 0, ftsScore);  if (!combinedResults[id].content && row.content) combinedResults[id].content = row.content; if (!combinedResults[id].metadata && row.metadata) combinedResults[id].metadata = row.metadata; } });
-        let rankedResults = Object.values(combinedResults).filter(item => item.id && item.content).filter(item => !((item.fts_score || 0) === 0 && (item.vector_similarity || 0) < finalVectorMatchThreshold)).map(item => ({ ...item, hybrid_score: ((item.vector_similarity || 0) * finalVectorWeight) + ((item.fts_score || 0) * finalFtsWeight) }));
-        if (returnPipelineDetails) pipelineDetails.mergedAndPreRankedResultsPreview = rankedResults.slice(0,50).map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', metadata: item.metadata, initialHybridScore: item.hybrid_score, vectorSimilarity: item.vector_similarity, ftsScore: item.fts_score }));
+        const combinedResults = {};
+        vectorResults.forEach(row => {
+            if (!row.id || (row.similarity && row.similarity < finalVectorMatchThreshold)) return;
+            combinedResults[String(row.id)] = { ...row, vector_similarity: row.similarity || 0, fts_score: 0, highlighted_content: null }; // Initialize highlighted_content
+        });
+        ftsResults.forEach(row => {
+            if (!row.id) return;
+            const id = String(row.id);
+            const ftsScore = row.rank || 0;
+            if (!combinedResults[id]) {
+                // Item only in FTS results, add it with its highlighted_content
+                combinedResults[id] = { ...row, vector_similarity: 0, fts_score: ftsScore, highlighted_content: row.highlighted_content };
+            } else {
+                // Item already exists (from vector search), update FTS score and add highlighted_content
+                combinedResults[id].fts_score = Math.max(combinedResults[id].fts_score || 0, ftsScore);
+                combinedResults[id].highlighted_content = row.highlighted_content; // Add/overwrite highlighted_content
+                // Ensure other properties from FTS row are preferred if they were missing from vector row
+                if (!combinedResults[id].content && row.content) combinedResults[id].content = row.content;
+                if (!combinedResults[id].metadata && row.metadata) combinedResults[id].metadata = row.metadata;
+            }
+        });
+
+    let rankedResults = Object.values(combinedResults).filter(item => item.id && item.content).filter(item => !((item.fts_score || 0) === 0 && (item.vector_similarity || 0) < finalVectorMatchThreshold)).map(item => ({ ...item, hybrid_score: ((item.vector_similarity || 0) * adjustedVectorWeight) + ((item.fts_score || 0) * adjustedFtsWeight) }));
+        if (returnPipelineDetails) pipelineDetails.mergedAndPreRankedResultsPreview = rankedResults.slice(0,50).map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', metadata: item.metadata, initialHybridScore: item.hybrid_score, vectorSimilarity: item.vector_similarity, ftsScore: item.fts_score, highlighted_content: item.highlighted_content }));
 
         if (rankedResults.length === 0) {
             const emptyReturn = { results: [], propositionResults: [], searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog, predictedCategory };
@@ -534,18 +758,113 @@ Classification:`;
             if (item.metadata?.custom_metadata && Array.isArray(item.metadata.custom_metadata.tags)) { detailedMetadataScore += (item.metadata.custom_metadata.tags.flatMap(tag => tokenizeText(String(tag), true)).filter(tt => correctedQueryTokens.includes(tt)).length * 0.15); }
             item.metadataRelevanceScore = detailedMetadataScore;
             const itemCrossEncoderScoreNormalized = item.cross_encoder_score_normalized !== undefined ? item.cross_encoder_score_normalized : sigmoid(0);
-            const reranked_score = ((item.hybrid_score || 0) * W_ORIGINAL_HYBRID_SCORE) + (keywordMatchScore * W_KEYWORD_MATCH_SCORE) + (item.metadataRelevanceScore * W_METADATA_RELEVANCE_SCORE) + (itemCrossEncoderScoreNormalized * W_CROSS_ENCODER_SCORE);
-            item.keywordMatchScore = keywordMatchScore;
-            return { ...item, cross_encoder_score_normalized: itemCrossEncoderScoreNormalized, reranked_score };
+
+            // Calculate Document Recency Score
+            const MS_PER_DAY = 1000 * 60 * 60 * 24;
+            let recencyScore = 0.5; // Default score if date is missing or invalid
+
+            if (item.metadata && item.metadata.source_document_updated_at) {
+                const docDate = new Date(item.metadata.source_document_updated_at);
+                // Check if docDate is a valid date
+                if (!isNaN(docDate.getTime())) {
+                    const ageInDays = (new Date().getTime() - docDate.getTime()) / MS_PER_DAY;
+                    // Linear decay over a year (365 days)
+                    // Score is 1 if age is 0 days, 0 if age is >= 365 days.
+                    // Score is higher for more recent documents.
+                    recencyScore = Math.max(0, 1 - (ageInDays / 365));
+                } else {
+                    // Optional: Log invalid date format if needed
+                    // console.warn(`(DB Service) Invalid source_document_updated_at format for item ID ${item.id}: ${item.metadata.source_document_updated_at}`);
+                }
+            }
+            item.recencyScore = recencyScore; // Add to item for use in final score and potential logging
+
+            // Access and default Source Authority Score
+            let calculatedSourceAuthorityScore = 0.5; // Default
+            if (item.metadata && item.metadata.source_authority_score !== undefined && item.metadata.source_authority_score !== null) {
+                const numericScore = parseFloat(item.metadata.source_authority_score);
+                if (!isNaN(numericScore)) {
+                    calculatedSourceAuthorityScore = numericScore;
+                } else {
+                    // Optional: Log if it was present but not a number
+                    // console.warn(`(DB Service) source_authority_score for item ID ${item.id} was not a valid number: ${item.metadata.source_authority_score}`);
+                }
+            }
+            item.sourceAuthorityScore = calculatedSourceAuthorityScore;
+
+            // Access and default Chunk Feedback Score
+            // Assumes chunk_feedback_score could be positive or negative (e.g., -1 to 1).
+            // A default of 0.0 implies neutral feedback if not specified or invalid.
+            let calculatedChunkFeedbackScore = 0.0; // Default
+            if (item.metadata && item.metadata.chunk_feedback_score !== undefined && item.metadata.chunk_feedback_score !== null) {
+                const numericScore = parseFloat(item.metadata.chunk_feedback_score);
+                if (!isNaN(numericScore)) {
+                    calculatedChunkFeedbackScore = numericScore;
+                } else {
+                    // Optional: Log if it was present but not a number
+                    // console.warn(`(DB Service) chunk_feedback_score for item ID ${item.id} was not a valid number: ${item.metadata.chunk_feedback_score}`);
+                }
+            }
+            item.chunkFeedbackScore = calculatedChunkFeedbackScore;
+
+            // Access and default Chunk Feedback Score
+            // Assumes chunk_feedback_score could be positive or negative (e.g., -1 to 1).
+            // A default of 0.0 implies neutral feedback if not specified or invalid.
+            // let calculatedChunkFeedbackScore = 0.0; // Default  // THIS LINE AND BLOCK IS DUPLICATED AND REMOVED
+            // if (item.metadata && item.metadata.chunk_feedback_score !== undefined && item.metadata.chunk_feedback_score !== null) {
+            //     const numericScore = parseFloat(item.metadata.chunk_feedback_score);
+            //     if (!isNaN(numericScore)) {
+            //         calculatedChunkFeedbackScore = numericScore;
+            //     } else {
+            //         // Optional: Log if it was present but not a number
+            //         // console.warn(`(DB Service) chunk_feedback_score for item ID ${item.id} was not a valid number: ${item.metadata.chunk_feedback_score}`);
+            //     }
+            // }
+            // item.chunkFeedbackScore = calculatedChunkFeedbackScore; // THIS LINE IS PART OF THE DUPLICATE BLOCK
+
+            // Calculate the final reranked_score using all weighted components
+            item.reranked_score =
+                (item.hybrid_score || 0) * W_ORIGINAL_HYBRID_SCORE_ADJ +
+                (item.cross_encoder_score_normalized || 0) * W_CROSS_ENCODER_SCORE_ADJ +
+                (item.keywordMatchScore || 0) * W_KEYWORD_MATCH_SCORE_ADJ +
+                (item.metadataRelevanceScore || 0) * W_METADATA_RELEVANCE_SCORE_ADJ +
+                (item.recencyScore) * W_RECENCY_SCORE +               // Defaulting handled during item.recencyScore assignment
+                (item.sourceAuthorityScore) * W_SOURCE_AUTHORITY_SCORE + // Defaulting handled during item.sourceAuthorityScore assignment
+                (item.chunkFeedbackScore) * W_CHUNK_FEEDBACK_SCORE;    // Defaulting handled during item.chunkFeedbackScore assignment
+
+            // Ensure a final score is a number, default to 0 if somehow NaN
+            if (isNaN(item.reranked_score)) {
+                // console.warn(`(DB Service) Calculated reranked_score is NaN for item ID ${item.id}. Defaulting to 0.`);
+                item.reranked_score = 0;
+            }
+            // item.keywordMatchScore = keywordMatchScore; // keywordMatchScore is already part of item.
+            return { ...item, reranked_score: item.reranked_score }; // Return the item with all scores
         });
 
         rerankedList.sort((a, b) => b.reranked_score - a.reranked_score);
-        if (DEBUG_RERANKING) { rerankedList.slice(0, finalLimit + 5).forEach(r => { logger.debug(`  ID: ${r.id}, Reranked: ${r.reranked_score?.toFixed(4)}, Hybrid: ${r.hybrid_score?.toFixed(4)}, CE_norm: ${r.cross_encoder_score_normalized?.toFixed(4)}, KW: ${r.keywordMatchScore?.toFixed(4)}, MetaDetailed: ${r.metadataRelevanceScore?.toFixed(4)}`); });}
+        if (DEBUG_RERANKING) {
+            rerankedList.slice(0, finalLimit + 5).forEach(r => {
+                logger.debug(`  ID: ${r.id}, Reranked: ${r.reranked_score?.toFixed(4)}, Hybrid: ${r.hybrid_score?.toFixed(4)}, CE_norm: ${r.cross_encoder_score_normalized?.toFixed(4)}, KW: ${r.keywordMatchScore?.toFixed(4)}, MetaDetailed: ${r.metadataRelevanceScore?.toFixed(4)}, Recency: ${r.recencyScore?.toFixed(4)}, Authority: ${r.sourceAuthorityScore?.toFixed(4)}, Feedback: ${r.chunkFeedbackScore?.toFixed(4)}`);
+            });
+        }
 
         const finalResults = rerankedList.slice(0, finalLimit);
-        const finalResultsMapped = finalResults.map(r => ({ id: r.id, content: r.content, metadata: r.metadata, reranked_score: r.reranked_score, hybrid_score: r.hybrid_score, keywordMatchScore: r.keywordMatchScore, metadataRelevanceScore: r.metadataRelevanceScore, cross_encoder_score_normalized: r.cross_encoder_score_normalized }));
+        const finalResultsMapped = finalResults.map(r => ({
+            id: r.id,
+            content: r.content,
+            metadata: r.metadata,
+            reranked_score: r.reranked_score,
+            hybrid_score: r.hybrid_score,
+            keywordMatchScore: r.keywordMatchScore,
+            metadataRelevanceScore: r.metadataRelevanceScore,
+            cross_encoder_score_normalized: r.cross_encoder_score_normalized, // Kept for transparency
+            recencyScore: r.recencyScore,
+            sourceAuthorityScore: r.sourceAuthorityScore,
+            chunkFeedbackScore: r.chunkFeedbackScore,
+            highlighted_content: r.highlighted_content // Add this field
+        }));
 
-        if (returnPipelineDetails) pipelineDetails.finalRankedResultsForPlayground = finalResultsMapped.slice(0, 15).map(item => ({ ...item, contentSnippet: item.content?.substring(0,250)+'...' }));
+        if (returnPipelineDetails) pipelineDetails.finalRankedResultsForPlayground = finalResultsMapped.slice(0, 15).map(item => ({ ...item, contentSnippet: item.content?.substring(0,250)+'...' })); // highlighted_content is part of '...item'
 
         let propositionResults = [];
         if (firstProcessedQueryEmbedding) {
@@ -591,10 +910,33 @@ export const incrementAnalyticMessageCount = async (conversationId, senderType) 
 export const updateAnalyticOnEscalation = async (conversationId, escalationTimestamp, lastUserQuery) => { /* ... */ };
 export const updateAnalyticOnBotCannotAnswer = async (conversationId, lastUserQuery) => { /* ... */ };
 export const finalizeConversationAnalyticRecord = async (conversationId, resolutionStatus, lastMessageAt) => { /* ... */ };
-function tokenizeText(text, removeStopWords = false) { /* ... */ }
+
+function tokenizeText(text, removeStopWords = false) {
+    if (typeof text !== 'string' || text.trim() === '') {
+        return [];
+    }
+    // Normalize: lowercase, remove punctuation (simple version)
+    const normalizedText = text.toLowerCase().replace(/[.,!?;:()\[\]{}"']/g, '');
+    let tokens = normalizedText.split(/\s+/).filter(token => token.length > 0);
+
+    if (removeStopWords) {
+        tokens = tokens.filter(token => !SPANISH_STOP_WORDS.has(token));
+    }
+    return tokens;
+}
+
 function calculateJaccardSimilarity(set1Tokens, set2Tokens) { /* ... */ }
 const SPANISH_ABBREVIATIONS = { /* ... */ };
-function preprocessTextForEmbedding(text) { /* ... */ }
+
+function preprocessTextForEmbedding(text) {
+    if (typeof text !== 'string') {
+        // console.warn("(DB Service) preprocessTextForEmbedding: input is not a string, returning empty string. Value:", text);
+        return ""; // Return an empty string for non-string inputs
+    }
+    // Simple preprocessing: lowercase and trim. More sophisticated steps could be added.
+    return text.toLowerCase().trim();
+}
+
 export const getConversationDetails = async (conversationId) => { /* ... */ };
 export const logAiResolution = async (clientId, conversationId, billingCycleId, detailsJson) => { /* ... */ };
 

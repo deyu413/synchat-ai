@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "jsdom": "^26.1.0",
+    "natural": "^8.1.0",
+    "pdf-image": "^2.0.0",
+    "pdf-table-extractor": "^1.0.3",
+    "puppeteer": "^24.9.0",
+    "tesseract.js": "^6.0.1"
+  }
+}

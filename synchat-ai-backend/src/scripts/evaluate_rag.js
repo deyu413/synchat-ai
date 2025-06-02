@@ -85,6 +85,12 @@ async function runEvaluation() {
         let ragContextStringForTest = "";
         let systemPromptForTest = "";
 
+        // Initialize metrics for the current test case to ensure they are defined even if errors occur
+        let context_precision_at_K = "N/A";
+        let context_recall = "N/A";
+        let reciprocal_rank = 0;
+        let K = 0; // Initialize K for logging purposes in case of error
+
         try {
             // a. Simulate RAG Call (Simplified)
             // Assuming hybridSearch expects (clientId, queryText, conversationId, options)
@@ -109,6 +115,48 @@ async function runEvaluation() {
             retrievedChunksForLog.forEach(chunk =>
                 console.log(`  - Chunk ID: ${chunk.id}, Preview: "${chunk.preview}", Score: ${chunk.score?.toFixed(4)}, Source: ${chunk.source}`)
             );
+
+            // --- Context Precision, Recall, and Reciprocal Rank Calculations ---
+            const retrieved_ids = (hybridSearchResult.results || []).map(chunk => String(chunk.id));
+            const annotated_relevant_ids = (testCase.expected_relevant_chunk_ids || []).map(id => String(id));
+            let relevant_retrieved_count = 0;
+            K = retrieved_ids.length; // Assign to the K initialized outside try block
+
+            // context_precision_at_K, context_recall, reciprocal_rank are already initialized outside
+
+            if (annotated_relevant_ids.length === 0) {
+                context_precision_at_K = "N/A"; // As per spec
+                context_recall = "N/A"; // As per spec for recall when no annotated
+            } else if (K === 0 && annotated_relevant_ids.length > 0) {
+                context_precision_at_K = 0;
+                context_recall = 0; // relevant_retrieved_count is 0, so recall is 0 / positive_number
+            } else if (K > 0) {
+                retrieved_ids.forEach(retrieved_id => {
+                    if (annotated_relevant_ids.includes(retrieved_id)) {
+                        relevant_retrieved_count++;
+                    }
+                });
+                context_precision_at_K = relevant_retrieved_count / K;
+                if (annotated_relevant_ids.length > 0) { // Avoid division by zero if annotated_relevant_ids was empty (already handled by first if)
+                    context_recall = relevant_retrieved_count / annotated_relevant_ids.length;
+                }
+                // Reciprocal Rank Calculation
+                for (let rank_idx = 0; rank_idx < retrieved_ids.length; rank_idx++) {
+                    if (annotated_relevant_ids.includes(retrieved_ids[rank_idx])) {
+                        reciprocal_rank = 1 / (rank_idx + 1);
+                        break;
+                    }
+                }
+            } else { // K === 0 and annotated_relevant_ids.length === 0
+                 context_precision_at_K = "N/A"; // Or 1.0. Sticking to N/A.
+                 context_recall = "N/A"; // Sticking to N/A.
+            }
+            // reciprocal_rank remains 0 if no relevant ID found or K=0.
+
+            console.log(`Context Precision@${K}: ${context_precision_at_K}`);
+            console.log(`Context Recall: ${context_recall}`);
+            console.log(`Reciprocal Rank: ${reciprocal_rank}`);
+            // --- End of Context Metrics ---
 
             ragContextStringForTest = buildRagContextString(retrievedChunks);
 
@@ -203,26 +251,54 @@ Is the answer relevant to the question? Respond with only 'YES' or 'NO'.`;
             llm_response: llm_response,
             keywords_check: keywordsCheckPassed ? 'PASS' : 'FAIL',
             faithfulness_check: faithfulness_check,
-            answer_relevancy_check: answer_relevancy_check
+            answer_relevancy_check: answer_relevancy_check,
+            context_precision_at_K: context_precision_at_K,
+            context_recall: context_recall,
+            reciprocal_rank: reciprocal_rank
         });
     }
+
+    // Calculate MRR
+    const totalReciprocalRankSum = evaluationResults.reduce((sum, r) => {
+        // Ensure that only valid, numeric reciprocal_rank values are added.
+        // This handles cases where reciprocal_rank might be undefined or not a number,
+        // although current logic initializes it to 0.
+        return sum + (typeof r.reciprocal_rank === 'number' ? r.reciprocal_rank : 0);
+    }, 0);
+    const mrr = evaluationResults.length > 0 ? totalReciprocalRankSum / evaluationResults.length : 0;
+    console.log(`\nMean Reciprocal Rank (MRR): ${mrr.toFixed(4)}`);
+
 
     // c. Output Results Summary
     console.log("\n\n--- Evaluation Summary ---");
     evaluationResults.forEach(result => {
+        // Extended log to include new metrics
         console.log(
-            `Test ID: ${result.test_id} | Query: "${result.query.substring(0,30)}..." | Keywords: ${result.keywords_check} | Faithfulness: ${result.faithfulness_check} | Relevancy: ${result.answer_relevancy_check}`
+            `Test ID: ${result.test_id} | Query: "${result.query.substring(0,30)}..." | Keywords: ${result.keywords_check} | Faithfulness: ${result.faithfulness_check} | Relevancy: ${result.answer_relevancy_check} | Context Precision@${result.retrieved_chunks_preview.length}: ${typeof result.context_precision_at_K === 'number' ? result.context_precision_at_K.toFixed(2) : result.context_precision_at_K} | Context Recall: ${typeof result.context_recall === 'number' ? result.context_recall.toFixed(2) : result.context_recall} | RR: ${result.reciprocal_rank.toFixed(2)}`
         );
     });
 
     const passedKeywordsCount = evaluationResults.filter(r => r.keywords_check === 'PASS').length;
     const passedFaithfulnessCount = evaluationResults.filter(r => r.faithfulness_check === 'YES').length;
     const passedAnswerRelevancyCount = evaluationResults.filter(r => r.answer_relevancy_check === 'YES').length;
+    // Aggregate Context Precision and Recall (excluding "N/A" values)
+    const validPrecisionCases = evaluationResults.filter(r => typeof r.context_precision_at_K === 'number');
+    const averageContextPrecision = validPrecisionCases.length > 0
+        ? validPrecisionCases.reduce((sum, r) => sum + r.context_precision_at_K, 0) / validPrecisionCases.length
+        : 0;
+    const validRecallCases = evaluationResults.filter(r => typeof r.context_recall === 'number');
+    const averageContextRecall = validRecallCases.length > 0
+        ? validRecallCases.reduce((sum, r) => sum + r.context_recall, 0) / validRecallCases.length
+        : 0;
+
 
     console.log(`\nTotal Tests: ${evaluationResults.length}`);
     console.log(`Passed Keyword Checks: ${passedKeywordsCount} (${((passedKeywordsCount/evaluationResults.length)*100).toFixed(2)}%)`);
     console.log(`Passed Faithfulness Checks (YES): ${passedFaithfulnessCount} (${((passedFaithfulnessCount/evaluationResults.length)*100).toFixed(2)}%)`);
     console.log(`Passed Answer Relevancy Checks (YES): ${passedAnswerRelevancyCount} (${((passedAnswerRelevancyCount/evaluationResults.length)*100).toFixed(2)}%)`);
+    console.log(`Average Context Precision@K: ${averageContextPrecision.toFixed(4)} (over ${validPrecisionCases.length} applicable tests)`);
+    console.log(`Average Context Recall: ${averageContextRecall.toFixed(4)} (over ${validRecallCases.length} applicable tests)`);
+    console.log(`Mean Reciprocal Rank (MRR): ${mrr.toFixed(4)}`);
     // Optionally write detailed results to a file
     const reportPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'evaluation_report.json');
     fs.writeFileSync(reportPath, JSON.stringify(evaluationResults, null, 2), 'utf-8');

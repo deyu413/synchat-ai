@@ -4,6 +4,7 @@
     "client_id_for_test": "00000000-0000-0000-0000-000000000000",
     "query": "¿Cuál es el horario de atención al cliente?",
     "expected_keywords_in_answer": ["horario", "atención", "lunes", "viernes", "9am", "6pm"],
+    "expected_relevant_chunk_ids": ["chunk_faq_horario_1", "chunk_faq_contacto_general_2"],
     "//optional_expected_source_urls": ["https://example.com/contacto", "https://example.com/faq#horarios"],
     "//optional_notes": "Prueba de pregunta frecuente sobre horarios."
   },
@@ -12,6 +13,7 @@
     "client_id_for_test": "00000000-0000-0000-0000-000000000000",
     "query": "Háblame sobre las características del producto X",
     "expected_keywords_in_answer": ["producto X", "característica A", "beneficio B"],
+    "expected_relevant_chunk_ids": ["chunk_prodX_features_A", "chunk_prodX_benefits_B", "chunk_prodX_overview_1"],
     "//optional_expected_source_urls": ["https://example.com/productos/X"],
     "//optional_notes": "Prueba de información de producto."
   },
@@ -20,6 +22,7 @@
     "client_id_for_test": "00000000-0000-0000-0000-000000000000",
     "query": "¿Cuál es el sentido de la vida según SynChat?",
     "expected_keywords_in_answer": ["puedo responder", "información disponible"],
+    "expected_relevant_chunk_ids": [],
     "//optional_expected_source_urls": [],
     "//optional_notes": "Prueba de pregunta fuera de contexto, esperando una respuesta tipo 'no sé'."
   }

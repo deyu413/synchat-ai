@@ -253,20 +253,163 @@ export const handleChatMessage = async (req, res, next) => {
                 }
             } else { processedKnowledgeForContext = [...filteredKnowledge]; }
 
-            let propositionsSectionText = "";
-            if (propositionResults.length > 0) { /* ... as before ... */ }
+            // --- Score-based Prioritization and Token-limited Truncation of Context Chunks ---
+            const LLM_TOKEN_SAFETY_MARGIN = 200; // Safety margin for LLM response and other formatting.
+            const TOKENS_PER_CHUNK_OVERHEAD = 65; // Updated estimate for detailed chunk formatting (markers, ID, score, source, path, page)
+
+            // Sort chunks by score (descending)
+            let initialTotalTokensOfConsideredChunks = 0;
+            for (const chunk of processedKnowledgeForContext) {
+                const content = chunk.extracted_content || chunk.content;
+                if (content) {
+                    initialTotalTokensOfConsideredChunks += encode(content).length;
+                }
+                initialTotalTokensOfConsideredChunks += TOKENS_PER_CHUNK_OVERHEAD;
+            }
+            logger.info(`(ChatCtrl) [Context Selection] Initial total chunks considered: ${processedKnowledgeForContext.length}, Approx. total tokens (content + overhead): ${initialTotalTokensOfConsideredChunks}`);
+
+            const sortedChunksForContextSelection = [...processedKnowledgeForContext].sort((a, b) => {
+                const scoreA = a.reranked_score ?? a.hybrid_score ?? 0;
+                const scoreB = b.reranked_score ?? b.hybrid_score ?? 0;
+                return scoreB - scoreA;
+            });
+
+            logger.info(`(ChatCtrl) [Context Selection] Chunks before token-based selection: ${processedKnowledgeForContext.length}`);
+
+            // Calculate base token count (system prompt, history, query, and other fixed elements)
+            // This is an approximation; actual prompt construction might vary slightly.
+            const systemPromptBase = `Eres Zoe, el asistente virtual IA especializado... (full prompt as defined before, including ambiguity handling instructions if desired)`; // Re-evaluate this if it's already defined elsewhere or make it a shared constant
+            const formattedHistoryForTokenCalc = conversationHistory.map(msg => `${msg.sender === 'user' ? 'User' : 'Assistant'}: ${msg.content || ''}`).join('\n');
+
+            let basePromptTokens = encode(systemPromptBase).length;
+            basePromptTokens += encode(formattedHistoryForTokenCalc).length;
+            basePromptTokens += encode(effectiveQuery).length;
+            basePromptTokens += encode("Contexto de la base de conocimiento:").length; // Example fixed part
+            basePromptTokens += encode("Proposiciones Relevantes:").length; // Example fixed part
+            basePromptTokens += encode("Fragmentos de Documentos Relevantes:").length; // Example fixed part
+            // Add tokens for any other structural separators or instructions that are always present.
+
+            logger.info(`(ChatCtrl) [Context Selection] Base prompt tokens (system, history, query, fixed instructions): ${basePromptTokens}`);
+
+            const finalChunksForLLMContext = [];
+            let currentAccumulatedTokens = basePromptTokens;
+            const effectiveMaxContextTokens = MAX_CONTEXT_TOKENS_FOR_LLM - LLM_TOKEN_SAFETY_MARGIN;
+
+            for (const chunk of sortedChunksForContextSelection) {
+                const contentToTokenize = chunk.extracted_content || chunk.content;
+                if (!contentToTokenize) continue; // Skip if no content
+
+                const chunkTokens = encode(contentToTokenize).length;
+                const chunkWithOverheadTokens = chunkTokens + TOKENS_PER_CHUNK_OVERHEAD;
+
+                if (currentAccumulatedTokens + chunkWithOverheadTokens <= effectiveMaxContextTokens) {
+                    finalChunksForLLMContext.push(chunk);
+                    currentAccumulatedTokens += chunkWithOverheadTokens;
+                } else {
+                    logger.info(`(ChatCtrl) [Context Selection] Token limit reached. Cannot add chunk ID ${chunk.id} (tokens: ${chunkTokens}).`);
+                    break; // Stop adding chunks
+                }
+            }
+
+            logger.info(`(ChatCtrl) [Context Selection] Chunks selected for LLM context: ${finalChunksForLLMContext.length}`);
+            logger.info(`(ChatCtrl) [Context Selection] Accumulated tokens after chunk selection: ${currentAccumulatedTokens}`);
+            logger.info(`(ChatCtrl) [Context Selection] Effective token limit for context: ${effectiveMaxContextTokens}`);
+
+            // "Lost in the Middle" Mitigation: Reorder chunks - best first, second-best last.
+            if (finalChunksForLLMContext.length > 1) {
+                logger.info(`(ChatCtrl) [Context Reorder] Chunk IDs before LIMM reorder: ${finalChunksForLLMContext.map(c => c.id).join(', ')}`);
+                const secondBestChunk = finalChunksForLLMContext.splice(1, 1)[0]; // Remove chunk from index 1
+                finalChunksForLLMContext.push(secondBestChunk); // Add it to the end
+                logger.info(`(ChatCtrl) [Context Reorder] Applied "Lost in the Middle" strategy.`);
+                logger.info(`(ChatCtrl) [Context Reorder] Chunk IDs after LIMM reorder: ${finalChunksForLLMContext.map(c => c.id).join(', ')}`);
+            }
+
+            // Now, construct propositionsSectionText and fullChunksSectionText using finalChunksForLLMContext
+            // This part needs to be adapted from the original logic to use finalChunksForLLMContext
+            // instead of propositionResults directly for propositions (if they were part of processedKnowledgeForContext)
+            // or processedKnowledgeForContext for chunks.
+            // For now, we assume propositionResults are handled separately and only `fullChunksSectionText` is built from `finalChunksForLLMContext`.
+            // The prompt implies `processedKnowledgeForContext` was the source for `fullChunksSectionText`.
+
+            let propositionsSectionText = ""; // This might need separate handling if propositions are not part of the sortable chunks
+            if (propositionResults && propositionResults.length > 0) {
+                 propositionsSectionText = "Proposiciones Relevantes:\n";
+                 propositionResults.forEach((prop, index) => {
+                    propositionsSectionText += `Proposición ${index + 1} (ID: ${prop.proposition_id}, ChunkID: ${prop.source_chunk_id}, Similitud: ${prop.similarity.toFixed(3)}):\n${prop.proposition_text}\n---\n`;
+                 });
+            }
 
             let fullChunksSectionText = "";
-            if (processedKnowledgeForContext.length > 0) { /* ... as before, using processedKnowledgeForContext ... */ }
+            if (finalChunksForLLMContext.length > 0) {
+                fullChunksSectionText = "Fragmentos de Documentos Relevantes:\n";
+                finalChunksForLLMContext.forEach((chunk, index) => {
+                    let chunkString = "";
+                    chunkString += `--- Document Start (ID: ${chunk.id}, Score: ${(chunk.reranked_score ?? chunk.hybrid_score ?? 0).toFixed(3)}) ---\n`;
+                    chunkString += `Source: ${chunk.metadata?.source_name || 'N/A'}\n`;
+
+                    if (chunk.metadata?.hierarchy && Array.isArray(chunk.metadata.hierarchy) && chunk.metadata.hierarchy.length > 0) {
+                        chunkString += `Section Path: ${chunk.metadata.hierarchy.map(h => h.text).join(' > ')}\n`;
+                    } else {
+                        chunkString += "Section Path: N/A\n";
+                    }
+
+                    if (chunk.metadata?.page_number) {
+                        chunkString += `Page: ${chunk.metadata.page_number}\n`;
+                    } else {
+                        chunkString += "Page: N/A\n";
+                    }
+
+                    const content = chunk.extracted_content || chunk.content || "No content available";
+                    chunkString += `Content: ${content}\n`;
+                    chunkString += `--- Document End (ID: ${chunk.id}) ---\n\n`;
+                    fullChunksSectionText += chunkString;
+
+                    if (index === 0) { // Log only the first formatted chunk for debugging
+                        logger.debug(`(ChatCtrl) [Context Formatting] Example of first formatted chunk string:\n${chunkString}`);
+                    }
+                });
+            }
 
             let ragContext = propositionsSectionText + fullChunksSectionText;
-            if (!ragContext) { ragContext = "(No se encontró contexto relevante o procesado para esta pregunta)"; }
+            if (!ragContext.trim() && !(propositionsSectionText.trim())) { // Check if both are empty or just whitespace
+                 ragContext = "(No se encontró contexto relevante o procesado para esta pregunta)";
+            } else if (!fullChunksSectionText.trim() && propositionsSectionText.trim()) {
+                ragContext = propositionsSectionText + "\n(No se encontraron fragmentos de documentos adicionales relevantes dentro del límite de contexto)";
+            } else if (fullChunksSectionText.trim() && !propositionsSectionText.trim()) {
+                ragContext = fullChunksSectionText; // Only chunks, no specific message needed
+            }
+
 
             let mutableConversationHistory = [...conversationHistory];
             let mutableRagContext = ragContext;
-            const systemPromptBase = `Eres Zoe, el asistente virtual IA especializado... (full prompt as defined before, including ambiguity handling instructions if desired)`;
-            let finalSystemPromptContent = systemPromptBase  (/* ... context string construction ... */);
-            // ... (Token counting and truncation logic as before) ...
+            // const systemPromptBase = `Eres Zoe, el asistente virtual IA especializado...`; // Already defined above for token calculation
+            let finalSystemPromptContent = `${systemPromptBase}\n\nHistorial de Conversación Previa:\n${formattedHistoryForTokenCalc}\n\nContexto de la base de conocimiento:\n${mutableRagContext}`;
+
+            // Simplified token counting and truncation logic (the detailed selection is done above)
+            // The primary goal now is to ensure the assembled prompt respects the absolute model limits,
+            // though the context selection should have already managed this for the RAG part.
+            let finalSystemPromptTokens = encode(finalSystemPromptContent).length;
+            logger.info(`(ChatCtrl) [Prompt Assembly] Final assembled system prompt tokens (before last-resort truncation): ${finalSystemPromptTokens}`);
+            const maxSystemPromptTokens = MAX_CONTEXT_TOKENS_FOR_LLM * 0.8; // Example: 80% of total for system prompt with context
+
+            if (finalSystemPromptTokens > maxSystemPromptTokens) {
+                logger.warn(`(ChatCtrl) Truncating finalSystemPromptContent as it still exceeds ${maxSystemPromptTokens} tokens after context selection. Original: ${finalSystemPromptTokens}`);
+                // This truncation should ideally not be hit often if context selection is effective
+                const excessTokens = finalSystemPromptTokens - maxSystemPromptTokens;
+                // Simple truncation of ragContext part for now. More sophisticated truncation might be needed.
+                const ragContextTokens = encode(mutableRagContext).length;
+                if (ragContextTokens > excessTokens) {
+                    const charsToKeep = Math.floor(mutableRagContext.length * ( (ragContextTokens - excessTokens) / ragContextTokens ) * 0.9); // 0.9 for safety
+                    mutableRagContext = mutableRagContext.substring(0, charsToKeep) + "... (contexto truncado)";
+                    finalSystemPromptContent = `${systemPromptBase}\n\nHistorial de Conversación Previa:\n${formattedHistoryForTokenCalc}\n\nContexto de la base de conocimiento:\n${mutableRagContext}`;
+                    finalSystemPromptTokens = encode(finalSystemPromptContent).length;
+                    logger.warn(`(ChatCtrl) Truncated ragContext. New finalSystemPromptTokens: ${finalSystemPromptTokens}`);
+                } else {
+                    logger.warn(`(ChatCtrl) Cannot effectively truncate ragContext to fit. It's smaller than excess. Prompt might be too large due to history/base.`);
+                    // Consider truncating history if this happens
+                }
+            }
+
 
             const messagesForAPI = [{ role: "system", content: finalSystemPromptContent }, ...mutableConversationHistory, { role: "user", content: effectiveQuery }]; // Use effectiveQuery for final LLM call
             let botReplyText = await getChatCompletion(messagesForAPI, CHAT_MODEL, CHAT_TEMPERATURE);
