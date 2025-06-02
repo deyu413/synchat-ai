@@ -27,7 +27,9 @@
     "multer": "2.0.0",
     "openai": "^4.95.0",
     "pdf-parse": "^1.1.1",
-    "stripe": "^15.8.0"
+    "stripe": "^15.8.0",
+    "puppeteer-core": "~24.3.0",
+    "@sparticuz/chromium": "~133.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.9",
