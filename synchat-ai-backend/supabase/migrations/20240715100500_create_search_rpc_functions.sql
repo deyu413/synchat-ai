@@ -10,13 +10,21 @@ CREATE OR REPLACE FUNCTION public.vector_search(
     query_embedding VECTOR(1536),
     match_threshold FLOAT,
     match_count INT,
-    client_id_param UUID
+    client_id_param UUID,
+    ivfflat_probes_param INT DEFAULT 10 -- New parameter
 )
 RETURNS TABLE(id BIGINT, content TEXT, metadata JSONB, similarity FLOAT)
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    EXECUTE 'SET LOCAL ivfflat.probes = 5';
+    -- For IVFFlat: probes determine how many lists are searched.
+    -- This value should be tuned based on the 'lists' parameter of the IVFFlat index.
+    -- A common starting point is sqrt(lists). E.g., if lists = 100, probes = 10. If lists = 400, probes = 20.
+    -- Higher values increase recall but decrease speed.
+    EXECUTE 'SET LOCAL ivfflat.probes = ' || ivfflat_probes_param::TEXT;
+
+    -- For HNSW (if used as the index): SET LOCAL hnsw.ef_search = <value>; -- Default is 40. Higher is more accurate but slower.
+
     RETURN QUERY
     SELECT
         kb.id,
@@ -34,8 +42,9 @@ BEGIN
 END;
 $$;
 
-COMMENT ON FUNCTION public.vector_search(VECTOR(1536), FLOAT, INT, UUID)
-IS 'Performs a vector similarity search on the knowledge_base table using cosine similarity (1 - cosine_distance). Filters by client_id and a similarity threshold, limiting the number of results.';
+-- Update the comment to match the new signature
+COMMENT ON FUNCTION public.vector_search(VECTOR(1536), FLOAT, INT, UUID, INT) -- Added INT for the new param
+IS 'Performs vector similarity search using the idx_knowledge_base_embedding index. Allows tuning of ivfflat.probes via parameter.';
 
 
 -- Function for Full-Text Search with Ranking
