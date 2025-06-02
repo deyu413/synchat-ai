@@ -30,7 +30,7 @@
     "openai": "^4.95.0",
     "pdf-image": "^2.0.0",
     "pdf-parse": "^1.1.1",
-    "pdf-table-extractor": "^1.1.2",
+    "pdf-table-extractor": "^1.0.3",
     "puppeteer-core": "~24.3.0",
     "stripe": "^15.8.0",
     "tesseract.js": "^5.1.0",
