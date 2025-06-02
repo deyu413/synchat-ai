@@ -685,23 +685,44 @@ Classification:`;
     if (ftsSubError) { logger.error(`(DB Service) FTS error for query "${ftsQueryString.substring(0,50)}..." (based on loopCurrentQuery: "${loopCurrentQuery.substring(0,50)}..."):`, ftsSubError.message); }
             else if (ftsSubData) {
                 aggregatedFtsResults.push(...ftsSubData);
-        if (returnPipelineDetails) currentQueryPipelineDetailsRef.ftsResults.push({ retrievedForQuery: ftsQueryString, results: ftsSubData.map(r => ({ id: r.id, contentSnippet: r.content?.substring(0,100)+'...', metadata: r.metadata, score: r.rank })) });
+        if (returnPipelineDetails) currentQueryPipelineDetailsRef.ftsResults.push({ retrievedForQuery: ftsQueryString, results: ftsSubData.map(r => ({ id: r.id, contentSnippet: r.content?.substring(0,100)+'...', metadata: r.metadata, score: r.rank, highlighted_content: r.highlighted_content })) });
             }
         }
 
         const uniqueVectorResults = {}; /* ... as before ... */ aggregatedVectorResults.forEach(row => { if (!row.id || (row.similarity && row.similarity < finalVectorMatchThreshold)) return; const id = String(row.id); if (!uniqueVectorResults[id] || row.similarity > uniqueVectorResults[id].similarity) { uniqueVectorResults[id] = row; } });
         const vectorResults = Object.values(uniqueVectorResults);
-        const ftsResults = aggregatedFtsResults;
+        const ftsResults = aggregatedFtsResults; // ftsResults now contains highlighted_content from RPC
         if (returnPipelineDetails) {
             pipelineDetails.aggregatedResults = {
                 uniqueVectorResultsPreview: vectorResults.slice(0,50).map(r => ({id: r.id, score: r.similarity, contentSnippet: r.content?.substring(0,100)+'...'})),
-                uniqueFtsResultsPreview: ftsResults.slice(0,50).map(r => ({id: r.id, score: r.rank, contentSnippet: r.content?.substring(0,100)+'...'}))
+                uniqueFtsResultsPreview: ftsResults.slice(0,50).map(r => ({id: r.id, score: r.rank, contentSnippet: r.content?.substring(0,100)+'...', highlighted_content: r.highlighted_content}))
             };
         }
 
-        const combinedResults = {}; /* ... as before ... */        vectorResults.forEach(row => { if (!row.id || (row.similarity && row.similarity < finalVectorMatchThreshold)) return; combinedResults[String(row.id)] = { ...row, vector_similarity: row.similarity || 0, fts_score: 0 }; }); ftsResults.forEach(row => { if (!row.id) return; const id = String(row.id); const ftsScore = row.rank || 0; if (!combinedResults[id]) { combinedResults[id] = { ...row, vector_similarity: 0, fts_score: ftsScore }; } else { combinedResults[id].fts_score = Math.max(combinedResults[id].fts_score || 0, ftsScore);  if (!combinedResults[id].content && row.content) combinedResults[id].content = row.content; if (!combinedResults[id].metadata && row.metadata) combinedResults[id].metadata = row.metadata; } });
+        const combinedResults = {};
+        vectorResults.forEach(row => {
+            if (!row.id || (row.similarity && row.similarity < finalVectorMatchThreshold)) return;
+            combinedResults[String(row.id)] = { ...row, vector_similarity: row.similarity || 0, fts_score: 0, highlighted_content: null }; // Initialize highlighted_content
+        });
+        ftsResults.forEach(row => {
+            if (!row.id) return;
+            const id = String(row.id);
+            const ftsScore = row.rank || 0;
+            if (!combinedResults[id]) {
+                // Item only in FTS results, add it with its highlighted_content
+                combinedResults[id] = { ...row, vector_similarity: 0, fts_score: ftsScore, highlighted_content: row.highlighted_content };
+            } else {
+                // Item already exists (from vector search), update FTS score and add highlighted_content
+                combinedResults[id].fts_score = Math.max(combinedResults[id].fts_score || 0, ftsScore);
+                combinedResults[id].highlighted_content = row.highlighted_content; // Add/overwrite highlighted_content
+                // Ensure other properties from FTS row are preferred if they were missing from vector row
+                if (!combinedResults[id].content && row.content) combinedResults[id].content = row.content;
+                if (!combinedResults[id].metadata && row.metadata) combinedResults[id].metadata = row.metadata;
+            }
+        });
+
     let rankedResults = Object.values(combinedResults).filter(item => item.id && item.content).filter(item => !((item.fts_score || 0) === 0 && (item.vector_similarity || 0) < finalVectorMatchThreshold)).map(item => ({ ...item, hybrid_score: ((item.vector_similarity || 0) * adjustedVectorWeight) + ((item.fts_score || 0) * adjustedFtsWeight) }));
-        if (returnPipelineDetails) pipelineDetails.mergedAndPreRankedResultsPreview = rankedResults.slice(0,50).map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', metadata: item.metadata, initialHybridScore: item.hybrid_score, vectorSimilarity: item.vector_similarity, ftsScore: item.fts_score }));
+        if (returnPipelineDetails) pipelineDetails.mergedAndPreRankedResultsPreview = rankedResults.slice(0,50).map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', metadata: item.metadata, initialHybridScore: item.hybrid_score, vectorSimilarity: item.vector_similarity, ftsScore: item.fts_score, highlighted_content: item.highlighted_content }));
 
         if (rankedResults.length === 0) {
             const emptyReturn = { results: [], propositionResults: [], searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog, predictedCategory };
@@ -839,10 +860,11 @@ Classification:`;
             cross_encoder_score_normalized: r.cross_encoder_score_normalized, // Kept for transparency
             recencyScore: r.recencyScore,
             sourceAuthorityScore: r.sourceAuthorityScore,
-            chunkFeedbackScore: r.chunkFeedbackScore
+            chunkFeedbackScore: r.chunkFeedbackScore,
+            highlighted_content: r.highlighted_content // Add this field
         }));
 
-        if (returnPipelineDetails) pipelineDetails.finalRankedResultsForPlayground = finalResultsMapped.slice(0, 15).map(item => ({ ...item, contentSnippet: item.content?.substring(0,250)+'...' }));
+        if (returnPipelineDetails) pipelineDetails.finalRankedResultsForPlayground = finalResultsMapped.slice(0, 15).map(item => ({ ...item, contentSnippet: item.content?.substring(0,250)+'...' })); // highlighted_content is part of '...item'
 
         let propositionResults = [];
         if (firstProcessedQueryEmbedding) {

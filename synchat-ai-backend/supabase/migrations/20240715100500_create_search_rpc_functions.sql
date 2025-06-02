@@ -54,7 +54,7 @@ CREATE OR REPLACE FUNCTION public.fts_search_with_rank(
     client_id_param UUID,
     language_config REGCONFIG DEFAULT 'pg_catalog.english' -- Allow specifying language, default to english
 )
-RETURNS TABLE(id BIGINT, content TEXT, metadata JSONB, rank REAL)
+RETURNS TABLE(id BIGINT, content TEXT, metadata JSONB, rank REAL, highlighted_content TEXT) -- Added highlighted_content
 LANGUAGE plpgsql
 AS $$
 DECLARE
@@ -68,7 +68,13 @@ BEGIN
         kb.id,
         kb.content,
         kb.metadata,
-        ts_rank_cd(kb.fts, search_query) AS rank
+        ts_rank_cd(kb.fts, search_query) AS rank,
+        ts_headline(
+            language_config, -- Use the function parameter for language configuration
+            kb.content,
+            search_query,    -- Use the generated tsquery variable
+            'StartSel=**,StopSel=**,MaxWords=35,MinWords=15,ShortWord=3,HighlightAll=FALSE'
+        ) AS highlighted_content
     FROM
         public.knowledge_base kb
     WHERE
