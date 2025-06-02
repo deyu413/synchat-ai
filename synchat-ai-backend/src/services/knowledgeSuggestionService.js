@@ -1,6 +1,6 @@
 // src/services/knowledgeSuggestionService.js
 import { supabase } from './supabaseClient.js';
-import { getEmbedding, getChatCompletion } from './openaiService.js'; // Assuming getEmbedding might be used for future clustering
+import { getChatCompletion } from './openaiService.js'; // Assuming getEmbedding might be used for future clustering
 import * as db from './databaseService.js'; // For fetching conversation data, analytics
 
 const TEXT_EMBEDDING_MODEL = "text-embedding-3-small";
