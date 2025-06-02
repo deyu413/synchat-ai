@@ -3,19 +3,17 @@
   "builds": [
     {
       "src": "server.js",
-      "use": "@vercel/node"
+      "use": "@vercel/node",
+      "config": {
+        "maxDuration": 30,
+        "memory": 1600
+      }
     }
   ],
   "routes": [
     {
-      "src": "/(.*)", 
+      "src": "/(.*)",
       "dest": "server.js"
     }
-  ],
-  "functions": {
-    "server.js": {
-      "maxDuration": 30,
-      "memory": 1600
-    }
-  }
+  ]
 }
