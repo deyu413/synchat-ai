@@ -1,7 +1,8 @@
 // src/services/ingestionService.js
 import 'dotenv/config';
 import axios from 'axios';
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 import { load } from 'cheerio';
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
@@ -1089,7 +1090,13 @@ export async function ingestSourceById(sourceId, clientId) {
 
             // --- Puppeteer logic start ---
             console.log(`(Ingestion Service) Fetching URL with Puppeteer: ${urlToIngest}`);
-            const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] }); // Added args for typical CI environments
+            const browser = await puppeteer.launch({
+            args: chromium.args,
+            defaultViewport: chromium.defaultViewport,
+            executablePath: await chromium.executablePath(),
+            headless: chromium.headless,
+            ignoreHTTPSErrors: true, // Maintain if it was part of original context or review if needed. The provided file has it.
+        }); // Added args for typical CI environments
             const page = await browser.newPage();
             await page.setUserAgent(USER_AGENT);
             await page.goto(urlToIngest, { waitUntil: 'networkidle2', timeout: 30000 });
