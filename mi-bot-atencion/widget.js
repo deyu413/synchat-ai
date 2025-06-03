@@ -125,7 +125,44 @@ async function loadI18nStrings() {
     let conversationId = sessionStorage.getItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`);
     let isChatOpen = false;
 
-    const widgetCSS = `
+    const essentialCSS = `
+    #synchat-trigger {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        z-index: 9999;
+        cursor: pointer;
+        /* Other styles like width, height, background for the trigger button */
+    }
+    #synchat-window {
+        position: fixed;
+        bottom: 80px; /* Or adjusted based on trigger size */
+        right: 20px;
+        width: 350px;
+        max-height: 500px;
+        display: none; /* Initially hidden */
+        z-index: 10000;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        border-radius: 8px;
+        overflow: hidden; /* To contain children like header, messages, input */
+        background-color: #fff; /* Assuming a white background */
+        display: flex; /* Use flex to structure header, messages, input vertically */
+        flex-direction: column;
+    }
+    /* Basic structure for children if not already present or to ensure they work with flex */
+    .synchat-header {
+        /* flex-shrink: 0; */ /* Prevent header from shrinking */
+    }
+    .synchat-messages {
+        flex-grow: 1; /* Allow messages area to take available space */
+        overflow-y: auto; /* Scroll for messages */
+    }
+    .synchat-input-area {
+        /* flex-shrink: 0; */ /* Prevent input area from shrinking */
+    }
+    `;
+
+    const originalWidgetCSS = `
         /* ... (existing CSS as before, with addition for quick replies) ... */
         .synchat-trigger, .synchat-window, .synchat-header, .synchat-messages, .synchat-input-area, #synchat-input, .synchat-send-btn, .synchat-message, .message-content, #requestHumanBtn, .synchat-quick-reply-options button {
             box-sizing: border-box;
@@ -153,6 +190,8 @@ async function loadI18nStrings() {
             background-color: var(--synchat-accent-hover);
         }
     `;
+
+    const widgetCSS = essentialCSS + originalWidgetCSS;
 
     function clearQuickReplyOptions() {
         const existingOptionsContainer = document.getElementById('synchat-quick-reply-container');
