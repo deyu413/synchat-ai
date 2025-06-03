@@ -91,10 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.error('Error al cargar la configuración:', response.status, errorData.message || response.statusText);
                 // Example of updating a status UI, assuming a function like this exists or a div for messages
                 // updateStatusUIMessage(`Error al cargar configuración: ${errorData.message || response.statusText}`, 'error');
-                if (configMessageDiv) { // Re-use configMessageDiv for this error too
-                    configMessageDiv.textContent = `Error al cargar configuración: ${errorData.message || response.statusText}`;
-                    configMessageDiv.style.color = 'red';
-                }
+                displayMessage(configMessageDiv, `Error al cargar configuración: ${errorData.message || response.statusText}`, false);
                 return;
             }
 
@@ -121,26 +118,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 if(botKeyPhrasesToUseTextarea) botKeyPhrasesToUseTextarea.value = '';
                 if(botKeyPhrasesToAvoidTextarea) botKeyPhrasesToAvoidTextarea.value = '';
             }
-             if (configMessageDiv) { // Clear any previous messages on successful load
-                // configMessageDiv.textContent = 'Configuración cargada.'; // Optional success message
-                // configMessageDiv.style.color = 'green';
-                // setTimeout(() => { if(configMessageDiv) configMessageDiv.textContent = ''; }, 3000);
-            }
+            // No explicit success message to UI on load, which is fine.
+            // displayMessage(configMessageDiv, 'Configuración cargada.', true); // Optional
 
         } catch (error) {
             console.error('Excepción al cargar la configuración:', error);
-            // updateStatusUIMessage('Se produjo una excepción al cargar la configuración.', 'error');
-            if (configMessageDiv) {
-                configMessageDiv.textContent = 'Excepción al cargar la configuración. Revise la consola.';
-                configMessageDiv.style.color = 'red';
-            }
+            displayMessage(errorMessageDashboard, `Excepción al cargar la configuración: ${error.message}`, false);
         }
     }
 
     if (configForm) {
         configForm.addEventListener('submit', async (event) => {
             event.preventDefault();
-            if (configMessageDiv) configMessageDiv.textContent = '';
+            // Clear previous messages by not calling displayMessage or setting textContent to ''
+            if (configMessageDiv) {
+                 configMessageDiv.style.display = 'none';
+                 configMessageDiv.textContent = '';
+            }
 
             try {
                 const botKeyPhrasesToUseRaw = botKeyPhrasesToUseTextarea.value.split('\n');
@@ -187,29 +181,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
 
                 if (response.ok) {
-                    const result = await response.json();
-                    alert('Configuración guardada con éxito');
-                    if (configMessageDiv) {
-                         configMessageDiv.textContent = 'Configuración guardada con éxito.';
-                         configMessageDiv.style.color = 'green';
-                    }
+                    // const result = await response.json(); // Not used
+                    await response.json();
+                    displayMessage(configMessageDiv, 'Configuración guardada con éxito.', true);
                     // Optionally, refresh parts of the UI or re-fetch config if needed
                 } else {
                     const errorData = await response.json().catch(() => ({ message: 'Error desconocido al procesar la respuesta del servidor.' }));
                     console.error('Error saving config:', response.status, errorData);
-                    alert(`Error al guardar la configuración: ${errorData.message || response.statusText}`);
-                    if (configMessageDiv) {
-                        configMessageDiv.textContent = `Error: ${errorData.message || response.statusText}`;
-                        configMessageDiv.style.color = 'red';
-                    }
+                    displayMessage(configMessageDiv, `Error al guardar la configuración: ${errorData.message || response.statusText}`, false);
                 }
             } catch (error) {
                 console.error('Error en el envío del formulario de configuración:', error);
-                alert('Se produjo un error al enviar la configuración. Revise la consola para más detalles.');
-                 if (configMessageDiv) {
-                        configMessageDiv.textContent = 'Error de red o excepción al guardar.';
-                        configMessageDiv.style.color = 'red';
-                    }
+                displayMessage(configMessageDiv, `Se produjo un error al enviar la configuración: ${error.message}`, false);
             }
         });
     } else {
@@ -260,7 +243,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const API_BASE_URL = window.SYNCHAT_CONFIG?.API_BASE_URL || '';
 
-    const displayMessage = (element, message, isSuccess) => { /* ... */ };
+    const displayMessage = (element, message, isSuccess) => {
+        if (element) {
+            element.textContent = message;
+            // Consider adding a base class and then modifying for success/error
+            // e.g., element.className = 'message-area ' + (isSuccess ? 'success' : 'error');
+            // For now, directly setting className as requested.
+            element.className = isSuccess ? 'success' : 'error'; // Assumes CSS classes 'success' and 'error' exist
+            element.style.display = 'block';
+            // Optional: Clear message after some time
+            setTimeout(() => {
+                if (element) { // Check if element still exists
+                    element.style.display = 'none';
+                    element.textContent = ''; // Clear text
+                    element.className = ''; // Clear class if appropriate or reset to a base class
+                }
+            }, 5000); // Hide after 5 seconds
+        }
+    };
     function safeText(text) { /* ... */ }
 
     // Initialize navigation links for section switching
