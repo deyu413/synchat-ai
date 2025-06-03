@@ -127,6 +127,65 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    async function fetchClientUsageStats(billingCycleId = null) {
+        const aiResolutionsCountEl = document.getElementById('aiResolutionsCount');
+        const totalQueriesCountEl = document.getElementById('totalQueriesCount');
+        const statsLastUpdatedEl = document.getElementById('statsLastUpdated');
+        const usageMessageEl = document.getElementById('usageMessage'); // Assuming displayMessage is available globally or defined before this
+
+        if (!aiResolutionsCountEl || !statsLastUpdatedEl || !totalQueriesCountEl) {
+            console.warn("Usage statistics UI elements not found.");
+            // Optionally use displayMessage if a general error display area for the whole dashboard exists
+            // displayMessage(errorMessageDashboard, "Error interno: Elementos de UI para estadísticas no encontrados.", false);
+            return;
+        }
+
+        aiResolutionsCountEl.textContent = 'Cargando...';
+        totalQueriesCountEl.textContent = 'Cargando...'; // Set to Cargando... initially
+        if (usageMessageEl) usageMessageEl.style.display = 'none';
+
+        const token = localStorage.getItem('synchat_session_token');
+        if (!token) {
+            console.error("Error: No session token found for fetching usage stats.");
+            if (usageMessageEl) displayMessage(usageMessageEl, 'Error de autenticación al cargar estadísticas.', false);
+            aiResolutionsCountEl.textContent = 'Error';
+            totalQueriesCountEl.textContent = 'Error';
+            statsLastUpdatedEl.textContent = new Date().toLocaleString(); // Still update time, but show error in counts
+            return;
+        }
+
+        // Assume API_BASE_URL is defined globally or accessible in this scope
+        let requestUrl = `${API_BASE_URL}/api/client/me/usage/resolutions`;
+        if (billingCycleId) {
+            requestUrl += `?billing_cycle_id=${encodeURIComponent(billingCycleId)}`;
+        }
+
+        try {
+            const response = await fetch(requestUrl, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            const data = await response.json(); // Attempt to parse JSON regardless of response.ok to get error message if available
+
+            if (!response.ok) {
+                throw new Error(data.message || `Error fetching usage stats: ${response.status}`);
+            }
+
+            aiResolutionsCountEl.textContent = data.ai_resolutions_current_month !== undefined ? data.ai_resolutions_current_month : 'Error';
+            // Backend does not return total_queries_current_month, so set to 'N/A'
+            totalQueriesCountEl.textContent = 'N/A';
+            statsLastUpdatedEl.textContent = new Date().toLocaleString();
+            if (usageMessageEl) displayMessage(usageMessageEl, 'Estadísticas actualizadas.', true);
+
+        } catch (error) {
+            console.error("Error fetching client usage stats:", error);
+            aiResolutionsCountEl.textContent = 'Error';
+            totalQueriesCountEl.textContent = 'Error'; // Reflect error for total queries as well
+            statsLastUpdatedEl.textContent = 'Error al cargar';
+            if (usageMessageEl) displayMessage(usageMessageEl, `Error al cargar estadísticas: ${error.message}`, false);
+        }
+    }
+
     if (configForm) {
         configForm.addEventListener('submit', async (event) => {
             event.preventDefault();
@@ -309,6 +368,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (targetSectionId === 'ingest' && typeof loadKnowledgeSources === 'function') {
                             loadKnowledgeSources();
                         }
+                        if (targetSectionId === 'usage' && typeof fetchClientUsageStats === 'function') {
+                            fetchClientUsageStats();
+                        }
                         // Add similar conditions for other sections if they need data loaded on view
                         // For example, if RAG Playground needs initialization:
                         // if (targetSectionId === 'ragPlayground' && typeof initializeRagPlayground === 'function') {
@@ -353,6 +415,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (initialSectionIdToShow === 'ingest' && typeof loadKnowledgeSources === 'function') {
                 loadKnowledgeSources();
             }
+            if (initialSectionIdToShow === 'usage' && typeof fetchClientUsageStats === 'function') {
+                fetchClientUsageStats();
+            }
         } else {
             s.style.display = 'none';
         }
@@ -368,6 +433,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (firstSectionId === 'ingest' && typeof loadKnowledgeSources === 'function') {
             loadKnowledgeSources();
+        }
+        if (firstSectionId === 'usage' && typeof fetchClientUsageStats === 'function') {
+            fetchClientUsageStats();
         }
         // Add more for other sections if needed
     const token = localStorage.getItem('synchat_session_token');
@@ -754,6 +822,22 @@ document.addEventListener('DOMContentLoaded', () => {
         logoutBtn.addEventListener('click', () => {
             logout(); // Call the imported logout function from auth.js
         });
+    }
+
+    const refreshUsageBtn = document.getElementById('refreshUsageBtn');
+    if (refreshUsageBtn) {
+        refreshUsageBtn.addEventListener('click', () => {
+            // Optionally, you might want to provide user feedback that refresh is happening
+            // e.g., by briefly disabling the button or showing a message via displayMessage
+            if (typeof fetchClientUsageStats === 'function') {
+                fetchClientUsageStats();
+            } else {
+                console.error("fetchClientUsageStats function is not defined.");
+                // Optionally, display an error to the user via displayMessage or an alert
+            }
+        });
+    } else {
+        console.warn("Refresh usage button with ID 'refreshUsageBtn' not found.");
     }
 
     // ... (rest of the file, including Playground and Inbox feedback logic, and Monkey patch)
