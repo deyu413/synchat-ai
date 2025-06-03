@@ -5,7 +5,9 @@ let i18nStrings = {}; // To hold loaded strings
 async function loadI18nStrings() {
     // Assuming widget.js is in mi-bot-atencion/ and locales/ is at mi-bot-atencion/locales/
     // Adjust path if widget.js moves relative to locales/
-    const langFilePath = './locales/es.json';
+    const widgetScriptSrc = document.currentScript.src;
+    const widgetBaseUrl = widgetScriptSrc.substring(0, widgetScriptSrc.lastIndexOf('/') + 1);
+    const langFilePath = `${widgetBaseUrl}locales/es.json`; // Assumes locales/ is in the same dir as widget.js
     try {
         const response = await fetch(langFilePath);
         if (!response.ok) {
@@ -88,8 +90,8 @@ async function loadI18nStrings() {
         botName: "SynChat Bot", // Not yet internationalized, as per instructions
         welcomeMessage: getString('widget.defaultWelcomeMessage', "Hello! How can I help you today?"),
         inputPlaceholder: getString('widget.defaultInputPlaceholder', "Escribe tu mensaje..."),
-        triggerLogoUrl: "https://www.synchatai.com/zoe.png",
-        avatarUrl: "https://www.synchatai.com/zoe.png"
+        triggerLogoUrl: "/images/zoe.png",
+        avatarUrl: "/images/zoe.png"
     };
 
     async function fetchWidgetConfiguration(clientId) {
