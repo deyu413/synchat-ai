@@ -295,15 +295,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function loadKnowledgeSources() {
-        if (!knowledgeSourcesList || !loadingSourcesMsg || !token) {
-            console.error("Knowledge source UI elements not found or user not authenticated.");
-            if(loadingSourcesMsg) loadingSourcesMsg.textContent = "Error: no se puede cargar sin autenticación.";
+        const token = localStorage.getItem('synchat_session_token'); // MOVED TO THE TOP
+
+        // Verificar elementos del DOM primero
+        if (!knowledgeSourcesList || !loadingSourcesMsg) {
+            console.error("Error: Elementos UI para lista de fuentes de conocimiento no encontrados en loadKnowledgeSources.");
+            if(loadingSourcesMsg) loadingSourcesMsg.textContent = "Error interno de UI.";
             return;
         }
+
+        // LUEGO verificar el token
+        if (!token) {
+            console.error("Error de autenticación: No se encontró token para loadKnowledgeSources.");
+            if(loadingSourcesMsg) loadingSourcesMsg.textContent = "Error: No autenticado. No se pueden cargar fuentes.";
+            return;
+        }
+
         loadingSourcesMsg.style.display = 'block';
         knowledgeSourcesList.innerHTML = ''; // Clear previous list
         if (knowledgeManagementMessage) knowledgeManagementMessage.style.display = 'none';
-        const token = localStorage.getItem('synchat_session_token');
+        // const token = localStorage.getItem('synchat_session_token'); // This line is removed as token is defined above
 
         try {
             const response = await fetch(`${API_BASE_URL}/api/client/me/knowledge/sources`, {
@@ -584,10 +595,21 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentOpenConversationId = null;
 
     async function loadInboxConversations() {
-        if (!inboxConvList || !inboxLoadingMsg || !token) return;
+        const token = localStorage.getItem('synchat_session_token'); // MOVED TO THE TOP
+
+        if (!inboxConvList || !inboxLoadingMsg) { // Verificar elementos del DOM
+            console.error("Error: Elementos UI para lista de conversaciones del inbox no encontrados.");
+            return;
+        }
+        if (!token) { // LUEGO verificar el token
+            console.error("Error de autenticación: No se encontró token para loadInboxConversations.");
+            if(inboxLoadingMsg) inboxLoadingMsg.textContent = "Error: No autenticado. No se pueden cargar conversaciones.";
+            return;
+        }
+
         inboxLoadingMsg.style.display = 'block';
         inboxConvList.innerHTML = '';
-        const token = localStorage.getItem('synchat_session_token');
+        // const token = localStorage.getItem('synchat_session_token'); // Removed as it's defined above
         const statusFilter = inboxStatusFilter.value;
 
         try {
