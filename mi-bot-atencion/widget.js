@@ -90,8 +90,8 @@ async function loadI18nStrings() {
         botName: "SynChat Bot", // Not yet internationalized, as per instructions
         welcomeMessage: getString('widget.defaultWelcomeMessage', "Hello! How can I help you today?"),
         inputPlaceholder: getString('widget.defaultInputPlaceholder', "Escribe tu mensaje..."),
-        triggerLogoUrl: "/images/zoe.png",
-        avatarUrl: "/images/zoe.png"
+        triggerLogoUrl: "/zoe.png",
+        avatarUrl: "/zoe.png"
     };
 
     async function fetchWidgetConfiguration(clientId) {
