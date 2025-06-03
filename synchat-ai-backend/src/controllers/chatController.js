@@ -496,6 +496,7 @@ export const startConversation = async (req, res, next) => {
         return res.status(400).json({ error: 'clientId has an invalid format.' });
     }
     try {
+        logger.info(`(ChatCtrl) startConversation: effectiveClientId recibido/derivado es: '${effectiveClientId}'`);
         const clientExists = await db.getClientConfig(effectiveClientId); // Changed clientId to effectiveClientId
         if (!clientExists) {
             logger.warn(`(ChatCtrl) Intento de iniciar conversación para cliente inexistente: ${effectiveClientId}`);

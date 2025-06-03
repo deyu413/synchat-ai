@@ -90,8 +90,8 @@ async function loadI18nStrings() {
         botName: "SynChat Bot", // Not yet internationalized, as per instructions
         welcomeMessage: getString('widget.defaultWelcomeMessage', "Hello! How can I help you today?"),
         inputPlaceholder: getString('widget.defaultInputPlaceholder', "Escribe tu mensaje..."),
-        triggerLogoUrl: "/zoe.png",
-        avatarUrl: "/zoe.png"
+        triggerLogoUrl: "/images/zoe.png",
+        avatarUrl: "/images/zoe.png"
     };
 
     async function fetchWidgetConfiguration(clientId) {
@@ -217,9 +217,9 @@ async function loadI18nStrings() {
 
     async function startNewConversation() {
         widgetLogger.log("Iniciando nueva conversación...");
-        clearQuickReplyOptions(); // Clear options on new conversation
+        clearQuickReplyOptions();
         const messagesContainer = document.getElementById('synchat-messages');
-        if(messagesContainer) messagesContainer.innerHTML = '';
+        if(messagesContainer) messagesContainer.innerHTML = ''; // Limpiar mensajes anteriores
         conversationId = null;
         sessionStorage.removeItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`);
 
@@ -230,18 +230,37 @@ async function loadI18nStrings() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ clientId: WIDGET_CONFIG.clientId })
             });
-            if (!response.ok) throw new Error(`Error del servidor al iniciar: ${response.status} - ${await response.text()}`);
+
+            if (!response.ok) {
+                let errorDetail = 'Error desconocido al iniciar.';
+                try {
+                    // Attempt to parse JSON error first
+                    const errorDataJson = await response.json();
+                    errorDetail = errorDataJson.error || errorDataJson.message || `Error del servidor: ${response.status}`;
+                } catch (e) {
+                    // If JSON parsing fails, try to get text, then fallback
+                    errorDetail = `Error del servidor: ${response.status} - ${await response.text().catch(() => 'No se pudo leer el cuerpo del error.')}`;
+                }
+                widgetLogger.error("Error del servidor al iniciar nueva conversación:", errorDetail);
+                addMessageToChat("bot", getString('widget.errorStartChat', "Lo siento, hubo un problema al iniciar el chat. Inténtalo de nuevo más tarde.") + ` (Detalle: ${errorDetail})`, "system");
+                return; // Salir de la función si no se pudo iniciar la conversación.
+            }
+
             const data = await response.json();
-            if (data.conversationId) {
+            if (data && data.conversationId) {
                 conversationId = data.conversationId;
                 sessionStorage.setItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`, conversationId);
-                addMessageToChat("bot", WIDGET_CONFIG.welcomeMessage);
-                 const input = document.getElementById('synchat-input');
-                 if(input) input.focus();
-            } else { throw new Error("No se recibió conversationId del backend."); }
-        } catch (error) {
-            widgetLogger.error("Error al iniciar conversación:", error);
-            addMessageToChat("bot", getString('widget.errorStartChat', "Lo siento, hubo un problema al iniciar el chat. Inténtalo de nuevo más tarde."), "system");
+                addMessageToChat("bot", WIDGET_CONFIG.welcomeMessage); // Mostrar mensaje de bienvenida
+                const input = document.getElementById('synchat-input');
+                if(input) input.focus();
+            } else {
+                widgetLogger.error("No se recibió conversationId del backend tras la solicitud /start.");
+                addMessageToChat("bot", getString('widget.errorCriticalSession', "Error crítico: No se pudo establecer una sesión de chat."), "system");
+                // No return here, as the chat window is already open and should show this message.
+            }
+        } catch (error) { // Captura errores de red (Failed to fetch)
+            widgetLogger.error("Excepción al iniciar conversación:", error.message);
+            addMessageToChat("bot", getString('widget.errorStartChat', "Lo siento, hubo un problema al iniciar el chat. Inténtalo de nuevo más tarde.") + ` (Detalle: ${error.message})`, "system");
         }
     }
 

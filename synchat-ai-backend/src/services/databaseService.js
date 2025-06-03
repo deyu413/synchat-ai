@@ -116,7 +116,42 @@ const questionCache = new Map();
 export function getCache(key) { /* ... */ }
 export function setCache(key, value) { /* ... */ }
 // (Existing cache functions as before)
-export const getClientConfig = async (clientId) => { /* ... */ };
+export const getClientConfig = async (clientId) => {
+    try {
+        logger.debug(`(DB Service) getClientConfig: Buscando cliente con ID: ${clientId}`);
+        const { data, error } = await supabase
+            .from('client_config')
+            .select(`
+                client_id,
+                widget_config,
+                knowledge_source_url,
+                base_prompt_override,
+                created_at,
+                updated_at,
+                subscription_id,
+                subscription_status,
+                billing_cycle_id
+            `)
+            .eq('client_id', clientId)
+            .single();
+
+        if (error) {
+            if (error.code === 'PGRST116') { // PostgREST code for "Matching row not found"
+                logger.warn(`(DB Service) getClientConfig: Cliente no encontrado con ID: ${clientId}. Error: ${error.message}`);
+                return null; // Or handle as per application logic, e.g., throw new Error('Client not found');
+            }
+            // Log other types of errors
+            logger.error(`(DB Service) Error fetching client config for ID ${clientId}:`, error);
+            throw error; // Re-throw other errors to be handled by the caller
+        }
+        logger.debug(`(DB Service) getClientConfig: Datos encontrados para cliente ${clientId}: ${data ? 'Sí' : 'No'}`);
+        return data;
+    } catch (err) {
+        // Catch any other unexpected errors (network issues, etc.)
+        logger.error(`(DB Service) Unexpected exception fetching client config for ID ${clientId}:`, err);
+        throw err; // Re-throw to allow higher-level error handling
+    }
+};
 export const getAllActiveClientIds = async () => { /* ... */ }; // Keep only one definition
 // Note: There are two getAllActiveClientIds, removing one. The one using subscription_status seems more robust.
 export const getChunkSampleForSource = async (clientId, sourceId, limit = 5) => { /* ... */ };
