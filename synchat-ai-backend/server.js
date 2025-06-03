@@ -22,7 +22,7 @@ let allowedWidgetOrigins;
 if (widgetAllowedOriginsEnv === '*') {
     allowedWidgetOrigins = true; // Allows all origins
 } else if (widgetAllowedOriginsEnv) {
-    allowedWidgetOrigins = widgetAllowedOriginsEnv.split(',').map(origin => origin.trim()).filter(Boolean);
+    allowedWidgetOrigins = widgetAllowedOriginsEnv.split(',').map(origin => origin.trim().replace(/\/$/, '')).filter(Boolean);
 } else {
     allowedWidgetOrigins = []; // Default to no specific widget origins if not set and not '*'
 }
@@ -40,6 +40,7 @@ const corsOptionsDelegate = function (req, callback) {
             corsOptions.origin = true;
         } else if (allowedWidgetOrigins.length > 0 && origin && allowedWidgetOrigins.includes(origin)) {
             // Origin is in the explicit list from WIDGET_ALLOWED_ORIGINS
+            logger.info(`[CORS] Widget Route: Origin ${origin} matched in allowedWidgetOrigins (normalized).`);
             corsOptions.origin = true;
         } else if (allowedWidgetOrigins.length === 0 && process.env.NODE_ENV === 'development') {
             // WIDGET_ALLOWED_ORIGINS is empty/not set, AND it's development mode.
@@ -53,8 +54,11 @@ const corsOptionsDelegate = function (req, callback) {
         // or if it's empty and not in development mode, or if origin is undefined,
         // corsOptions.origin remains false, thus disallowing the origin by default.
     } else { // For non-widget routes (e.g., dashboard /api/client, /api/payments, or general /api/chat)
-        if (origin === frontendDashboardURL) {
-            corsOptions.origin = true; // Allow dashboard origin
+        const normalizedOrigin = origin ? origin.replace(/\/$/, '') : '';
+        const normalizedFrontendDashboardURL = frontendDashboardURL.replace(/\/$/, ''); // frontendDashboardURL is defined outside this function
+        if (normalizedOrigin === normalizedFrontendDashboardURL) {
+            logger.info(`[CORS] Dashboard Route: Origin ${origin} (normalized to ${normalizedOrigin}) matched frontendDashboardURL ${frontendDashboardURL} (normalized to ${normalizedFrontendDashboardURL}).`);
+            corsOptions.origin = true;
         }
         // Optional: Add localhost for development if FRONTEND_URL is remote
         else if (process.env.NODE_ENV === 'development' && origin && (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'))) {
