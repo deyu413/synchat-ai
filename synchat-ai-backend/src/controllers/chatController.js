@@ -143,7 +143,7 @@ export const handleChatMessage = async (req, res, next) => {
     }
 
 
-    logger.log(`(ChatCtrl) Mensaje (effectiveQuery) recibido C:${effectiveClientId}, CV:${conversationId}: "${effectiveQuery.substring(0, 100)}..."`); // Changed clientId to effectiveClientId
+    logger.info(`(ChatCtrl) Mensaje (effectiveQuery) recibido C:${effectiveClientId}, CV:${conversationId}: "${effectiveQuery.substring(0, 100)}..."`); // Changed clientId to effectiveClientId
 
     try {
         const cacheKey = `${effectiveClientId}:${conversationId}:${effectiveQuery}`; // Cache based on effective query, Changed clientId to effectiveClientId
@@ -154,7 +154,7 @@ export const handleChatMessage = async (req, res, next) => {
             db.saveMessage(conversationId, 'bot', cachedReply).then(() => db.incrementAnalyticMessageCount(conversationId, 'bot')).catch(err => logger.error("(ChatCtrl) Analytics save bot msg err (cache):", err));
             return res.status(200).json({ reply: cachedReply });
         }
-        logger.log("(ChatCtrl) No encontrado en caché. Procesando...");
+        logger.debug("(ChatCtrl) No encontrado en caché. Procesando...");
 
         const conversationHistory = await db.getConversationHistory(conversationId);
         // Use effectiveQuery for the search
@@ -187,7 +187,7 @@ export const handleChatMessage = async (req, res, next) => {
                     const ambiguityUserPrompt = `User Query: "${userQueryStringForAmbiguity}"\n\nRetrieved Context Snippets:\n${contextSnippets.join('\n')}\n\nAnaliza la User Query y los Retrieved Context Snippets y responde únicamente en el formato JSON especificado en las instrucciones del sistema.`;
                     const ambiguityMessages = [ { role: "system", content: ambiguitySystemPrompt }, { role: "user", content: ambiguityUserPrompt }];
 
-                    logger.log(`(ChatCtrl) Calling LLM for ambiguity detection for CV:${conversationId}`);
+                    logger.debug(`(ChatCtrl) Calling LLM for ambiguity detection for CV:${conversationId}`);
                     const ambiguityResponseString = await getChatCompletion(ambiguityMessages, AMBIGUITY_LLM_MODEL, AMBIGUITY_LLM_TEMP, AMBIGUITY_LLM_MAX_TOKENS_OUTPUT); // Assuming openaiService.getChatCompletion was a typo and it's the imported getChatCompletion
 
                     if (ambiguityResponseString) {
@@ -197,17 +197,17 @@ export const handleChatMessage = async (req, res, next) => {
                                 isAmbiguous = parsedResponse.is_ambiguous;
                                 clarificationQuestion = parsedResponse.clarification_question || null;
                                 clarificationOptions = Array.isArray(parsedResponse.options) ? parsedResponse.options : [];
-                                if (isAmbiguous) { logger.log(`(ChatCtrl) Query deemed AMBIGUOUS for CV:${conversationId}. Question: '${clarificationQuestion}', Options: ${clarificationOptions.join(', ')}`); }
-                                else { logger.log(`(ChatCtrl) Query deemed NOT AMBIGUOUS for CV:${conversationId}.`); }
+                                if (isAmbiguous) { logger.info(`(ChatCtrl) Query deemed AMBIGUOUS for CV:${conversationId}. Question: '${clarificationQuestion}', Options: ${clarificationOptions.join(', ')}`); }
+                                else { logger.info(`(ChatCtrl) Query deemed NOT AMBIGUOUS for CV:${conversationId}.`); }
                             } else { logger.warn("(ChatCtrl) Ambiguity LLM response invalid JSON or missing fields:", ambiguityResponseString); }
                         } catch (parseError) { logger.error("(ChatCtrl) Error parsing ambiguity LLM JSON:", parseError, "Raw:", ambiguityResponseString); }
                     } else { logger.warn("(ChatCtrl) Ambiguity LLM call returned empty."); }
-                } else { logger.log("(ChatCtrl) No context snippets for ambiguity detection."); }
+                } else { logger.debug("(ChatCtrl) No context snippets for ambiguity detection."); }
             } catch (error) { logger.error("(ChatCtrl) Error during ambiguity detection LLM call:", error.message); }
         }
 
         if (isAmbiguous && clarificationQuestion) {
-            logger.log(`(ChatCtrl) Responding with clarification request for CV:${conversationId}. Original (or refined if applicable) query was: "${userQueryStringForAmbiguity}"`);
+            logger.info(`(ChatCtrl) Responding with clarification request for CV:${conversationId}. Original (or refined if applicable) query was: "${userQueryStringForAmbiguity}"`);
             // Save user's actual ambiguous message that LED to this clarification
             await db.saveMessage(conversationId, 'user', userMessageInput);
             db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => logger.error("(ChatCtrl) Analytics err (ambig):", err));
@@ -441,7 +441,7 @@ export const handleChatMessage = async (req, res, next) => {
                 const ragLogResult = await db.logRagInteraction(logData);
                 if (ragLogResult && ragLogResult.rag_interaction_log_id) {
                     ragLogId = ragLogResult.rag_interaction_log_id;
-                    logger.log(`(ChatCtrl) RAG Interaction logged with ID: ${ragLogId}`);
+                    logger.info(`(ChatCtrl) RAG Interaction logged with ID: ${ragLogId}`);
                 } else {
                     logger.error("(ChatCtrl) Failed to get rag_interaction_log_id from logRagInteraction result:", ragLogResult);
                 }
@@ -471,7 +471,7 @@ export const handleChatMessage = async (req, res, next) => {
 };
 
 export const startConversation = async (req, res, next) => {
-    logger.log('>>> chatController.js: DENTRO de startConversation');
+    logger.info('>>> chatController.js: DENTRO de startConversation');
     // const { clientId } = req.body; // Removed from here
 
     let effectiveClientId;
@@ -505,7 +505,7 @@ export const startConversation = async (req, res, next) => {
         if (!newConversationId) {
             throw new Error("Failed to create conversation or retrieve its ID.");
         }
-        logger.log(`(ChatCtrl) Conversación iniciada/creada: ${newConversationId} para cliente ${effectiveClientId}`);
+        logger.info(`(ChatCtrl) Conversación iniciada/creada: ${newConversationId} para cliente ${effectiveClientId}`);
 
         // Fetch the full conversation object to get created_at for analytics
         const convDetails = await supabase.from('conversations').select('created_at').eq('conversation_id', newConversationId).single();
