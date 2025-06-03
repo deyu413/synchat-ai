@@ -168,7 +168,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Potentially redirect to login: window.location.href = '/login.html';
                     return;
                 }
-                
+
                 // Determine API_BASE_URL locally as it might not be available if this script runs before API_BASE_URL is defined globally
                 const currentApiBaseUrl = window.SYNCHAT_CONFIG?.API_BASE_URL || '';
                 if (!currentApiBaseUrl) {
