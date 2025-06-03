@@ -1,4 +1,4 @@
-// src/services/knowledgeSuggestionService.js
+[⚠️ Suspicious Content] // src/services/knowledgeSuggestionService.js
 import { supabase } from './supabaseClient.js';
 import { getChatCompletion } from './openaiService.js'; // Assuming getEmbedding might be used for future clustering
 import * as db from './databaseService.js'; // For fetching conversation data, analytics
