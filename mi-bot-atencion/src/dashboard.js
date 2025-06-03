@@ -60,6 +60,165 @@ document.addEventListener('DOMContentLoaded', () => {
     const botKeyPhrasesToAvoidTextarea = document.getElementById('botKeyPhrasesToAvoid');
     const basePromptOverrideTextarea = document.getElementById('basePromptOverride');
 
+    async function fetchClientConfig() {
+        const token = localStorage.getItem('synchat_session_token');
+        if (!token) {
+            console.error('Error de autenticación: No se encontró token.');
+            // Optionally, display this message to the user via an alert or a status div
+            // alert('Error de autenticación. Por favor, inicie sesión de nuevo.');
+            // Consider if redirect to login is appropriate here.
+            return;
+        }
+
+        // Determine API_BASE_URL locally
+        const currentApiBaseUrl = window.SYNCHAT_CONFIG?.API_BASE_URL || '';
+        if (!currentApiBaseUrl) {
+            console.error('Error crítico: La URL base de la API no está configurada.');
+            // alert('Error crítico: La URL base de la API no está configurada. No se puede cargar la configuración.');
+            return;
+        }
+
+        try {
+            const response = await fetch(`${currentApiBaseUrl}/api/client/me/config`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                console.error('Error al cargar la configuración:', response.status, errorData.message || response.statusText);
+                // Example of updating a status UI, assuming a function like this exists or a div for messages
+                // updateStatusUIMessage(`Error al cargar configuración: ${errorData.message || response.statusText}`, 'error');
+                if (configMessageDiv) { // Re-use configMessageDiv for this error too
+                    configMessageDiv.textContent = `Error al cargar configuración: ${errorData.message || response.statusText}`;
+                    configMessageDiv.style.color = 'red';
+                }
+                return;
+            }
+
+            const data = await response.json();
+
+            // Populate general fields
+            if(knowledgeUrlInput) knowledgeUrlInput.value = data.knowledge_source_url || '';
+            if(basePromptOverrideTextarea) basePromptOverrideTextarea.value = data.base_prompt_override || '';
+
+            // Populate widget_config fields
+            if (data.widget_config) {
+                if(botNameInput) botNameInput.value = data.widget_config.botName || '';
+                if(welcomeMessageInput) welcomeMessageInput.value = data.widget_config.welcomeMessage || '';
+                if(botFormalitySelect) botFormalitySelect.value = data.widget_config.botFormality || 'neutral';
+                if(botPersonaDescriptionTextarea) botPersonaDescriptionTextarea.value = data.widget_config.botPersonaDescription || '';
+                if(botKeyPhrasesToUseTextarea) botKeyPhrasesToUseTextarea.value = (data.widget_config.botKeyPhrasesToUse || []).join('\n');
+                if(botKeyPhrasesToAvoidTextarea) botKeyPhrasesToAvoidTextarea.value = (data.widget_config.botKeyPhrasesToAvoid || []).join('\n');
+            } else {
+                // Defaults if widget_config is missing
+                if(botNameInput) botNameInput.value = ''; // Default to empty
+                if(welcomeMessageInput) welcomeMessageInput.value = ''; // Default to empty
+                if(botFormalitySelect) botFormalitySelect.value = 'neutral';
+                if(botPersonaDescriptionTextarea) botPersonaDescriptionTextarea.value = '';
+                if(botKeyPhrasesToUseTextarea) botKeyPhrasesToUseTextarea.value = '';
+                if(botKeyPhrasesToAvoidTextarea) botKeyPhrasesToAvoidTextarea.value = '';
+            }
+             if (configMessageDiv) { // Clear any previous messages on successful load
+                // configMessageDiv.textContent = 'Configuración cargada.'; // Optional success message
+                // configMessageDiv.style.color = 'green';
+                // setTimeout(() => { if(configMessageDiv) configMessageDiv.textContent = ''; }, 3000);
+            }
+
+        } catch (error) {
+            console.error('Excepción al cargar la configuración:', error);
+            // updateStatusUIMessage('Se produjo una excepción al cargar la configuración.', 'error');
+            if (configMessageDiv) {
+                configMessageDiv.textContent = 'Excepción al cargar la configuración. Revise la consola.';
+                configMessageDiv.style.color = 'red';
+            }
+        }
+    }
+
+    if (configForm) {
+        configForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (configMessageDiv) configMessageDiv.textContent = '';
+
+            try {
+                const botKeyPhrasesToUseRaw = botKeyPhrasesToUseTextarea.value.split('\n');
+                const botKeyPhrasesToUse = botKeyPhrasesToUseRaw.map(phrase => phrase.trim()).filter(phrase => phrase !== '');
+
+                const botKeyPhrasesToAvoidRaw = botKeyPhrasesToAvoidTextarea.value.split('\n');
+                const botKeyPhrasesToAvoid = botKeyPhrasesToAvoidRaw.map(phrase => phrase.trim()).filter(phrase => phrase !== '');
+
+                const formData = {
+                    widget_config: {
+                        botName: botNameInput.value,
+                        welcomeMessage: welcomeMessageInput.value,
+                        botFormality: botFormalitySelect.value,
+                        botPersonaDescription: botPersonaDescriptionTextarea.value,
+                        botKeyPhrasesToUse: botKeyPhrasesToUse,
+                        botKeyPhrasesToAvoid: botKeyPhrasesToAvoid
+                    },
+                    knowledge_source_url: knowledgeUrlInput.value, // This might be managed elsewhere if using new KS system
+                    base_prompt_override: basePromptOverrideTextarea.value
+                };
+
+                const token = localStorage.getItem('synchat_session_token'); // Assuming using 'synchat_session_token' as per other parts
+                if (!token) {
+                    alert('Error de autenticación. Por favor, inicie sesión de nuevo.');
+                    // Potentially redirect to login: window.location.href = '/login.html';
+                    return;
+                }
+                
+                // Determine API_BASE_URL locally as it might not be available if this script runs before API_BASE_URL is defined globally
+                const currentApiBaseUrl = window.SYNCHAT_CONFIG?.API_BASE_URL || '';
+                if (!currentApiBaseUrl) {
+                    alert('Error crítico: La URL base de la API no está configurada.');
+                    return;
+                }
+
+
+                const response = await fetch(`${currentApiBaseUrl}/api/client/me/config`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    alert('Configuración guardada con éxito');
+                    if (configMessageDiv) {
+                         configMessageDiv.textContent = 'Configuración guardada con éxito.';
+                         configMessageDiv.style.color = 'green';
+                    }
+                    // Optionally, refresh parts of the UI or re-fetch config if needed
+                } else {
+                    const errorData = await response.json().catch(() => ({ message: 'Error desconocido al procesar la respuesta del servidor.' }));
+                    console.error('Error saving config:', response.status, errorData);
+                    alert(`Error al guardar la configuración: ${errorData.message || response.statusText}`);
+                    if (configMessageDiv) {
+                        configMessageDiv.textContent = `Error: ${errorData.message || response.statusText}`;
+                        configMessageDiv.style.color = 'red';
+                    }
+                }
+            } catch (error) {
+                console.error('Error en el envío del formulario de configuración:', error);
+                alert('Se produjo un error al enviar la configuración. Revise la consola para más detalles.');
+                 if (configMessageDiv) {
+                        configMessageDiv.textContent = 'Error de red o excepción al guardar.';
+                        configMessageDiv.style.color = 'red';
+                    }
+            }
+        });
+    } else {
+        console.error("El elemento configForm no fue encontrado en el DOM.");
+    }
+
+    // Call fetchClientConfig to populate the form on page load
+    fetchClientConfig();
+
     // Knowledge Management Elements
     const knowledgeFileUpload = document.getElementById('knowledgeFileUpload');
     const uploadFileBtn = document.getElementById('uploadFileBtn');
