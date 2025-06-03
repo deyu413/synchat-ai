@@ -41,7 +41,5 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_suggestions_client_id_status ON public.
 CREATE INDEX IF NOT EXISTS idx_knowledge_suggestions_client_id_type ON public.knowledge_suggestions(client_id, type);
 CREATE INDEX IF NOT EXISTS idx_knowledge_suggestions_related_chunk_id ON public.knowledge_suggestions(related_chunk_id WHERE related_chunk_id IS NOT NULL);
 
-RAISE NOTICE 'Table public.knowledge_suggestions created with all consolidated columns, FKs, trigger, comments, and indexes.';
-
 -- RLS will be applied in a subsequent, dedicated RLS migration file.
 ALTER TABLE public.knowledge_suggestions ENABLE ROW LEVEL SECURITY;

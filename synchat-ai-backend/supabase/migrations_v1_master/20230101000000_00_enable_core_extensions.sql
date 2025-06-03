@@ -10,5 +10,3 @@ COMMENT ON EXTENSION "vector" IS 'pgvector extension for vector similarity searc
 -- For example, if pgcrypto or others were used:
 -- CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- COMMENT ON EXTENSION "pgcrypto" IS 'Cryptographic functions';
-
-RAISE NOTICE 'Core extensions (uuid-ossp, vector) enabled.';

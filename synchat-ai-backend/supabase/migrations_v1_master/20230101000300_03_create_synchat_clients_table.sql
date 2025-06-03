@@ -38,5 +38,3 @@ CREATE TRIGGER on_synchat_clients_updated
 BEFORE UPDATE ON public.synchat_clients
 FOR EACH ROW
 EXECUTE FUNCTION public.handle_updated_at(); -- Uses the consolidated helper function
-
-RAISE NOTICE 'Table public.synchat_clients created and updated_at trigger applied.';

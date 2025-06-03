@@ -31,8 +31,6 @@ CREATE TRIGGER on_auth_user_created
 
 COMMENT ON TRIGGER on_auth_user_created ON auth.users IS 'When a new user is created in auth.users, this trigger automatically creates a corresponding client entry in public.synchat_clients.';
 
-RAISE NOTICE 'Trigger on_auth_user_created on auth.users and function handle_new_user_to_synchat_client created.';
-
 -- 2. Function and Trigger to update conversation_last_message_at on new message
 CREATE OR REPLACE FUNCTION public.update_conversation_last_message_at()
 RETURNS TRIGGER AS $$
@@ -54,5 +52,3 @@ FOR EACH ROW
 EXECUTE FUNCTION public.update_conversation_last_message_at();
 
 COMMENT ON TRIGGER on_new_message_update_conversation_timestamp ON public.messages IS 'After a new message is inserted, updates the last_message_at timestamp in the parent conversation record.';
-
-RAISE NOTICE 'Trigger on_new_message_update_conversation_timestamp on public.messages and function update_conversation_last_message_at created.';

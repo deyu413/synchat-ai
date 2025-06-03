@@ -25,7 +25,5 @@ CREATE INDEX IF NOT EXISTS idx_message_feedback_message_id ON public.message_fee
 CREATE INDEX IF NOT EXISTS idx_message_feedback_client_id ON public.message_feedback(client_id);
 CREATE INDEX IF NOT EXISTS idx_message_feedback_agent_user_id ON public.message_feedback(agent_user_id WHERE agent_user_id IS NOT NULL);
 
-RAISE NOTICE 'Table public.message_feedback created with comments and indexes.';
-
 -- RLS will be applied in a subsequent, dedicated RLS migration file.
 ALTER TABLE public.message_feedback ENABLE ROW LEVEL SECURITY;

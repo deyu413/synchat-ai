@@ -12,5 +12,3 @@ $$ LANGUAGE plpgsql;
 COMMENT ON FUNCTION public.handle_updated_at() IS 'Updates the updated_at column to the current timestamp upon row modification.';
 
 -- Add other general-purpose helper functions here if identified during analysis.
-
-RAISE NOTICE 'Helper function (handle_updated_at) created.';

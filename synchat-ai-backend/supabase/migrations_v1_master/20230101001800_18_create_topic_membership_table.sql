@@ -21,8 +21,6 @@ CREATE INDEX IF NOT EXISTS idx_topic_membership_topic_id ON public.topic_members
 CREATE INDEX IF NOT EXISTS idx_topic_membership_rag_log_id ON public.topic_membership(rag_interaction_log_id);
 CREATE INDEX IF NOT EXISTS idx_topic_membership_client_id ON public.topic_membership(client_id);
 
-RAISE NOTICE 'Table public.topic_membership created with comments and indexes.';
-
 -- RLS: Typically, this table would be managed by backend services.
 -- Access policies can be defined if specific user roles need to query it directly.
 ALTER TABLE public.topic_membership ENABLE ROW LEVEL SECURITY;

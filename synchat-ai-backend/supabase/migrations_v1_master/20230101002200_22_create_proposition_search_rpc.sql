@@ -32,5 +32,3 @@ $$;
 
 COMMENT ON FUNCTION public.proposition_vector_search(UUID, VECTOR, FLOAT, INT, INT)
 IS 'Performs vector similarity search on the knowledge_propositions table. Allows tuning of ivfflat.probes.';
-
-RAISE NOTICE 'RPC function public.proposition_vector_search created/updated.';

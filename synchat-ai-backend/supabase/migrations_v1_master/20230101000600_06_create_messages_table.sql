@@ -28,5 +28,3 @@ CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON public.messages("timestamp"
 CREATE INDEX IF NOT EXISTS idx_messages_agent_user_id ON public.messages(agent_user_id) WHERE agent_user_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_sentiment ON public.messages(sentiment) WHERE sentiment IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_messages_rag_interaction_ref ON public.messages(rag_interaction_ref) WHERE rag_interaction_ref IS NOT NULL;
-
-RAISE NOTICE 'Table public.messages created with ENUM sender and new reference/analytics columns. FK for rag_interaction_ref will be added in a later migration.';

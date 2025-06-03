@@ -38,7 +38,5 @@ CREATE INDEX IF NOT EXISTS idx_rag_feedback_knowledge_base_chunk_id ON public.ra
 CREATE INDEX IF NOT EXISTS idx_rag_feedback_feedback_type ON public.rag_feedback_log(feedback_type);
 CREATE INDEX IF NOT EXISTS idx_rag_feedback_client_type_created ON public.rag_feedback_log(client_id, feedback_type, created_at DESC);
 
-RAISE NOTICE 'Table public.rag_feedback_log created with all necessary columns, FKs, comments, and indexes.';
-
 -- RLS will be applied in a subsequent, dedicated RLS migration file.
 ALTER TABLE public.rag_feedback_log ENABLE ROW LEVEL SECURITY;

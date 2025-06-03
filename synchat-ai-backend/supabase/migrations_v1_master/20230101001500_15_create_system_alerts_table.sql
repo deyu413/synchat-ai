@@ -23,7 +23,5 @@ CREATE INDEX IF NOT EXISTS idx_system_alerts_severity ON public.system_alerts(se
 CREATE INDEX IF NOT EXISTS idx_system_alerts_created_at ON public.system_alerts(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_system_alerts_function_name ON public.system_alerts(function_name);
 
-RAISE NOTICE 'Table public.system_alerts created with comments and indexes.';
-
 -- RLS will be applied in a subsequent, dedicated RLS migration file.
 ALTER TABLE public.system_alerts ENABLE ROW LEVEL SECURITY;

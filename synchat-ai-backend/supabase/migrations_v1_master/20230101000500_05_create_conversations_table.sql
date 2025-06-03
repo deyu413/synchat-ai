@@ -30,5 +30,3 @@ CREATE INDEX IF NOT EXISTS idx_conversations_client_id ON public.conversations(c
 CREATE INDEX IF NOT EXISTS idx_conversations_status ON public.conversations(status);
 CREATE INDEX IF NOT EXISTS idx_conversations_assigned_agent_id ON public.conversations(assigned_agent_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_last_message_at ON public.conversations(last_message_at DESC NULLS LAST); -- For sorting by recent activity
-
-RAISE NOTICE 'Table public.conversations created with ENUM status and shared inbox fields.';

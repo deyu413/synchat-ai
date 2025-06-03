@@ -41,8 +41,6 @@ CREATE INDEX IF NOT EXISTS idx_rag_logs_topic_analysis_processed_at_null ON publ
 -- This index was idx_rag_logs_client_response_ts in 20250531055946_optimize_analytics_indexes.sql, it is functionally the same as idx_rag_logs_client_id_timestamp
 -- CREATE INDEX IF NOT EXISTS idx_rag_logs_predicted_category ON public.rag_interaction_logs(predicted_query_category) WHERE predicted_query_category IS NOT NULL;
 
-RAISE NOTICE 'Table public.rag_interaction_logs created with all consolidated columns and indexes.';
-
 -- RLS will be applied in a subsequent, dedicated RLS migration file for clarity if needed, or here.
 -- For now, enabling basic RLS and then specific policies will be added later.
 ALTER TABLE public.rag_interaction_logs ENABLE ROW LEVEL SECURITY;

@@ -249,5 +249,3 @@ END;
 $$;
 COMMENT ON FUNCTION public.get_sentiment_distribution_for_client(UUID, TIMESTAMPTZ, TIMESTAMPTZ)
 IS 'Calculates the distribution of message sentiments (positive, negative, neutral) for a given client within a specified date range for user messages.';
-
-RAISE NOTICE 'Core RPC functions created/updated.';

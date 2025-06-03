@@ -33,8 +33,6 @@ CREATE INDEX IF NOT EXISTS idx_kp_original_source_id ON public.knowledge_proposi
 -- For now, a smaller default list count as proposition tables might be smaller than main KB.
 CREATE INDEX IF NOT EXISTS idx_kp_embedding ON public.knowledge_propositions USING ivfflat (embedding public.vector_cosine_ops) WITH (lists = 50);
 
-RAISE NOTICE 'Table public.knowledge_propositions created with comments, FKs, and indexes.';
-
 -- RLS: Typically, this table would be managed by backend services (ingestionService).
 -- Access policies can be defined if specific user roles need to query it directly.
 ALTER TABLE public.knowledge_propositions ENABLE ROW LEVEL SECURITY;

@@ -60,5 +60,3 @@ EXECUTE FUNCTION public.handle_updated_at(); -- Uses the consolidated helper fun
 CREATE INDEX IF NOT EXISTS idx_knowledge_sources_client_id ON public.knowledge_sources(client_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_sources_status ON public.knowledge_sources(status);
 CREATE INDEX IF NOT EXISTS idx_knowledge_sources_category_tags ON public.knowledge_sources USING GIN (category_tags);
-
-RAISE NOTICE 'Table public.knowledge_sources created with all consolidated columns, comments, trigger, and indexes.';

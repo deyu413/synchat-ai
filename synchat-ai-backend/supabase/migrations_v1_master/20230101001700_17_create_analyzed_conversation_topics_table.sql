@@ -35,7 +35,5 @@ CREATE INDEX IF NOT EXISTS idx_analyzed_topics_topic_name ON public.analyzed_con
 CREATE INDEX IF NOT EXISTS idx_analyzed_topics_cluster_id_internal ON public.analyzed_conversation_topics(cluster_id_internal WHERE cluster_id_internal IS NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_analyzed_topics_client_normalized_query ON public.analyzed_conversation_topics(client_id, normalized_query_text WHERE normalized_query_text IS NOT NULL);
 
-RAISE NOTICE 'Table public.analyzed_conversation_topics created with all consolidated columns, comments, and indexes.';
-
 -- RLS will be applied in a subsequent, dedicated RLS migration file.
 ALTER TABLE public.analyzed_conversation_topics ENABLE ROW LEVEL SECURITY;

@@ -52,7 +52,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_analytics_conversation_id ON 
 CREATE INDEX IF NOT EXISTS idx_conversation_analytics_resolution_status ON public.conversation_analytics(resolution_status WHERE resolution_status IS NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_conversation_analytics_tags ON public.conversation_analytics USING GIN (tags) WHERE tags IS NOT NULL;
 
-RAISE NOTICE 'Table public.conversation_analytics created with comments, trigger, and indexes.';
-
 -- RLS will be applied in a subsequent, dedicated RLS migration file.
 ALTER TABLE public.conversation_analytics ENABLE ROW LEVEL SECURITY;

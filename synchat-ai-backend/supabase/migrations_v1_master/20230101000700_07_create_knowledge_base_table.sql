@@ -49,11 +49,6 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_base_fts ON public.knowledge_base USING
 CREATE INDEX IF NOT EXISTS idx_knowledge_base_language_config ON public.knowledge_base(language_config);
 
 -- Configurable Vector Index (IVFFlat or HNSW) - adapted from 20240601235600_configurable_vector_index.sql
-RAISE NOTICE '--- Vector Index for knowledge_base ---';
-RAISE NOTICE 'This section will create the vector index (idx_knowledge_base_embedding).';
-RAISE NOTICE 'Please review the PL/pgSQL block below to ensure total_vectors is set correctly for your dataset.';
-RAISE NOTICE 'You can also choose to comment out the IVFFlat creation and use HNSW if preferred (see commented HNSW section below).';
-
 DO $$
 DECLARE
     total_vectors BIGINT;
@@ -65,17 +60,17 @@ BEGIN
         EXECUTE 'SELECT count(*) FROM public.knowledge_base' INTO total_vectors;
         IF total_vectors IS NULL OR total_vectors = 0 THEN
             total_vectors := placeholder_total_vectors;
-            RAISE NOTICE 'Could not determine actual total_vectors or table is empty/not yet populated for vector index. Using placeholder value: %', total_vectors;
+            -- Using placeholder value
         ELSE
-            RAISE NOTICE 'Successfully determined total_vectors from table for vector index: %', total_vectors;
+            null; -- Successfully determined total_vectors
         END IF;
     EXCEPTION
         WHEN undefined_table THEN
             total_vectors := placeholder_total_vectors;
-            RAISE NOTICE 'knowledge_base table not found when attempting to count for vector index. Using placeholder total_vectors: %', total_vectors;
+            -- knowledge_base table not found, using placeholder
         WHEN OTHERS THEN
             total_vectors := placeholder_total_vectors;
-            RAISE NOTICE 'Error fetching total_vectors for vector index, using placeholder: %. SQLSTATE: %, SQLERRM: %', total_vectors, SQLSTATE, SQLERRM;
+            -- Error fetching total_vectors, using placeholder
     END;
 
     IF total_vectors > 0 AND total_vectors <= 1000000 THEN
@@ -86,19 +81,14 @@ BEGIN
         num_lists := 100;
     END IF;
 
-    RAISE NOTICE 'ACTION REQUIRED FOR VECTOR INDEX: Based on total_vectors = %, calculated num_lists for IVFFlat = %.', total_vectors, num_lists;
-    RAISE NOTICE 'If total_vectors was a placeholder, update it and re-evaluate num_lists for the CREATE INDEX statement.';
-    RAISE NOTICE 'Creating IVFFlat index idx_knowledge_base_embedding with lists = %', num_lists;
-
     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_knowledge_base_embedding ON public.knowledge_base USING ivfflat (embedding public.vector_cosine_ops) WITH (lists = ' || num_lists || ');';
     EXECUTE 'COMMENT ON INDEX public.idx_knowledge_base_embedding IS ''IVFFlat index for vector search. Current lists parameter: ' || num_lists || '. Tuned based on total vector count (N). Example: N/1000 for N<=1M, or sqrt(N) for N>1M.'';';
 
-    RAISE NOTICE 'Successfully created IVFFlat index idx_knowledge_base_embedding with lists = %.', num_lists;
 END $$;
 
 -- HNSW Example (User should uncomment and use this if N is very large and HNSW is preferred):
 /*
-RAISE NOTICE 'HNSW Option: If you intend to use HNSW, ensure the IVFFlat creation DO block above is commented out/modified.';
+-- HNSW Option: If you intend to use HNSW, ensure the IVFFlat creation DO block above is commented out/modified.
 DROP INDEX IF EXISTS public.idx_knowledge_base_embedding; -- Ensure only one index type is active
 CREATE INDEX IF NOT EXISTS idx_knowledge_base_embedding_hnsw -- Consider consistent naming if switching
     ON public.knowledge_base
@@ -106,7 +96,5 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_base_embedding_hnsw -- Consider consist
     WITH (m = 16, ef_construction = 64);
 COMMENT ON INDEX public.idx_knowledge_base_embedding_hnsw -- Adjust name if changed
     IS 'HNSW index for vector search. M and ef_construction are starting parameters and can be tuned.';
-RAISE NOTICE 'Successfully created HNSW index (IF UNCOMMENTED).';
+-- Successfully created HNSW index (IF UNCOMMENTED).
 */
-
-RAISE NOTICE 'Table public.knowledge_base created with FTS (Spanish) and configurable vector index logic.';
