@@ -15,33 +15,10 @@ let lastFetchedTopicDataForSorting = [];
 let currentSourcePerfSort = { key: 'retrieval_count_in_rag_interactions', direction: 'desc' };
 let lastFetchedSourcePerfDataForSorting = [];
 
-// Helper function for sorting arrays of objects
-function sortData(dataArray, key, direction) {
-    if (!Array.isArray(dataArray)) return [];
-    dataArray.sort((a, b) => {
-        let valA = a[key];
-        let valB = b[key];
-
-        if (valA === null || valA === undefined) valA = direction === 'asc' ? Infinity : -Infinity;
-        if (valB === null || valB === undefined) valB = direction === 'asc' ? Infinity : -Infinity;
-
-        if (typeof valA === 'number' && typeof valB === 'number') {
-            // Numeric sort
-        } else if (typeof valA === 'string' && typeof valB === 'string') {
-            valA = valA.toLowerCase();
-            valB = valB.toLowerCase();
-        }
-        // Fallback for mixed types or other scenarios if necessary
-
-        if (valA < valB) return direction === 'asc' ? -1 : 1;
-        if (valA > valB) return direction === 'asc' ? 1 : -1;
-        return 0;
-    });
-    return dataArray;
-}
-
+// document.addEventListener('DOMContentLoaded', () => { // THIS IS MOVED TO THE END OF THE FILE essentially, by re-wrapping
 
 document.addEventListener('DOMContentLoaded', () => {
+    // 1. Define all constants for DOM elements
     const userEmailSpan = document.getElementById('userEmail');
     const logoutBtn = document.getElementById('logoutBtnDashboard');
     const dashboardContent = document.getElementById('dashboardContent');
@@ -135,7 +112,33 @@ document.addEventListener('DOMContentLoaded', () => {
     const onboardingMessageSection = document.getElementById('onboardingMessageSection');
     const dismissOnboardingBtn = document.getElementById('dismissOnboardingBtn');
 
+    // 2. Define API_BASE_URL
     const API_BASE_URL = window.SYNCHAT_CONFIG?.API_BASE_URL || '';
+
+    // 3. Define all helper functions
+    function sortData(dataArray, key, direction) {
+        if (!Array.isArray(dataArray)) return [];
+        dataArray.sort((a, b) => {
+            let valA = a[key];
+            let valB = b[key];
+
+            if (valA === null || valA === undefined) valA = direction === 'asc' ? Infinity : -Infinity;
+            if (valB === null || valB === undefined) valB = direction === 'asc' ? Infinity : -Infinity;
+
+            if (typeof valA === 'number' && typeof valB === 'number') {
+                // Numeric sort
+            } else if (typeof valA === 'string' && typeof valB === 'string') {
+                valA = valA.toLowerCase();
+                valB = valB.toLowerCase();
+            }
+            // Fallback for mixed types or other scenarios if necessary
+
+            if (valA < valB) return direction === 'asc' ? -1 : 1;
+            if (valA > valB) return direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+        return dataArray;
+    }
 
     const displayMessage = (element, message, isSuccess) => {
         if (element) {
@@ -161,6 +164,34 @@ document.addEventListener('DOMContentLoaded', () => {
         return tempEl.innerHTML;
     }
 
+    function getPeriodDates(periodValue) {
+        const endDate = new Date();
+        let startDate = new Date();
+        switch (periodValue) {
+            case '7d':
+                startDate.setDate(endDate.getDate() - 7);
+                break;
+            case '30d':
+                startDate.setDate(endDate.getDate() - 30);
+                break;
+            case '90d':
+                startDate.setDate(endDate.getDate() - 90);
+                break;
+            case 'eom': // End of Month
+                startDate = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+                break;
+            case 'som': // Start of Month (actually means previous month)
+                startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 1, 1);
+                endDate.setDate(0); // Last day of previous month
+                break;
+            default: // Default to 30 days
+                startDate.setDate(endDate.getDate() - 30);
+        }
+        return {
+            startDate: startDate.toISOString().split('T')[0],
+            endDate: endDate.toISOString().split('T')[0]
+        };
+    }
 
     // Function to show onboarding message if not dismissed
     function showOnboardingMessage() {
@@ -175,12 +206,7 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('synchat_onboarding_dismissed', 'true');
     }
 
-    if (dismissOnboardingBtn) {
-        dismissOnboardingBtn.addEventListener('click', dismissOnboarding);
-    }
-
-    showOnboardingMessage(); // Check and show on load
-
+    // 4. Define all main asynchronous functions
     async function fetchClientConfig() {
         const token = localStorage.getItem('synchat_session_token');
         if (!token) {
@@ -295,15 +321,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function loadKnowledgeSources() {
-        if (!knowledgeSourcesList || !loadingSourcesMsg || !token) {
-            console.error("Knowledge source UI elements not found or user not authenticated.");
-            if(loadingSourcesMsg) loadingSourcesMsg.textContent = "Error: no se puede cargar sin autenticación.";
+        const token = localStorage.getItem('synchat_session_token'); // MOVED TO THE TOP
+
+        // Verificar elementos del DOM primero
+        if (!knowledgeSourcesList || !loadingSourcesMsg) {
+            console.error("Error: Elementos UI para lista de fuentes de conocimiento no encontrados en loadKnowledgeSources.");
+            if(loadingSourcesMsg) loadingSourcesMsg.textContent = "Error interno de UI.";
             return;
         }
+
+        // LUEGO verificar el token
+        if (!token) {
+            console.error("Error de autenticación: No se encontró token para loadKnowledgeSources.");
+            if(loadingSourcesMsg) loadingSourcesMsg.textContent = "Error: No autenticado. No se pueden cargar fuentes.";
+            return;
+        }
+
         loadingSourcesMsg.style.display = 'block';
         knowledgeSourcesList.innerHTML = ''; // Clear previous list
         if (knowledgeManagementMessage) knowledgeManagementMessage.style.display = 'none';
-        const token = localStorage.getItem('synchat_session_token');
+        // const token = localStorage.getItem('synchat_session_token'); // This line is removed as token is defined above
 
         try {
             const response = await fetch(`${API_BASE_URL}/api/client/me/knowledge/sources`, {
@@ -584,10 +621,21 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentOpenConversationId = null;
 
     async function loadInboxConversations() {
-        if (!inboxConvList || !inboxLoadingMsg || !token) return;
+        const token = localStorage.getItem('synchat_session_token'); // MOVED TO THE TOP
+
+        if (!inboxConvList || !inboxLoadingMsg) { // Verificar elementos del DOM
+            console.error("Error: Elementos UI para lista de conversaciones del inbox no encontrados.");
+            return;
+        }
+        if (!token) { // LUEGO verificar el token
+            console.error("Error de autenticación: No se encontró token para loadInboxConversations.");
+            if(inboxLoadingMsg) inboxLoadingMsg.textContent = "Error: No autenticado. No se pueden cargar conversaciones.";
+            return;
+        }
+
         inboxLoadingMsg.style.display = 'block';
         inboxConvList.innerHTML = '';
-        const token = localStorage.getItem('synchat_session_token');
+        // const token = localStorage.getItem('synchat_session_token'); // Removed as it's defined above
         const statusFilter = inboxStatusFilter.value;
 
         try {
@@ -1071,7 +1119,248 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // --- Initialize Section Navigation and Load Initial Data ---
-    // (This part remains largely the same, ensure it's correctly placed and calls the appropriate load functions)
+    }
+
+
+    // --- Define missing functions ---
+    async function fetchClientUsageStats(billingCycleId = null) {
+        console.log('fetchClientUsageStats called with billingCycleId:', billingCycleId);
+        // TODO: Implement actual logic if/when available
+        if (usageMessageEl) displayMessage(usageMessageEl, 'Funcionalidad de estadísticas de uso aún no implementada.', false);
+    }
+
+    async function loadAnalyticsData() {
+        console.log('loadAnalyticsData called');
+        // TODO: Implement actual logic if/when available
+        // Example: Ensure getPeriodDates is defined if used
+        // const { startDate, endDate } = getPeriodDates(analyticsPeriodSelector.value);
+        if (analyticsLoadingMessage) analyticsLoadingMessage.textContent = 'Cargando datos analíticos...';
+        // ... more logic here
+    }
+
+
+    // 5. Place all initialization logic (e.g., event listener attachments)
+    // Onboarding listeners
+    if (dismissOnboardingBtn) {
+        dismissOnboardingBtn.addEventListener('click', dismissOnboarding);
+    }
+
+    // Config form listener
+    if (configForm) {
+        configForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            if (configMessageDiv) {
+                configMessageDiv.style.display = 'none';
+                configMessageDiv.textContent = '';
+            }
+
+            const botKeyPhrasesToUse = botKeyPhrasesToUseTextarea.value.split('\n').map(s => s.trim()).filter(Boolean);
+            const botKeyPhrasesToAvoid = botKeyPhrasesToAvoidTextarea.value.split('\n').map(s => s.trim()).filter(Boolean);
+
+            const formData = {
+                widget_config: {
+                    botName: botNameInput.value,
+                    welcomeMessage: welcomeMessageInput.value,
+                    botFormality: botFormalitySelect.value,
+                    botPersonaDescription: botPersonaDescriptionTextarea.value,
+                    botKeyPhrasesToUse: botKeyPhrasesToUse,
+                    botKeyPhrasesToAvoid: botKeyPhrasesToAvoid
+                },
+                knowledge_source_url: knowledgeUrlInput.value,
+                base_prompt_override: basePromptOverrideTextarea.value
+            };
+
+            const token = localStorage.getItem('synchat_session_token');
+            if (!token) {
+                displayMessage(configMessageDiv, 'Error de autenticación. Por favor, inicie sesión de nuevo.', false);
+                return;
+            }
+            if (!API_BASE_URL) {
+                displayMessage(configMessageDiv, 'Error crítico: La URL base de la API no está configurada.', false);
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/client/me/config`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                if (response.ok) {
+                    await response.json();
+                    displayMessage(configMessageDiv, 'Configuración guardada con éxito.', true);
+                } else {
+                    const errorData = await response.json().catch(() => ({ message: 'Error desconocido.' }));
+                    console.error('Error saving config:', response.status, errorData);
+                    displayMessage(configMessageDiv, `Error al guardar: ${errorData.message || response.statusText}`, false);
+                }
+            } catch (error) {
+                console.error('Error en el envío del formulario de configuración:', error);
+                displayMessage(configMessageDiv, `Error al enviar: ${error.message}`, false);
+            }
+        });
+    }
+
+    // Knowledge Management listeners
+    if (uploadFileBtn && knowledgeFileUpload) {
+        uploadFileBtn.addEventListener('click', async () => {
+            if (!knowledgeFileUpload.files || knowledgeFileUpload.files.length === 0) {
+                displayMessage(uploadStatusMessage, 'Por favor, selecciona un archivo para subir.', false);
+                return;
+            }
+            const file = knowledgeFileUpload.files[0];
+            const formData = new FormData();
+            formData.append('file', file);
+
+            displayMessage(uploadStatusMessage, 'Subiendo archivo...', true);
+            const token = localStorage.getItem('synchat_session_token');
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/client/me/knowledge/upload`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: formData
+                });
+                const result = await response.json();
+                if (response.ok) {
+                    displayMessage(uploadStatusMessage, `Archivo "${result.source_name}" subido con éxito. ID de Fuente: ${result.source_id}. Ahora puedes iniciar la ingesta.`, true);
+                    knowledgeFileUpload.value = ''; // Clear file input
+                    loadKnowledgeSources(); // Refresh the list
+                } else {
+                    throw new Error(result.message || 'Error al subir el archivo.');
+                }
+            } catch (error) {
+                console.error("Error uploading file:", error);
+                displayMessage(uploadStatusMessage, `Error al subir: ${error.message}`, false);
+            }
+        });
+    }
+    // Chunk Sample Modal listener
+    if (closeChunkSampleModalBtn) { // Moved this listener here as it's an init step
+        closeChunkSampleModalBtn.onclick = () => { if(chunkSampleModal) chunkSampleModal.style.display = "none"; };
+    }
+
+    // Inbox listeners
+    if (inboxSendReplyBtn) {
+        inboxSendReplyBtn.addEventListener('click', async () => {
+            if (!currentOpenConversationId || !inboxReplyText.value.trim()) return; // Token check is done in loadMessagesForConversation
+            const content = inboxReplyText.value.trim();
+            const token = localStorage.getItem('synchat_session_token'); // Re-fetch token for this action specifically
+            if (!token) {
+                 alert('Error de autenticación. Por favor, recargue la página.');
+                 return;
+            }
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/client/me/inbox/conversations/${currentOpenConversationId}/messages`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ content })
+                });
+                if (!response.ok) throw new Error(`Error ${response.status} sending message.`);
+                inboxReplyText.value = '';
+                loadMessagesForConversation(currentOpenConversationId); // Refresh messages
+                loadInboxConversations(); // Refresh conversation list for potential status/preview update
+            } catch (error) {
+                console.error("Error sending agent reply:", error);
+                alert(`Error al enviar respuesta: ${error.message}`);
+            }
+        });
+    }
+    if (inboxApplyStatusChangeBtn) {
+        inboxApplyStatusChangeBtn.addEventListener('click', async () => {
+            const newStatus = inboxChangeStatusDropdown.value;
+            if (!currentOpenConversationId || !newStatus) return; // Token check is done in loadMessagesForConversation
+            const token = localStorage.getItem('synchat_session_token'); // Re-fetch token
+             if (!token) {
+                 alert('Error de autenticación. Por favor, recargue la página.');
+                 return;
+            }
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/client/me/inbox/conversations/${currentOpenConversationId}/status`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ newStatus })
+                });
+                if (!response.ok) throw new Error(`Error ${response.status} updating status.`);
+                loadMessagesForConversation(currentOpenConversationId); // Refresh view
+                loadInboxConversations(); // Refresh list
+                alert(`Estado de la conversación actualizado a: ${newStatus}`);
+            } catch (error) {
+                console.error("Error changing conversation status:", error);
+                alert(`Error al cambiar estado: ${error.message}`);
+            }
+        });
+    }
+    if (inboxStatusFilter) inboxStatusFilter.addEventListener('change', loadInboxConversations);
+    if (refreshInboxBtn) refreshInboxBtn.addEventListener('click', loadInboxConversations);
+
+    // Inbox Feedback Modal Logic
+    if (closeInboxFeedbackModalBtn) closeInboxFeedbackModalBtn.onclick = () => { inboxFeedbackModal.style.display = "none"; };
+    if (feedbackPositiveBtn) feedbackPositiveBtn.onclick = () => submitInboxFeedback(1);
+    if (feedbackNegativeBtn) feedbackNegativeBtn.onclick = () => submitInboxFeedback(-1);
+    if (submitInboxFeedbackBtn) {
+        submitInboxFeedbackBtn.addEventListener('click', () => {
+            const rating = 0;
+            if (feedbackComment.value.trim()) {
+                submitInboxFeedback(rating);
+            } else {
+                 inboxFeedbackModal.style.display = "none";
+            }
+        });
+    }
+
+    // RAG Playground listeners
+    if (runPlaygroundQueryBtn) {
+        runPlaygroundQueryBtn.addEventListener('click', async () => {
+            const query = playgroundQueryInput.value.trim();
+            if (!query) {
+                playgroundStatusMessage.textContent = 'Por favor, introduce una consulta.';
+                playgroundStatusMessage.style.color = 'orange';
+                return;
+            }
+            playgroundStatusMessage.textContent = 'Ejecutando consulta...';
+            playgroundStatusMessage.style.color = 'blue';
+            playgroundResultsContainer.innerHTML = '';
+            const token = localStorage.getItem('synchat_session_token');
+            if (!token) {
+                playgroundStatusMessage.textContent = 'Error de autenticación. Por favor, recargue la página.';
+                playgroundStatusMessage.style.color = 'red';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/client/me/knowledge/rag-playground-query`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ queryText: query })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.message || data.error || `Error ${response.status}`);
+                }
+                playgroundStatusMessage.textContent = 'Consulta completada.';
+                playgroundStatusMessage.style.color = 'green';
+                displayPlaygroundResults(data);
+
+            } catch (error) {
+                console.error("Error running RAG playground query:", error);
+                playgroundStatusMessage.textContent = `Error: ${error.message}`;
+                playgroundStatusMessage.style.color = 'red';
+            }
+        });
+    }
+    // Playground Feedback Modal Logic
+    if (closePlaygroundFeedbackModalBtn) closePlaygroundFeedbackModalBtn.onclick = () => { playgroundFeedbackModal.style.display = "none"; };
+    if (playgroundFeedbackPositiveBtn) playgroundFeedbackPositiveBtn.onclick = () => submitPlaygroundFeedback(1);
+    if (playgroundFeedbackNegativeBtn) playgroundFeedbackNegativeBtn.onclick = () => submitPlaygroundFeedback(-1);
+    if (submitPlaygroundFeedbackBtn) submitPlaygroundFeedbackBtn.onclick = () => submitPlaygroundFeedback(0);
+
+
+    // --- Initialize Section Navigation and Load Initial Data ---
     const navLinks = document.querySelectorAll('nav ul a');
     const allDashboardSections = document.querySelectorAll('.dashboard-section');
 
@@ -1131,7 +1420,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
 
-    // Initial data loads for visible/default sections
+    // Initial data loads & UI setup
+    showOnboardingMessage(); // Check and show onboarding message on load
+
     if (loadingMessage) loadingMessage.style.display = 'none';
     if (dashboardContent) dashboardContent.classList.remove('hidden');
     if (userEmailSpan && localStorage.getItem('synchat_user_email')) {
@@ -1143,4 +1434,4 @@ document.addEventListener('DOMContentLoaded', () => {
         logoutBtn.addEventListener('click', logout);
     }
 
-}); // THIS IS THE CORRECT FINAL CLOSING BRACE AND PARENTHESIS FOR DOMContentLoaded
+});
