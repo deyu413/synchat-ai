@@ -120,7 +120,7 @@ export const getClientConfig = async (clientId) => {
     try {
         logger.debug(`(DB Service) getClientConfig: Buscando cliente con ID: ${clientId}`);
         const { data, error } = await supabase
-            .from('client_config')
+            .from('synchat_clients')
             .select(`
                 client_id,
                 widget_config,
