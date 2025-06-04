@@ -8,35 +8,42 @@
     <meta name="description" content="Regístrate en SynChat AI y empieza a mejorar tu atención al cliente con nuestro chatbot IA Zoe. Proceso rápido y sencillo." />
     <meta name="keywords" content="registro synchat ai, crear cuenta chatbot, empezar con ia, unirse a synchat ai, chatbot prueba gratis" />
 
-    <link rel="canonical" href="https://synchat-ai.vercel.app/registro.html" /> <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://synchat-ai.vercel.app/registro.html" /> <meta property="og:site_name" content="SynChat AI" />
+    <link rel="canonical" href="https://synchat-ai.vercel.app/registro.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://synchat-ai.vercel.app/registro.html" />
+    <meta property="og:site_name" content="SynChat AI" />
     <meta property="og:title" content="Registro - Crea tu Cuenta en SynChat AI" />
     <meta property="og:description" content="Regístrate en SynChat AI y empieza a mejorar tu atención al cliente." />
-    <meta property="og:image" content="https://synchat-ai.vercel.app/images/og-registro.png" /> <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:site" content="@SynChatAI" /> <meta name="twitter:url" content="https://synchat-ai.vercel.app/registro.html" /> <meta name="twitter:title" content="Registro - Crea tu Cuenta en SynChat AI" />
+    <meta property="og:image" content="https://synchat-ai.vercel.app/images/og-registro.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@SynChatAI" />
+    <meta name="twitter:url" content="https://synchat-ai.vercel.app/registro.html" />
+    <meta name="twitter:title" content="Registro - Crea tu Cuenta en SynChat AI" />
     <meta name="twitter:description" content="Regístrate en SynChat AI y empieza a mejorar tu atención al cliente." />
-    <meta name="twitter:image" content="https://synchat-ai.vercel.app/images/twitter-registro.png" /> <link rel="icon" type="image/png" sizes="48x48" href="/images/favicon-synchat.png" /> <link rel="preconnect" href="https://fonts.googleapis.com">
+    <meta name="twitter:image" content="https://synchat-ai.vercel.app/images/twitter-registro.png" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/images/favicon-synchat.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/styles.css">
     <style>
         /* Estilos para la página de registro */
-        .registration-container { 
-            max-width: 500px; 
-            margin: 3rem auto; 
-            padding: 2rem; 
-            background-color: #fff; 
+        .registration-container {
+            max-width: 500px;
+            margin: 3rem auto;
+            padding: 2rem;
+            background-color: #fff;
             border-radius: var(--border-radius-medium); /* Usando variable de styles.css */
             box-shadow: 0 5px 20px rgba(0,0,0,0.1);  /* Sombra genérica */
         }
         .form-group { margin-bottom: 1.5rem; }
-        .form-group label { 
-            display: block; 
-            margin-bottom: .5rem; 
-            font-weight: 600; 
+        .form-group label {
+            display: block;
+            margin-bottom: .5rem;
+            font-weight: 600;
             color: var(--color-primary); /* Usando variable de styles.css */
         }
-        .form-group input[type="email"], 
+        .form-group input[type="email"],
         .form-group input[type="password"] {
             width: 100%;
             padding: 0.8rem 1rem;
@@ -46,26 +53,31 @@
             box-sizing: border-box;
         }
         .message-area { margin-top: 1.5rem; text-align: center; }
-        #authMessage:not(:empty), 
-        #errorMessage:not(:empty) { 
-            padding: 1rem; 
+        #authMessage:not(:empty),
+        #errorMessage:not(:empty) {
+            padding: 1rem;
             border-radius: var(--border-radius-medium); /* Usando variable de styles.css */
         }
         #authMessage { background-color: #e6ffed; color: #22863a; }
         #errorMessage { background-color: #ffebe9; color: #d73a49; }
         .button.full-width { width: 100%; display: block; }
         .button.google {
-            background-color: #fff; 
-            color: #444; 
-            border: 1px solid #ccc; 
+            background-color: #fff;
+            color: #444;
+            border: 1px solid #ccc;
             display:flex; /* Para alinear imagen y texto */
-            align-items:center; 
+            align-items:center;
             justify-content:center;
         }
         .button.google img {
             margin-right:8px;
         }
     </style>
+    <script>
+      window.SYNCHAT_CONFIG = {
+        API_BASE_URL: "https://synchat-ai-s8cf.vercel.app" // Asegúrate que esta sea la URL correcta de tu backend
+      };
+    </script>
 </head>
 <body>
     <div id="site-wrapper">
@@ -86,17 +98,17 @@
                         <a href="/demo.html" class="button secondary">Ver Demo</a>
                         <a href="/login.html" class="button primary">Iniciar Sesión</a> </div>
                 </nav>
-                <div class="header-ctas"> 
+                <div class="header-ctas">
                     <a href="/login.html" class="button secondary">Iniciar Sesión</a> </div>
             </div>
         </header>
 
         <main class="main-content">
             <section class="page-section section-light">
-                <div class="container registration-container" id="authForms"> 
+                <div class="container registration-container" id="authForms">
                     <h1 class="section-heading text-center" style="margin-bottom: 0.5rem;">Crea tu Cuenta</h1>
                     <p class="section-subheading text-center" style="margin-bottom: 2rem;">Únete a SynChat AI y transforma tu atención al cliente.</p>
-                    
+
                     <form id="signUpForm">
                         <div class="form-group">
                             <label for="signUpEmail">Email:</label>
@@ -117,7 +129,7 @@
                     </p>
                      <p class="text-center" style="margin-top:1.5rem; font-size: 0.9rem;">O regístrate usando:</p>
                      <button id="googleLoginBtn" class="button google full-width" style="margin-top:0.5rem;">
-                        <img src="/images/google-logo.svg" alt="Google logo" style="width:18px; height:18px;"> Continuar con Google
+                        <img src="/images/google-logo.svg" alt="Google logo" style="width:18px; height:18px; margin-right:8px;"> Continuar con Google
                     </button>
                 </div>
             </section>
@@ -142,7 +154,7 @@
                 </div>
             </div>
         </footer>
-        
+
         <script type="module" src="/src/supabaseClientFrontend.js"></script>
         <script type="module" src="/src/auth.js"></script>
         <script src="/static/app.js" defer></script>
