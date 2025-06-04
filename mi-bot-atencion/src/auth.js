@@ -55,6 +55,7 @@ async function handleSignUp(event) {
                     return; // No continuar si no hay URL base
                 }
 
+                console.log('AUTH.JS: Effective API_BASE_URL for /post-registration:', apiBaseUrl);
                 const endpointUrl = `${apiBaseUrl}/api/auth/post-registration`;
                 console.log(`AUTH.JS: Intentando llamar al backend en: ${endpointUrl}`);
                 console.log(`AUTH.JS: Enviando userId: ${data.user.id}, userEmail: ${data.user.email}`);
