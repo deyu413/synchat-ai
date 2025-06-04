@@ -37,13 +37,18 @@ const corsOptionsDelegate = function (req, callback) {
 
     const isWidgetRoute = req.path.startsWith('/api/public-chat');
 
+    // Regla 1: Permitir siempre si el origen coincide con la URL principal de la aplicación/dashboard
     if (normalizedOrigin === frontendAppURL) {
         logger.info(`[CORS] Request from main frontend app origin: ${origin} for path ${req.path}. Allowing.`);
         allowOrigin = true;
-    } else if (process.env.NODE_ENV === 'development' && normalizedOrigin && (normalizedOrigin.startsWith('http://localhost:') || normalizedOrigin.startsWith('http://127.0.0.1:'))) {
+    }
+    // Regla 2: Permitir siempre localhost en desarrollo (para cualquier ruta)
+    else if (process.env.NODE_ENV === 'development' && normalizedOrigin && (normalizedOrigin.startsWith('http://localhost:') || normalizedOrigin.startsWith('http://127.0.0.1:'))) {
         logger.info(`[CORS] Request from development localhost origin: ${origin} for path ${req.path}. Allowing.`);
         allowOrigin = true;
-    } else if (isWidgetRoute) {
+    }
+    // Regla 3: Lógica específica para rutas de widget
+    else if (isWidgetRoute) {
         if (allowAllForWidget) {
             logger.info(`[CORS] Widget route: WIDGET_ALLOWED_ORIGINS is *. Allowing origin: ${origin}`);
             allowOrigin = true;
@@ -54,25 +59,22 @@ const corsOptionsDelegate = function (req, callback) {
             logger.warn(`[CORS] Widget route: Origin ${origin} NOT ALLOWED by WIDGET_ALLOWED_ORIGINS: "${widgetAllowedOriginsEnv}"`);
         }
     }
-
-    if (!allowOrigin) {
+    // Regla 4: Log para orígenes no cubiertos
+    else {
          logger.warn(`[CORS] Origin ${normalizedOrigin} (Original: ${origin}) for path ${req.path} did not match explicit rules. Main Frontend URL: '${frontendAppURL}'. Defaulting to disallow.`);
     }
 
     corsOptions.origin = allowOrigin;
 
+    // Para solicitudes preflight (OPTIONS)
     if (req.method === 'OPTIONS') {
-        // Para solicitudes preflight, necesitamos configurar los headers incluso si el origin es false inicialmente
-        // El middleware 'cors' con la opción de delegate se encargará de enviar la respuesta correcta
-        // basado en si corsOptions.origin se estableció a true o a un string de origen.
-        // Si corsOptions.origin es true, permite los métodos y headers.
-        // Si es false, el middleware cors debería denegar la solicitud OPTIONS apropiadamente.
         const preflightOptions = {
-            origin: allowOrigin, // Esto reflejará si el origen fue permitido
+            origin: allowOrigin,
             methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
-            allowedHeaders: "Content-Type,Authorization,X-Client-Info,apikey,X-Supabase-Auth", // Asegúrate que Content-Type y Authorization estén aquí
+            allowedHeaders: "Content-Type,Authorization,X-Client-Info,apikey,X-Supabase-Auth", // Incluye todos los headers que tu frontend podría enviar
+            credentials: true, // Si manejas cookies o sesiones de autenticación
             preflightContinue: false,
-            optionsSuccessStatus: 204
+            optionsSuccessStatus: 204 // Estándar para preflight exitoso
         };
         callback(null, preflightOptions);
     } else {
@@ -81,22 +83,15 @@ const corsOptionsDelegate = function (req, callback) {
 };
 
 // --- Middlewares ---
-// Configurar CORS primero
 app.use(cors(corsOptionsDelegate));
 
-// Opcional: Manejador explícito para OPTIONS si el anterior no funciona como se espera en todas las rutas
-// app.options('*', cors(corsOptionsDelegate)); // Puedes probar añadir esto si sigue fallando el preflight
-
-// Stripe webhook specific middleware (ANTES de express.json global)
 app.post('/api/payments/webhook', express.raw({type: 'application/json'}), (req, res, next) => {
     next();
 });
 
-// Middlewares esenciales de Express
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Middleware simple para loggear peticiones
 app.use((req, res, next) => {
     logger.debug(`Request: ${req.method} ${req.path} (Origin: ${req.header('Origin')})`);
     next();
@@ -111,7 +106,6 @@ logger.debug('>>> server.js: Mounting routes /api/auth');
 app.use('/api/auth', authRoutes);
 logger.info('>>> server.js: Routes /api/auth mounted');
 
-// ... (resto de tus montajes de rutas: /api/chat, /api/client, etc.) ...
 logger.debug('>>> server.js: Mounting routes /api/chat (legacy or other uses)');
 app.use('/api/chat', apiRoutes);
 logger.info('>>> server.js: Routes /api/chat mounted');
@@ -150,14 +144,29 @@ app.use((req, res, next) => {
 app.use((err, req, res, next) => {
     logger.error(`Global unhandled error: ${err.message}`, { path: req.path, stack: err.stack });
     const statusCode = err.status || 500;
-    res.status(statusCode).json({
-         error: err.message || 'Error interno del servidor',
-         ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    if (err.message === 'Not allowed by CORS' && !res.headersSent) { // Captura específica del error de CORS del callback
+        return res.status(403).json({ error: 'Not allowed by CORS' });
+    }
+    if (!res.headersSent) {
+        res.status(statusCode).json({
+            error: err.message || 'Error interno del servidor',
+            ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
         });
+    }
 });
 
 // --- Iniciar el Servidor ---
 app.listen(PORT, () => {
     logger.info(`Server listening on port ${PORT}`);
-    // ... (advertencias de variables de entorno existentes) ...
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY || !process.env.OPENAI_API_KEY) {
+        logger.warn("ADVERTENCIA: Una o más variables de entorno críticas (SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY) no están definidas.");
+    }
+     if (!process.env.FRONTEND_URL) {
+         logger.warn("ADVERTENCIA: FRONTEND_URL no definida. CORS podría no funcionar como esperado sin fallback a localhost en desarrollo.");
+     }
+     if (!process.env.WIDGET_ALLOWED_ORIGINS) {
+         logger.warn("ADVERTENCIA: WIDGET_ALLOWED_ORIGINS no definida. CORS para el widget podría no funcionar como esperado.");
+     } else if (process.env.WIDGET_ALLOWED_ORIGINS === '*' && process.env.NODE_ENV === 'production') {
+         logger.warn("ADVERTENCIA DE PRODUCCIÓN: WIDGET_ALLOWED_ORIGINS está configurado como '*' lo cual permite cualquier origen. Esto no es recomendado para producción.");
+     }
 });
