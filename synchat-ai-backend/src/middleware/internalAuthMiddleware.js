@@ -1,18 +1,17 @@
 // src/middleware/internalAuthMiddleware.js
-import 'dotenv/config'; // To access environment variables
+// Environment variables should be loaded by the main server.js entry point
 
-const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET;
-
-if (!INTERNAL_API_SECRET) {
-    console.error("CRITICAL: INTERNAL_API_SECRET is not defined in environment variables. Internal API endpoints will not be secure.");
-}
+// It's generally safer to read process.env variables inside functions,
+// especially for ES modules where initialization order can be complex.
+// This ensures the value is read at runtime, after dotenv has configured it.
 
 export const internalAuthMiddleware = (req, res, next) => {
+    const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET; // Read at runtime
     const providedSecret = req.headers['x-internal-api-secret'];
 
     if (!INTERNAL_API_SECRET) {
-        // This case means the server itself is misconfigured.
-        console.error("Internal API Security Alert: INTERNAL_API_SECRET is not configured on the server. Denying access.");
+        // This case means the server itself is misconfigured or dotenv didn't run/work as expected.
+        console.error("CRITICAL: INTERNAL_API_SECRET is not defined in environment variables at runtime. Internal API endpoints will not be secure. Denying access.");
         return res.status(500).json({ message: "Internal server configuration error." });
     }
 
