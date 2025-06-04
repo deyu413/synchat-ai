@@ -23,15 +23,15 @@ $$;
 COMMENT ON FUNCTION public.handle_new_user_to_synchat_client() IS 'Handles the creation of a new entry in public.synchat_clients when a new user signs up in auth.users.';
 
 -- Drop trigger if it exists from a previous partial run, then create.
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW
-  EXECUTE FUNCTION public.handle_new_user_to_synchat_client();
+-- DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+-- CREATE TRIGGER on_auth_user_created
+--   AFTER INSERT ON auth.users
+--   FOR EACH ROW
+--   EXECUTE FUNCTION public.handle_new_user_to_synchat_client();
 
-COMMENT ON TRIGGER on_auth_user_created ON auth.users IS 'When a new user is created in auth.users, this trigger automatically creates a corresponding client entry in public.synchat_clients.';
+-- COMMENT ON TRIGGER on_auth_user_created ON auth.users IS 'When a new user is created in auth.users, this trigger automatically creates a corresponding client entry in public.synchat_clients.';
 
-RAISE NOTICE 'Trigger on_auth_user_created on auth.users and function handle_new_user_to_synchat_client created.';
+-- RAISE NOTICE 'Trigger on_auth_user_created on auth.users and function handle_new_user_to_synchat_client created.';
 
 -- 2. Function and Trigger to update conversation_last_message_at on new message
 CREATE OR REPLACE FUNCTION public.update_conversation_last_message_at()
