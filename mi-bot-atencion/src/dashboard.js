@@ -1119,7 +1119,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // --- Initialize Section Navigation and Load Initial Data ---
-    }
+    // THIS BRACE WAS REMOVED: }
 
 
     // --- Define missing functions ---
