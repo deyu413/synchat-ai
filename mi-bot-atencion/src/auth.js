@@ -11,7 +11,7 @@ const signUpForm = document.getElementById('signUpForm');
 const googleLoginBtn = document.getElementById('googleLoginBtn');
 // logoutBtn es referenciado globalmente pero el listener específico para dashboard.html está en dashboard.js
 // Este script podría manejar un logoutBtn en login.html o registro.html si existiera.
-const logoutBtn = document.getElementById('logoutBtn'); 
+const logoutBtn = document.getElementById('logoutBtn');
 const authMessageDiv = document.getElementById('authMessage');
 const errorMessageDiv = document.getElementById('errorMessage');
 
@@ -21,7 +21,7 @@ async function handleSignUp(event) {
     event.preventDefault();
     const emailInput = document.getElementById('signUpEmail');
     const passwordInput = document.getElementById('signUpPassword');
-    
+
     if (!emailInput || !passwordInput) {
         console.error("Elementos del formulario de registro no encontrados.");
         if (errorMessageDiv) errorMessageDiv.textContent = 'Error interno del formulario.';
@@ -33,22 +33,40 @@ async function handleSignUp(event) {
     clearMessages();
 
     try {
-        const { data, error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-        if (authMessageDiv) authMessageDiv.textContent = '¡Registro exitoso! Revisa tu email para confirmar (si es necesario).';
-        console.log('Usuario registrado:', data.user);
-        if (signUpForm) signUpForm.reset();
+        console.log("AUTH.JS: Iniciando supabase.auth.signUp()...");
+        const { data, error: signUpError } = await supabase.auth.signUp({ email, password });
 
-        if (data.user && data.user.id && data.user.email) { // Changed from signUpData to data to match existing code
+        if (signUpError) {
+            console.error('AUTH.JS: Error en supabase.auth.signUp():', signUpError.message);
+            throw signUpError;
+        }
+
+        if (authMessageDiv) authMessageDiv.textContent = '¡Registro exitoso! Revisa tu email para confirmar (si es necesario).';
+        console.log('AUTH.JS: Usuario registrado en Supabase Auth:', data?.user);
+
+        if (data?.user && data.user.id && data.user.email) {
+            console.log(`AUTH.JS: Usuario con ID ${data.user.id} y email ${data.user.email} creado en Supabase Auth. Procediendo a llamar al backend.`);
             // Call backend to create the synchat_clients entry
             try {
-                const apiBaseUrl = window.SYNCHAT_CONFIG?.API_BASE_URL || ''; // Ensure this is defined
-                const backendResponse = await fetch(`${apiBaseUrl}/api/auth/post-registration`, { // Ensure correct endpoint path
+                const apiBaseUrl = window.SYNCHAT_CONFIG?.API_BASE_URL || '';
+                if (!apiBaseUrl) {
+                    console.error("AUTH.JS: API_BASE_URL no está configurada en window.SYNCHAT_CONFIG. No se puede llamar al backend.");
+                    if (errorMessageDiv) errorMessageDiv.textContent = 'Error de configuración: No se pudo contactar al servidor para completar el registro.';
+                    return; // No continuar si no hay URL base
+                }
+
+                const endpointUrl = `${apiBaseUrl}/api/auth/post-registration`;
+                console.log(`AUTH.JS: Intentando llamar al backend en: ${endpointUrl}`);
+                console.log(`AUTH.JS: Enviando userId: ${data.user.id}, userEmail: ${data.user.email}`);
+
+                const backendResponse = await fetch(endpointUrl, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        // If your backend endpoint for post-registration is protected by user auth:
-                        // 'Authorization': `Bearer ${data.session?.access_token}` // Use session from data if available
+                        // Si tu endpoint de backend para post-registration está protegido por autenticación de usuario:
+                        // Si Supabase devuelve una sesión inmediatamente (incluso antes de confirmar email, lo cual puede hacer),
+                        // podrías usar data.session.access_token. Verifica la documentación de Supabase para tu flujo exacto.
+                        // 'Authorization': `Bearer ${data.session?.access_token}`
                     },
                     body: JSON.stringify({
                         userId: data.user.id,
@@ -56,27 +74,35 @@ async function handleSignUp(event) {
                     })
                 });
 
+                console.log(`AUTH.JS: Respuesta del backend /post-registration - Status: ${backendResponse.status}`);
+                const responseData = await backendResponse.json().catch(e => {
+                    console.error('AUTH.JS: Error al parsear JSON de la respuesta del backend:', e);
+                    return { message: `Error del servidor (no JSON): ${backendResponse.statusText}`};
+                });
+
+
                 if (!backendResponse.ok) {
-                    const backendErrorData = await backendResponse.json().catch(() => ({ message: 'Unknown backend error during post-registration.' }));
-                    console.error('Error en el backend /post-registration:', backendErrorData.message || backendResponse.statusText);
-                    // Display a non-critical error to the user or just log it,
-                    // as the Supabase Auth registration was successful.
-                    // Example: if (errorMessageDiv) errorMessageDiv.textContent = 'Registro completado, pero hubo un problema al configurar servicios adicionales.';
+                    console.error('AUTH.JS: Error en el backend /post-registration:', responseData.message || backendResponse.statusText);
+                    if (errorMessageDiv) errorMessageDiv.textContent = `Registro completado, pero hubo un problema al configurar servicios adicionales: ${responseData.message || backendResponse.statusText}`;
                 } else {
-                    const successData = await backendResponse.json();
-                    console.log('Backend /post-registration successful:', successData.message);
+                    console.log('AUTH.JS: Backend /post-registration exitoso:', responseData.message);
+                    if (authMessageDiv) authMessageDiv.textContent += ' ¡Configuración de cliente completada!';
                 }
             } catch (backendCallError) {
-                console.error('Excepción al llamar al backend /post-registration:', backendCallError);
-                // Similar handling as above, registration was successful but profile init might have failed.
+                console.error('AUTH.JS: Excepción al llamar al backend /post-registration:', backendCallError);
+                if (errorMessageDiv) errorMessageDiv.textContent = `Registro completado, pero ocurrió una excepción al contactar al servidor: ${backendCallError.message}`;
             }
         } else {
-            console.warn('data.user o sus propiedades id/email no disponibles después del registro. No se puede llamar al backend.');
+            console.warn('AUTH.JS: data.user o sus propiedades id/email no disponibles después del registro en Supabase Auth. No se puede llamar al backend para crear entrada en synchat_clients.');
+            if (errorMessageDiv) errorMessageDiv.textContent = 'Registro en Supabase Auth parcial, no se pudo completar la configuración del cliente.';
         }
+
+        if (signUpForm) signUpForm.reset();
         // onAuthStateChange se encargará de la redirección si es necesario (ej. a login o dashboard)
+        // o la actualización de la UI.
     } catch (error) {
         if (errorMessageDiv) errorMessageDiv.textContent = `Error en registro: ${error.message}`;
-        console.error('Error en registro:', error.message);
+        console.error('AUTH.JS: Error general en handleSignUp:', error.message);
     }
 }
 
@@ -120,7 +146,6 @@ async function handleGoogleLogin() {
     }
 }
 
-// Renombrada de handleLogout a logout y exportada
 export async function logout() {
     clearMessages();
     try {
@@ -128,81 +153,67 @@ export async function logout() {
         if (error) throw error;
         console.log('Sesión cerrada');
         // onAuthStateChange se encargará de mostrar el formulario de login o redirigir.
-        // Si estás en dashboard.html, la redirección la gestiona updateAuthUI.
-        // Si estás en login.html o registro.html, simplemente actualizará la UI para mostrar los forms.
-        // No es necesario redirigir desde aquí explícitamente.
     } catch (error) {
-        if (errorMessageDiv) { // Asegúrate de que errorMessageDiv existe en el contexto actual
+        if (errorMessageDiv) {
              errorMessageDiv.textContent = `Error al cerrar sesión: ${error.message}`;
         }
         console.error('Error al cerrar sesión:', error.message);
     }
 }
 
-// --- Gestión del Estado de Autenticación ---
 function updateAuthUI(session) {
     console.log('Auth State Change/UpdateUI:', session ? session.user?.email : 'No session');
-    const dashboardContentEl = document.getElementById('dashboardContent'); 
-    const userEmailSpanEl = document.getElementById('userEmail'); // Asumo que este es el de dashboard.html
+    const dashboardContentEl = document.getElementById('dashboardContent');
+    const userEmailSpanEl = document.getElementById('userEmail');
 
     const isOnDashboardPage = window.location.pathname.includes('dashboard.html');
     const isOnLoginPage = window.location.pathname.includes('login.html');
     const isOnRegisterPage = window.location.pathname.includes('registro.html');
 
     if (session && session.user) {
-        // Usuario está logueado
-        if (authFormsDiv) authFormsDiv.classList.add('hidden'); // Oculta formularios de login/registro
-        
-        // Guardar token y email para uso en dashboard.js
+        if (authFormsDiv) authFormsDiv.classList.add('hidden');
+
         localStorage.setItem('synchat_session_token', session.access_token);
         localStorage.setItem('synchat_user_email', session.user.email);
 
         if (!isOnDashboardPage) {
             console.log("Usuario logueado, redirigiendo a dashboard.html");
-            window.location.href = 'dashboard.html';
-            return; 
+            window.location.href = 'dashboard.html'; // Asumiendo que dashboard.html está en la misma ruta base
+            return;
         }
 
-        // Si ya estamos en dashboard.html, mostrar el contenido
         if (dashboardContentEl) dashboardContentEl.classList.remove('hidden');
         if (userEmailSpanEl) userEmailSpanEl.textContent = session.user.email;
-        // Ocultar mensaje de carga si estaba visible
         const loadingMessageEl = document.getElementById('loadingMessage');
         if(loadingMessageEl) loadingMessageEl.style.display = 'none';
-        
+
     } else {
-        // Usuario no está logueado
         localStorage.removeItem('synchat_session_token');
         localStorage.removeItem('synchat_user_email');
 
         if (isOnDashboardPage) {
             console.log("No session on dashboard page, redirecting to login.html");
-            window.location.href = 'login.html';
+            window.location.href = 'login.html'; // Asumiendo que login.html está en la misma ruta base
             return;
         }
-        
-        // En páginas de login/registro, asegurarse de que los formularios sean visibles
+
         if (authFormsDiv && (isOnLoginPage || isOnRegisterPage)) {
             authFormsDiv.classList.remove('hidden');
         }
-        
-        // Ocultar dashboardDiv si existe y no estamos en dashboard.html (esto es más una salvaguarda)
-        if (dashboardDiv) dashboardDiv.classList.add('hidden'); 
-        if (dashboardContentEl) dashboardContentEl.classList.add('hidden'); // Específicamente para dashboardContent
 
-        if (userEmailSpanEl) userEmailSpanEl.textContent = ''; // En dashboard
-        if (userInfoSpan) userInfoSpan.textContent = ''; // En login/registro (si existiera)
+        if (dashboardDiv) dashboardDiv.classList.add('hidden');
+        if (dashboardContentEl) dashboardContentEl.classList.add('hidden');
+
+        if (userEmailSpanEl) userEmailSpanEl.textContent = '';
+        if (userInfoSpan) userInfoSpan.textContent = '';
     }
 }
 
-
-// Escucha cambios en el estado de autenticación (login, logout)
 supabase.auth.onAuthStateChange((event, session) => {
     console.log(`onAuthStateChange event: ${event}`, session);
     updateAuthUI(session);
 });
 
-// --- Asignar Event Listeners ---
 if (loginForm) {
     loginForm.addEventListener('submit', handleLogin);
 }
@@ -213,26 +224,20 @@ if (googleLoginBtn) {
     googleLoginBtn.addEventListener('click', handleGoogleLogin);
 }
 
-// Este listener para un botón de logout genérico (no el del dashboard)
-// se activaría si existiera un botón con id="logoutBtn" en login.html o registro.html
-if (logoutBtn && !document.getElementById('logoutBtnDashboard')) { 
-    logoutBtn.addEventListener('click', logout); // Llamando a la función exportada
+if (logoutBtn && !document.getElementById('logoutBtnDashboard')) {
+    logoutBtn.addEventListener('click', logout);
 }
 
-// --- Funciones Auxiliares ---
 function clearMessages() {
     if (authMessageDiv) authMessageDiv.textContent = '';
     if (errorMessageDiv) errorMessageDiv.textContent = '';
 }
 
-// Forzar una comprobación inicial del estado al cargar la página
 (async () => {
     try {
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) {
             console.error("Error obteniendo sesión inicial:", error.message);
-            // No llamar a updateAuthUI si hay error crítico obteniendo la sesión,
-            // o pasar null explícitamente para forzar estado de no logueado.
             updateAuthUI(null);
             return;
         }
@@ -240,7 +245,7 @@ function clearMessages() {
         updateAuthUI(session);
     } catch (e) {
         console.error("Excepción catastrófica obteniendo sesión inicial:", e);
-        updateAuthUI(null); // Asegurar un estado de UI consistente
+        updateAuthUI(null);
     }
 })();
 
