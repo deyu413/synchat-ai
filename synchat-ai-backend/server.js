@@ -10,6 +10,7 @@ import inboxRoutes from './src/routes/inboxRoutes.js'; // Shared Inbox routes
 import paymentRoutes from './src/routes/paymentRoutes.js'; // Payment routes
 import publicChatRoutes from './src/routes/publicChatRoutes.js'; // Public chat routes for the widget
 import internalRoutes from './src/routes/internalRoutes.js'; // Internal routes for scheduled tasks etc.
+import authRoutes from './src/routes/authRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -125,6 +126,10 @@ logger.info('>>> server.js: Routes /api/public-chat mounted');
 logger.debug('>>> server.js: Mounting routes /api/internal/v1');
 app.use('/api/internal/v1', internalRoutes); // Using versioned path
 logger.info('>>> server.js: Routes /api/internal/v1 mounted');
+
+logger.debug('>>> server.js: Mounting routes /api/auth');
+app.use('/api/auth', authRoutes);
+logger.info('>>> server.js: Routes /api/auth mounted');
 
 
 // --- Manejo de Errores (Al final) ---

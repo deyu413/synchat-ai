@@ -38,6 +38,41 @@ async function handleSignUp(event) {
         if (authMessageDiv) authMessageDiv.textContent = '¡Registro exitoso! Revisa tu email para confirmar (si es necesario).';
         console.log('Usuario registrado:', data.user);
         if (signUpForm) signUpForm.reset();
+
+        if (data.user && data.user.id && data.user.email) { // Changed from signUpData to data to match existing code
+            // Call backend to create the synchat_clients entry
+            try {
+                const apiBaseUrl = window.SYNCHAT_CONFIG?.API_BASE_URL || ''; // Ensure this is defined
+                const backendResponse = await fetch(`${apiBaseUrl}/api/auth/post-registration`, { // Ensure correct endpoint path
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        // If your backend endpoint for post-registration is protected by user auth:
+                        // 'Authorization': `Bearer ${data.session?.access_token}` // Use session from data if available
+                    },
+                    body: JSON.stringify({
+                        userId: data.user.id,
+                        userEmail: data.user.email
+                    })
+                });
+
+                if (!backendResponse.ok) {
+                    const backendErrorData = await backendResponse.json().catch(() => ({ message: 'Unknown backend error during post-registration.' }));
+                    console.error('Error en el backend /post-registration:', backendErrorData.message || backendResponse.statusText);
+                    // Display a non-critical error to the user or just log it,
+                    // as the Supabase Auth registration was successful.
+                    // Example: if (errorMessageDiv) errorMessageDiv.textContent = 'Registro completado, pero hubo un problema al configurar servicios adicionales.';
+                } else {
+                    const successData = await backendResponse.json();
+                    console.log('Backend /post-registration successful:', successData.message);
+                }
+            } catch (backendCallError) {
+                console.error('Excepción al llamar al backend /post-registration:', backendCallError);
+                // Similar handling as above, registration was successful but profile init might have failed.
+            }
+        } else {
+            console.warn('data.user o sus propiedades id/email no disponibles después del registro. No se puede llamar al backend.');
+        }
         // onAuthStateChange se encargará de la redirección si es necesario (ej. a login o dashboard)
     } catch (error) {
         if (errorMessageDiv) errorMessageDiv.textContent = `Error en registro: ${error.message}`;
