@@ -1,4 +1,5 @@
 // synchat-ai-backend/server.js
+console.log('[server.js] Running version 2024-06-06-A -- CORS Hardening');
 import 'dotenv/config'; // Loads .env from CWD (expected to be /app)
 
 // NOTE: All other imports that might depend on process.env should come AFTER the line above.
@@ -58,41 +59,41 @@ const corsOptionsDelegate = function (req, callback) {
     let corsOptions;
     const origin = req.header('Origin');
 
-    // Determinar si la petición es para la ruta raíz (health check)
-    const isHealthCheck = req.path === '/';
-
-    // Determinar si el origen es la aplicación frontend principal
-    const isFrontendApp = origin && frontendAppURL && origin === frontendAppURL;
-
-    // Determinar si el origen está permitido para el widget
-    // Si allowAllForWidget es true, cualquier origen es permitido para rutas del widget.
-    // Si no, se verifica contra widgetOriginsList.
-    // Esto aplica específicamente a rutas que comienzan con /api/public-chat (rutas del widget)
-    let isWidgetAllowed = false;
-    if (req.path.startsWith('/api/public-chat')) {
-        if (allowAllForWidget) {
-            isWidgetAllowed = true;
-        } else if (origin && widgetOriginsList.includes(origin)) {
-            isWidgetAllowed = true;
-        }
-    }
-
-    // Permite específicamente la ruta /api/auth/post-registration desde cualquier origen
-    // Esto es para manejar el caso donde el redirect desde el proveedor de auth (ej. Google)
-    // no tiene un Origin header o es null, o para simplificar la configuración inicial.
-    const isPostRegistration = req.path === '/api/auth/post-registration' && req.method === 'POST';
-
-    if (isFrontendApp || isWidgetAllowed || isHealthCheck || isPostRegistration) {
+    // New explicit check for widget + frontendAppURL
+    if (req.path.startsWith('/api/public-chat') && origin === frontendAppURL) {
         corsOptions = {
-            origin: true,
+            origin: true, // Allow this specific origin
             credentials: true,
-            methods: 'GET,POST,PUT,DELETE,OPTIONS', // Asegúrate que OPTIONS está aquí
-            allowedHeaders: 'Content-Type,Authorization,X-Requested-With,X-CSRF-Token,Device-ID,Auth-Token, Supabase-Auth-Token' // Cabeceras personalizadas
+            methods: 'GET,POST,PUT,DELETE,OPTIONS',
+            allowedHeaders: 'Content-Type,Authorization,X-Requested-With,X-CSRF-Token,Device-ID,Auth-Token, Supabase-Auth-Token'
         };
-        // logger.info(`CORS check PASSED for origin: ${origin || 'Not specified'} (Path: ${req.path})`);
+        logger.info(`CORS check PASSED (Explicit /api/public-chat from frontendAppURL) for origin: ${origin} (Path: ${req.path})`);
     } else {
-        corsOptions = { origin: false }; // Rechazar otros orígenes
-        logger.warn(`CORS check FAILED for origin: ${origin || 'Not specified'} (Path: ${req.path})`);
+        // Existing logic
+        const isHealthCheck = req.path === '/';
+        const isFrontendApp = origin && frontendAppURL && origin === frontendAppURL;
+        let isWidgetAllowed = false;
+        if (req.path.startsWith('/api/public-chat')) {
+            if (allowAllForWidget) {
+                isWidgetAllowed = true;
+            } else if (origin && widgetOriginsList.includes(origin)) {
+                isWidgetAllowed = true;
+            }
+        }
+        const isPostRegistration = req.path === '/api/auth/post-registration' && req.method === 'POST';
+
+        if (isFrontendApp || isWidgetAllowed || isHealthCheck || isPostRegistration) {
+            corsOptions = {
+                origin: true,
+                credentials: true,
+                methods: 'GET,POST,PUT,DELETE,OPTIONS',
+                allowedHeaders: 'Content-Type,Authorization,X-Requested-With,X-CSRF-Token,Device-ID,Auth-Token, Supabase-Auth-Token'
+            };
+            // Optional: logger.info(`CORS check PASSED (General) for origin: ${origin || 'Not specified'} (Path: ${req.path})`);
+        } else {
+            corsOptions = { origin: false };
+            logger.warn(`CORS check FAILED for origin: ${origin || 'Not specified'} (Path: ${req.path})`);
+        }
     }
     callback(null, corsOptions);
 };
