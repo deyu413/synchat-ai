@@ -315,28 +315,49 @@ export const getClientUsageResolutions = async (req, res) => {
     console.log('clientDashboardController.getClientUsageResolutions called');
     const clientId = req.user?.id;
     if (!clientId) { return res.status(401).json({ message: 'Unauthorized: Client ID not found in token.' }); }
-    let { billing_cycle_id } = req.query;
 
+    const { billing_cycle_id } = req.query; // Get from query
+
+    // Optional: Add more specific validation, e.g., regex for YYYY-MM format
+    if (billing_cycle_id && typeof billing_cycle_id !== 'string') {
+        return res.status(400).json({ message: 'Invalid billing_cycle_id format. Must be a string.' });
+    }
+    // Example of more specific validation (regex for YYYY-MM)
     const BILLING_CYCLE_REGEX = /^\d{4}-\d{2}$/;
-
     if (billing_cycle_id && !BILLING_CYCLE_REGEX.test(billing_cycle_id)) {
         return res.status(400).json({ error: 'Invalid billing_cycle_id format. Expected YYYY-MM.' });
     }
 
-    if (!billing_cycle_id) {
-        const now = new Date();
-        const year = now.getFullYear();
-        const month = (now.getMonth() + 1).toString().padStart(2, '0');
-        billing_cycle_id = `${year}-${month}`;
-        console.log(`No billing_cycle_id provided, defaulting to current month: ${billing_cycle_id}`);
-    }
-
     try {
-        let query = supabase.from('ia_resolutions_log').select('*', { count: 'exact', head: true }).eq('client_id', clientId).eq('billing_cycle_id', billing_cycle_id);
+        let query = supabase.from('ia_resolutions_log').select('*', { count: 'exact' }).eq('client_id', clientId);
+
+        if (billing_cycle_id) {
+            query = query.eq('billing_cycle_id', billing_cycle_id);
+        }
+
         const { count, error } = await query;
-        if (error) { console.error('Error fetching client usage resolutions:', error.message); return res.status(500).json({ message: 'Error fetching client usage data.', error: error.message }); }
+
+        if (error) {
+            console.error('Error fetching client usage resolutions:', error.message);
+            return res.status(500).json({ message: 'Error fetching client usage data.', error: error.message });
+        }
         const resolutionCount = count === null ? 0 : count;
-        res.status(200).json({ client_id: clientId, billing_cycle_id: billing_cycle_id, ai_resolutions_current_month: resolutionCount, total_queries_current_month: 'N/A' });
+
+        const responseJson = {
+            client_id: clientId,
+            ai_resolutions_count: resolutionCount,
+            total_queries_current_month: 'N/A' // This field seems out of place if we are not querying by current month. Consider removing or clarifying.
+        };
+        if (billing_cycle_id) {
+            responseJson.billing_cycle_id_queried = billing_cycle_id;
+            // To keep consistency with previous naming if billing_cycle_id is the current month,
+            // one might rename ai_resolutions_count to ai_resolutions_current_month.
+            // For now, using a more generic "ai_resolutions_count".
+        } else {
+            responseJson.note = "Count includes all billing cycles as no specific billing_cycle_id was provided.";
+        }
+        res.status(200).json(responseJson);
+
     } catch (err) {
         console.error('Unexpected error in getClientUsageResolutions:', err.message, err.stack);
         res.status(500).json({ message: 'An unexpected error occurred.', error: err.message });
