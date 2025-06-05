@@ -378,13 +378,13 @@ export const handleChatMessage = async (req, res, next) => {
 
             const logData = {
                 client_id: effectiveClientId,
-                conversationId,
-                userQuery: effectiveQuery || "",
-                retrievedContext: retrievedContextForLog, // Ya es seguro
-                finalPromptToLlm: JSON.stringify(messagesForAPI_for_log),
-                llmResponse: botReplyText_for_log,
-                queryEmbeddingsUsed: queriesThatWereEmbeddedForLog,
-                vectorSearchParams: searchParamsUsedForLog,
+                conversation_id: conversationId,
+                user_query: effectiveQuery || "",
+                retrieved_context: retrievedContextForLog,
+                final_prompt_to_llm: JSON.stringify(messagesForAPI_for_log),
+                llm_response: botReplyText_for_log,
+                query_embeddings_used: queriesThatWereEmbeddedForLog,
+                vector_search_params: searchParamsUsedForLog,
                 was_escalated: wasEscalated_for_log,
                 predicted_query_category: predictedCategoryValueForLog
             };
