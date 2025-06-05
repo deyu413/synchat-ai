@@ -329,13 +329,38 @@ export const handleChatMessage = async (req, res, next) => {
             logger.info(`(ChatCtrl) [Context Selection] Accumulated tokens after chunk selection: ${currentAccumulatedTokens}`);
             logger.info(`(ChatCtrl) [Context Selection] Effective token limit for context: ${effectiveMaxContextTokens}`);
 
+            // ---- INICIO DE LOGGING ADICIONAL ----
+            logger.debug(`(ChatCtrl) [Pre-LIMM] typeof finalChunksForLLMContext: ${typeof finalChunksForLLMContext}`);
+            logger.debug(`(ChatCtrl) [Pre-LIMM] Array.isArray(finalChunksForLLMContext): ${Array.isArray(finalChunksForLLMContext)}`);
+            if (finalChunksForLLMContext) {
+                logger.debug(`(ChatCtrl) [Pre-LIMM] finalChunksForLLMContext.length: ${finalChunksForLLMContext.length}`);
+                try {
+                    // Intentar loguear una porción del contenido para inspección, si no está vacío.
+                    if (finalChunksForLLMContext.length > 0) {
+                        logger.debug(`(ChatCtrl) [Pre-LIMM] finalChunksForLLMContext first 2 items (sample): ${JSON.stringify(finalChunksForLLMContext.slice(0,2))}`);
+                    } else {
+                        logger.debug(`(ChatCtrl) [Pre-LIMM] finalChunksForLLMContext is an empty array.`);
+                    }
+                } catch (e) {
+                    logger.error(`(ChatCtrl) [Pre-LIMM] Error stringifying finalChunksForLLMContext: ${e.message}`);
+                    logger.debug(`(ChatCtrl) [Pre-LIMM] finalChunksForLLMContext (raw, could not stringify):`, finalChunksForLLMContext);
+                }
+            } else {
+                logger.warn(`(ChatCtrl) [Pre-LIMM] finalChunksForLLMContext is null or undefined just before LIMM block.`);
+            }
+            // ---- FIN DE LOGGING ADICIONAL ----
+
             // "Lost in the Middle" Mitigation: Reorder chunks - best first, second-best last.
-            if (finalChunksForLLMContext.length > 1) {
+            if (finalChunksForLLMContext && finalChunksForLLMContext.length > 1) { // Chequeo explícito
                 logger.info(`(ChatCtrl) [Context Reorder] Chunk IDs before LIMM reorder: ${finalChunksForLLMContext.map(c => c.id).join(', ')}`);
-                const secondBestChunk = finalChunksForLLMContext.splice(1, 1)[0]; // Remove chunk from index 1
-                finalChunksForLLMContext.push(secondBestChunk); // Add it to the end
+                const secondBestChunk = finalChunksForLLMContext.splice(1, 1)[0];
+                finalChunksForLLMContext.push(secondBestChunk);
                 logger.info(`(ChatCtrl) [Context Reorder] Applied "Lost in the Middle" strategy.`);
                 logger.info(`(ChatCtrl) [Context Reorder] Chunk IDs after LIMM reorder: ${finalChunksForLLMContext.map(c => c.id).join(', ')}`);
+            } else if (Array.isArray(finalChunksForLLMContext)) { // Es un array pero no .length > 1
+                 logger.info(`(ChatCtrl) [Context Reorder] LIMM not applied, finalChunksForLLMContext length is ${finalChunksForLLMContext.length}`);
+            } else { // Es null o undefined o no es un array
+                 logger.warn(`(ChatCtrl) [Context Reorder] LIMM not applied, finalChunksForLLMContext is null, undefined, or not an array.`);
             }
 
             // Now, construct propositionsSectionText and fullChunksSectionText using finalChunksForLLMContext
