@@ -4,8 +4,20 @@ import 'dotenv/config'; // Loads .env from CWD (expected to be /app)
 // NOTE: All other imports that might depend on process.env should come AFTER the line above.
 // The .env file should now be in /app/.env
 
+// --- INICIO DE LA MODIFICACIÓN ---
+import { env as transformersEnv } from '@xenova/transformers';
+
+// Forzar la configuración de la caché para @xenova/transformers
+// al inicio de la aplicación para entornos serverless (Vercel).
+// El directorio /tmp es el único lugar donde se pueden escribir archivos en tiempo de ejecución.
+transformersEnv.cacheDir = '/tmp/transformers-cache';
+transformersEnv.allowLocalModels = false;
+// --- FIN DE LA MODIFICACIÓN ---
+
 // Diagnostic log to see if INTERNAL_API_SECRET is loaded at this point in server.js
 console.log(`[server.js] After 'dotenv/config' import - INTERNAL_API_SECRET: ${process.env.INTERNAL_API_SECRET}`);
+// Log de confirmación para la nueva configuración
+console.log(`[server.js] Transformers.js cache directory set to: ${transformersEnv.cacheDir}`);
 
 import logger from './src/utils/logger.js';
 import express from 'express';
