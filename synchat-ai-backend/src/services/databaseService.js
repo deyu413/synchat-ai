@@ -553,7 +553,7 @@ Classification:`;
         // Query Decomposition uses the *corrected* query text
         if (currentQueryText.split(/\s+/).length > 5) { // Simple heuristic to avoid decomposing very short queries
             try {
-                const decompositionPrompt = `Analyze the following user question. If it contains multiple distinct sub-questions that should be answered separately for a comprehensive response, break it down into those individual sub-questions. Return only the list of sub-questions, each on a new line. If it's a single, simple question, return only the original question. User Question: '${currentQueryText}'`;
+                const decompositionPrompt = `Analiza la siguiente pregunta de usuario en español: '${currentQueryText}'. Si contiene múltiples sub-preguntas distintas que deberían responderse por separado para una respuesta completa, divídela en esas sub-preguntas individuales. Devuelve únicamente la lista de sub-preguntas en ESPAÑOL, cada una en una nueva línea. Si es una pregunta única y simple, devuelve solo la pregunta original en ESPAÑOL. Pregunta de Usuario: '${currentQueryText}'`;
                 const decompositionMessages = [ { role: "system", content: "You are an AI assistant that analyzes user questions..." }, { role: "user", content: decompositionPrompt } ];
                 const decompositionResponse = await getChatCompletion(decompositionMessages, "gpt-3.5-turbo", 0.3);
                 if (decompositionResponse) {
@@ -746,10 +746,10 @@ Classification:`;
             ftsQueryParts.push(token);
         }
     }
-    // Combine all parts with the FTS AND operator '&'
-    // E.g., "(termA_expanded) & termB & (termC_expanded)"
-    const ftsQueryString = ftsQueryParts.join(' & ');
-    logger.info(`(DB Service) Original FTS query text for loop: "${processedQueryText.substring(0,50)}...", Constructed FTS query string: "${ftsQueryString.substring(0,100)}..."`);
+    // Combine all parts with the FTS OR operator '|'
+    // E.g., "(termA_expanded) | termB | (termC_expanded)"
+    const ftsQueryString = ftsQueryParts.join(' | '); // Changed from ' & ' to ' | '
+    logger.info(`(DB Service) Original FTS query text for loop: "${processedQueryText.substring(0,50)}...", Constructed FTS query string (OR logic): "${ftsQueryString.substring(0,100)}..."`); // Updated log message
             // logger.info(...) // This log is already in place and describes the constructed string.
 
             const rpcParamsFts = {
