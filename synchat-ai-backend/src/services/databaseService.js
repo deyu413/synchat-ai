@@ -803,15 +803,25 @@ Classification:`;
 
         if (rankedResults.length === 0) {
             const emptyReturn = {
-                results: [],
+                results: [], // CRITICAL
                 propositionResults: [],
-                searchParams: searchParamsForLog,
-                queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog,
-                predictedCategory,
-                rawRankedResultsForLog: [] // Add this line
+                searchParams: searchParamsForLog || {},
+                queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog || (originalUserQueryAtStart ? [originalUserQueryAtStart] : []),
+                predictedCategory: predictedCategory || null,
+                // rawRankedResultsForLog: [] // This was added before, but chatController will derive from results or pipelineDetails
             };
-            if (returnPipelineDetails) emptyReturn.pipelineDetails = pipelineDetails;
-            logger.info("(DB Service) No results after merging. Returning empty.");
+            if (returnPipelineDetails) {
+                emptyReturn.pipelineDetails = pipelineDetails || {
+                    originalQuery: originalUserQueryAtStart || queryText,
+                    finalRankedResultsForPlayground: [], // CRITICAL for chatController derivation
+                    // Add other safe defaults for pipelineDetails if necessary
+                 };
+                // Ensure finalRankedResultsForPlayground is an array if pipelineDetails exists
+                if (emptyReturn.pipelineDetails && !Array.isArray(emptyReturn.pipelineDetails.finalRankedResultsForPlayground)) {
+                    emptyReturn.pipelineDetails.finalRankedResultsForPlayground = [];
+                }
+            }
+            logger.info("(DB Service) No results after merging. Returning empty structure."); // Log the structure being returned
             return emptyReturn;
         }
 
@@ -963,46 +973,70 @@ Classification:`;
         const propositionDataForReturn = propositionResults || [];
         if (returnPipelineDetails) pipelineDetails.finalPropositionResults = propositionDataForReturn.map(p => ({ propositionId: p.proposition_id, text: p.proposition_text, sourceChunkId: p.source_chunk_id, score: p.similarity }));
 
-        const returnObject = {
-            results: finalResultsMapped || [],
-            propositionResults: propositionDataForReturn || [],
-            searchParams: searchParamsForLog || {},
-            queriesEmbeddedForLog: (aggregatedQueriesEmbeddedForLog && aggregatedQueriesEmbeddedForLog.length > 0) ? aggregatedQueriesEmbeddedForLog : (originalUserQueryAtStart ? [originalUserQueryAtStart] : []),
-            predictedCategory: predictedCategory !== undefined ? predictedCategory : null
-        };
+        const finalResultsToReturn = Array.isArray(finalResultsMapped) ? finalResultsMapped : [];
+        const propositionDataToReturn = Array.isArray(propositionDataForReturn) ? propositionDataForReturn : [];
+        const queriesEmbeddedForLogReturn = (Array.isArray(aggregatedQueriesEmbeddedForLog) && aggregatedQueriesEmbeddedForLog.length > 0) ? aggregatedQueriesEmbeddedForLog : (originalUserQueryAtStart ? [originalUserQueryAtStart] : []);
+        const searchParamsForLogReturn = searchParamsForLog || {};
+        const predictedCategoryReturn = predictedCategory !== undefined ? predictedCategory : null;
 
+        let pipelineDetailsReturn;
         if (returnPipelineDetails) {
-            returnObject.pipelineDetails = pipelineDetails || { originalQuery: originalUserQueryAtStart, error: "Pipeline details were not fully generated." };
+            pipelineDetailsReturn = pipelineDetails || { originalQuery: originalUserQueryAtStart || queryText, error: "Pipeline details object was not created prior to return." };
+            // Ensure finalRankedResultsForPlayground is part of pipelineDetails and is an array
+            // This is crucial for the chatController's derivation of rawRankedResultsForLog
+            if (!pipelineDetailsReturn.finalRankedResultsForPlayground || !Array.isArray(pipelineDetailsReturn.finalRankedResultsForPlayground)) {
+                 // If not properly populated earlier (e.g. in the playground detailing step), default to an empty array.
+                 // Ideally, it should be populated with the same content as finalResultsToReturn if no specific playground processing was done.
+                 pipelineDetailsReturn.finalRankedResultsForPlayground = finalResultsToReturn; // Or [] if it should be distinct and was missed
+            }
+        }
+
+        const returnObject = {
+            results: finalResultsToReturn,
+            propositionResults: propositionDataToReturn,
+            searchParams: searchParamsForLogReturn,
+            queriesEmbeddedForLog: queriesEmbeddedForLogReturn,
+            predictedCategory: predictedCategoryReturn
+        };
+        if (returnPipelineDetails) {
+            returnObject.pipelineDetails = pipelineDetailsReturn;
         }
         return returnObject;
 
     } catch (error) {
-        logger.error(`(DB Service) Error general durante la búsqueda híbrida para cliente ${clientId}:`, { message: error.message, stack: error.stack });
+        logger.error(`(DB Service) Error general durante la búsqueda híbrida para cliente ${clientId}:`, { message: error.message, stack: error.stack?.substring(0, 500) });
 
-        // Ensure predictedCategory is defined in this scope, or use a safe default.
-        // It's declared at the beginning of hybridSearch, so it should be available.
-        // clientCategoriesArray might not be defined if error occurred before its initialization.
+        const searchParamsForLogError = typeof searchParamsForLog !== 'undefined' ? searchParamsForLog : {};
+        const originalUserQueryAtStartError = typeof originalUserQueryAtStart !== 'undefined' ? originalUserQueryAtStart : (typeof queryText !== 'undefined' ? queryText : "");
+        const predictedCategoryError = typeof predictedCategory !== 'undefined' ? predictedCategory : null;
+        const clientCategoriesArrayForErrorCatch = typeof clientCategoriesArray !== 'undefined' ? clientCategoriesArray : [];
+        const aggregatedQueriesEmbeddedForLogError = (typeof aggregatedQueriesEmbeddedForLog !== 'undefined' && Array.isArray(aggregatedQueriesEmbeddedForLog) && aggregatedQueriesEmbeddedForLog.length > 0)
+            ? aggregatedQueriesEmbeddedForLog
+            : (originalUserQueryAtStartError ? [originalUserQueryAtStartError] : []);
 
         const errorReturn = {
-            results: [],
-            propositionResults: [],
-            searchParams: searchParamsForLog || {}, // searchParamsForLog might be undefined if error is very early
-            queriesEmbeddedForLog: (originalUserQueryAtStart ? [originalUserQueryAtStart] : (queryText ? [queryText] : [])),
-            predictedCategory: predictedCategory !== undefined ? predictedCategory : null, // predictedCategory should be in scope
+            results: [], // CRITICAL
+            propositionResults: [], // CRITICAL
+            searchParams: searchParamsForLogError,
+            queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLogError,
+            predictedCategory: predictedCategoryError,
             error: error.message
         };
 
         if (returnPipelineDetails) {
-            if (pipelineDetails) { // If pipelineDetails was partially built
-                pipelineDetails.error = error.message;
-                errorReturn.pipelineDetails = pipelineDetails;
-            } else { // If pipelineDetails is null (error happened very early)
-                errorReturn.pipelineDetails = {
-                    originalQuery: originalUserQueryAtStart || queryText, // Use whichever is available
-                    error: error.message,
-                    queryCorrection: queryCorrectionDetails || { attempted: false, originalQuery: originalUserQueryAtStart || queryText, correctedQuery: originalUserQueryAtStart || queryText, wasChanged: false },
-                    queryClassification: { predictedCategory: predictedCategory !== undefined ? predictedCategory : null, categoriesAvailable: clientCategoriesArray || [] }
-                };
+            const currentPipelineDetails = typeof pipelineDetails !== 'undefined' ? pipelineDetails : {};
+            errorReturn.pipelineDetails = {
+                ...(currentPipelineDetails || {}), // Spread existing details if any
+                originalQuery: originalUserQueryAtStartError,
+                finalRankedResultsForPlayground: [], // CRITICAL for chatController derivation
+                error: error.message,
+                queryClassification: { predictedCategory: predictedCategoryError, categoriesAvailable: clientCategoriesArrayForErrorCatch }
+            };
+             // Preserve original pipeline error if a new one is generic, or combine.
+            if (currentPipelineDetails.error && currentPipelineDetails.error !== error.message) {
+                 errorReturn.pipelineDetails.error = `Main error: ${error.message}. Previous pipeline error: ${currentPipelineDetails.error}`;
+            } else {
+                 errorReturn.pipelineDetails.error = error.message;
             }
         }
         return errorReturn;

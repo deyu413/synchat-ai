@@ -158,10 +158,16 @@ export const handleChatMessage = async (req, res, next) => {
 
         const conversationHistory = await db.getConversationHistory(conversationId);
         // Use effectiveQuery for the search
-        const hybridSearchOutput = await db.hybridSearch(effectiveClientId, effectiveQuery, conversationId, {}); // Changed clientId to effectiveClientId
+        const hybridSearchOutput = await db.hybridSearch(
+            effectiveClientId,
+            effectiveQuery,
+            conversationId,
+            {},   // options
+            true  // returnPipelineDetails - assuming this is for detailed logging/debugging
+        );
 
         // Safely access results, defaulting to an empty array if not present or not an array
-        const hybridSearchResultsOnly = (hybridSearchOutput && Array.isArray(hybridSearchOutput.results))
+        const resultsToMap = (hybridSearchOutput && Array.isArray(hybridSearchOutput.results))
             ? hybridSearchOutput.results
             : [];
 
@@ -170,28 +176,12 @@ export const handleChatMessage = async (req, res, next) => {
             ? hybridSearchOutput.propositionResults
             : [];
 
-        // Safely access searchParams, defaulting to an empty object
-        const searchParamsUsed = (hybridSearchOutput && typeof hybridSearchOutput.searchParams === 'object' && hybridSearchOutput.searchParams !== null)
-            ? hybridSearchOutput.searchParams
-            : {};
-
-        // Safely access queriesEmbeddedForLog, defaulting to an empty array
-        const queriesThatWereEmbedded = (hybridSearchOutput && Array.isArray(hybridSearchOutput.queriesEmbeddedForLog))
-            ? hybridSearchOutput.queriesEmbeddedForLog
-            : [];
-
-        // Safely access predictedCategory, defaulting to null
-        const predictedCategoryValue = (hybridSearchOutput && typeof hybridSearchOutput.predictedCategory !== 'undefined')
-            ? hybridSearchOutput.predictedCategory
-            : null;
-
-        // Derive rawRankedResultsForLog safely
-        // Fallback chain: pipelineDetails.finalRankedResultsForPlayground -> hybridSearchOutput.results -> empty array
+        // Derive rawRankedResultsForLog safely, using resultsToMap as a final fallback
         const rawRankedResultsForLog = (hybridSearchOutput && hybridSearchOutput.pipelineDetails && Array.isArray(hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground))
             ? hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground
-            : hybridSearchResultsOnly; // Fallback to hybridSearchResultsOnly which is already safely an array
+            : resultsToMap;
 
-        let initialRelevantKnowledge = hybridSearchResultsOnly;
+        let initialRelevantKnowledge = resultsToMap; // Use resultsToMap (which is safely derived hybridSearchOutput.results)
 
         // --- Ambiguity Detection ---
         let isAmbiguous = false;
@@ -447,25 +437,34 @@ export const handleChatMessage = async (req, res, next) => {
                  db.updateAnalyticOnEscalation(conversationId, new Date(), effectiveQuery).catch(err => logger.error(`(ChatCtrl) Analytics: Failed to update escalation data for CV:${conversationId}`, err));
             }
 
+            // Ensure these variables used for logData are defined with fallbacks
+            const queriesThatWereEmbeddedForLog = hybridSearchOutput?.queriesEmbeddedForLog || [];
+            const searchParamsUsedForLog = hybridSearchOutput?.searchParams || {};
+            const predictedCategoryValueForLog = hybridSearchOutput?.predictedCategory || null;
+
+            // botReplyText and messagesForAPI are defined within this try block before this point
+            // wasEscalated is also defined within this try block
+            const messagesForAPI_for_log = typeof messagesForAPI !== 'undefined' ? messagesForAPI : [{role:"system", content:"Error: messagesForAPI not constructed"}, {role:"user", content: effectiveQuery || ""}];
+            const botReplyText_for_log = typeof botReplyText !== 'undefined' ? botReplyText : "Error: Reply not generated";
+
             const retrievedContextForLog = (Array.isArray(rawRankedResultsForLog) ? rawRankedResultsForLog : []).map(c => ({
                 id: c.id,
-                // Ensure c.content is a string before calling substring, and provide a fallback.
-                content_preview: (typeof c.content === 'string' ? c.content.substring(0,150) : "") + "...",
-                score: c.reranked_score ?? c.hybrid_score ?? 0, // Use nullish coalescing for score
-                metadata: c.metadata // Assuming metadata is an object or null
+                content_preview: (typeof c.content === 'string' ? c.content.substring(0,150) : "") + "...", // Safe substring
+                score: c.reranked_score ?? c.hybrid_score ?? 0,
+                metadata: c.metadata
             }));
 
             const logData = {
                 clientId: effectiveClientId,
                 conversationId,
-                userQuery: effectiveQuery || "", // Fallback for userQuery
+                userQuery: effectiveQuery || "",
                 retrievedContext: retrievedContextForLog, // Already an array
-                finalPromptToLlm: JSON.stringify(messagesForAPI), // messagesForAPI should be constructed to be valid
-                llmResponse: botReplyText || "", // Fallback for botReplyText
-                queryEmbeddingsUsed: queriesThatWereEmbedded || [], // Fallback for queriesThatWereEmbedded
-                vectorSearchParams: searchParamsUsed || {}, // Fallback for searchParamsUsed
-                wasEscalated: wasEscalated || false, // Fallback for wasEscalated
-                predicted_query_category: predictedCategoryValue // Use the safely derived value
+                finalPromptToLlm: JSON.stringify(messagesForAPI_for_log),
+                llmResponse: botReplyText_for_log,
+                queryEmbeddingsUsed: queriesThatWereEmbeddedForLog,
+                vectorSearchParams: searchParamsUsedForLog,
+                wasEscalated: wasEscalated,
+                predicted_query_category: predictedCategoryValueForLog
             };
 
             try {
