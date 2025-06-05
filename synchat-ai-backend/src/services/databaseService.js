@@ -802,7 +802,14 @@ Classification:`;
         if (returnPipelineDetails) pipelineDetails.mergedAndPreRankedResultsPreview = rankedResults.slice(0,50).map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', metadata: item.metadata, initialHybridScore: item.hybrid_score, vectorSimilarity: item.vector_similarity, ftsScore: item.fts_score, highlighted_content: item.highlighted_content }));
 
         if (rankedResults.length === 0) {
-            const emptyReturn = { results: [], propositionResults: [], searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog, predictedCategory };
+            const emptyReturn = {
+                results: [],
+                propositionResults: [],
+                searchParams: searchParamsForLog,
+                queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog,
+                predictedCategory,
+                rawRankedResultsForLog: [] // Add this line
+            };
             if (returnPipelineDetails) emptyReturn.pipelineDetails = pipelineDetails;
             logger.info("(DB Service) No results after merging. Returning empty.");
             return emptyReturn;
