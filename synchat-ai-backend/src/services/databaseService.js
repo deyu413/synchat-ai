@@ -277,7 +277,43 @@ export const getClientKnowledgeCategories = async (clientId) => {
     }
 };
 
-export const createConversation = async (clientId) => { /* ... */ };
+export const createConversation = async (clientId) => {
+    if (!clientId) {
+        logger.error('(DB Service) createConversation: clientId is required.');
+        return null; // Or throw an error, but returning null aligns with some other patterns seen
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('conversations')
+            .insert([
+                {
+                    client_id: clientId,
+                    status: 'open' // Set an initial status
+                    // created_at and conversation_id have defaults in the DB
+                }
+            ])
+            .select('conversation_id') // Select the conversation_id of the new row
+            .single(); // Expecting a single row to be created and returned
+
+        if (error) {
+            logger.error('(DB Service) Error creating conversation in Supabase:', error);
+            return null;
+        }
+
+        if (!data || !data.conversation_id) {
+            logger.error('(DB Service) Conversation created but no conversation_id returned from Supabase.');
+            return null;
+        }
+
+        logger.info(`(DB Service) Conversation created successfully for client ${clientId} with ID: ${data.conversation_id}`);
+        return data.conversation_id;
+
+    } catch (err) {
+        logger.error('(DB Service) Unexpected exception in createConversation:', err);
+        return null; // Or rethrow, depending on desired error handling strategy
+    }
+};
 
 /**
  * Performs a hybrid search combining vector search and Full-Text Search (FTS)
