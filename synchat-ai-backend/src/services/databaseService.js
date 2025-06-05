@@ -5,20 +5,43 @@ import { getEmbedding } from './embeddingService.js'; // Necesario para búsqued
 import { getChatCompletion } from './openaiService.js'; // Import for query reformulation
 import { pipeline, env } from '@xenova/transformers';
 
+// --- INICIO DE LA ACTUALIZACIÓN ---
+
 // TODO: Future Enhancements for Query Expansion Dictionaries:
 // - Consider making the use of THESAURUS_ES and ACRONYMS_ES configurable (e.g., enable/disable globally or per client).
 // - Explore loading these dictionaries from a database or external configuration files instead of hardcoding.
 // - Investigate potential for client-specific thesauri or acronym lists.
-// Hardcoded Spanish Thesaurus for query expansion
+
+// Expanded Spanish Thesaurus for query expansion
 const THESAURUS_ES = {
-    "precio": ["costo", "tarifa", "valor"],
-    "soporte": ["ayuda", "asistencia", "atención"],
-    "problema": ["inconveniente", "error", "falla"],
-    "solución": ["respuesta", "resolución"],
-    "documento": ["archivo", "informe", "texto"],
-    "buscar": ["encontrar", "localizar", "consultar"]
-    // Add more domain-specific or common terms as needed
+    // General & Support
+    "precio": ["costo", "tarifa", "valor", "importe"],
+    "soporte": ["ayuda", "asistencia", "atención", "apoyo"],
+    "problema": ["inconveniente", "error", "falla", "incidencia", "dificultad"],
+    "solución": ["respuesta", "resolución", "arreglo"],
+    "documento": ["archivo", "informe", "texto", "guía", "manual"],
+    "buscar": ["encontrar", "localizar", "consultar", "ubicar"],
+    "empezar": ["iniciar", "comenzar", "configurar", "arrancar"],
+    "cómo": ["manera", "forma", "modo", "instrucciones"],
+    "información": ["detalles", "datos", "especificaciones"],
+
+    // Account & Billing
+    "plan": ["suscripción", "membresía", "tarifa", "modelo"],
+    "pago": ["facturación", "cobro", "transacción", "abonar"],
+    "cuenta": ["perfil", "usuario", "registro", "credenciales"],
+    "cancelar": ["anular", "dar de baja", "suspender", "rescindir"],
+    "contraseña": ["clave", "acceso", "password", "pin"],
+    "límite": ["restricción", "tope", "cuota", "capacidad"],
+
+    // Product & Features
+    "característica": ["función", "funcionalidad", "opción", "capacidad"],
+    "guía": ["tutorial", "manual", "documentación", "instructivo"],
+    "integración": ["conectar", "sincronizar", "vincular", "enlazar"],
+    "configurar": ["ajustar", "personalizar", "establecer"],
+    "ejemplo": ["caso", "muestra", "ilustración"]
 };
+
+// --- FIN DE LA ACTUALIZACIÓN ---
 
 // Hardcoded Spanish Acronym/Abbreviation Dictionary for query expansion
 const ACRONYMS_ES = {
@@ -30,6 +53,8 @@ const ACRONYMS_ES = {
     "KPI": "Key Performance Indicator"
     // Add more domain-specific or common acronyms as needed
 };
+
+// ... (El resto de tu archivo continúa sin cambios)
 
 // --- Transformers.js Configuration ---
 // env.allowLocalModels = false; // Optional: Disable local model loading
