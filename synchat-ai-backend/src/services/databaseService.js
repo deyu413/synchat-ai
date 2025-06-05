@@ -1362,7 +1362,71 @@ export const getChunksForSource = async (clientId, sourceId, page = 1, pageSize 
 };
 
 
-export const getClientConversations = async (clientId, statusFilters = [], page = 1, pageSize = 20) => { /* ... */ };
+export const getClientConversations = async (clientId, statusFilters = [], page = 1, pageSize = 20) => {
+    if (!clientId) {
+        logger.error('(DB Service) getClientConversations: clientId is required.');
+        return { data: null, error: 'Client ID is required.' };
+    }
+
+    const offset = (page - 1) * pageSize;
+
+    try {
+        let query = supabase
+            .from('conversations')
+            .select(`
+                conversation_id,
+                client_id,
+                created_at,
+                last_message_at,
+                status,
+                messages ( content, created_at )
+            `, { count: 'exact' }) // Request total count
+            .eq('client_id', clientId)
+            .order('last_message_at', { ascending: false, nullsLast: true });
+
+        if (statusFilters && statusFilters.length > 0) {
+            query = query.in('status', statusFilters);
+        }
+
+        query = query.range(offset, offset + pageSize - 1);
+
+        const { data: conversationsData, error, count } = await query;
+
+        if (error) {
+            logger.error('(DB Service) Error fetching client conversations from Supabase:', error);
+            return { data: null, error: error.message };
+        }
+
+        // Process data to include a last_message_preview
+        const processedConversations = conversationsData.map(conv => {
+            let last_message_preview = null;
+            if (conv.messages && conv.messages.length > 0) {
+                // Sort messages to find the most recent one, just in case they aren't ordered
+                conv.messages.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                last_message_preview = conv.messages[0].content;
+            }
+            // Remove the full messages array from the main conversation object if not needed for list view
+            // Or select only the latest message directly in the query if possible and more performant
+            delete conv.messages;
+            return { ...conv, last_message_preview };
+        });
+
+        logger.info(`(DB Service) Fetched ${processedConversations.length} conversations for client ${clientId}, page ${page}, totalCount ${count}`);
+        return {
+            data: {
+                conversations: processedConversations,
+                totalCount: count,
+                page: page,
+                pageSize: pageSize
+            },
+            error: null
+        };
+
+    } catch (err) {
+        logger.error('(DB Service) Unexpected exception in getClientConversations:', err);
+        return { data: null, error: 'An unexpected server error occurred while fetching conversations.' };
+    }
+};
 
 export const getMessagesForConversation = async (conversationId, clientId) => {
     if (!conversationId || !clientId) {
