@@ -129,7 +129,11 @@ export const handleChatMessage = async (req, res, next) => {
         }
         logger.debug("(ChatCtrl) No encontrado en caché. Procesando...");
 
-        const conversationHistory = await db.getConversationHistory(conversationId);
+        let conversationHistory = await db.getConversationHistory(conversationId);
+        if (!Array.isArray(conversationHistory)) {
+            logger.warn(`(ChatCtrl) conversationHistory for CV:${conversationId} was not an array, defaulting to empty. Original value:`, conversationHistory);
+            conversationHistory = []; // Ensure it's an array
+        }
         const hybridSearchOutput = await db.hybridSearch(
             effectiveClientId,
             effectiveQuery,
