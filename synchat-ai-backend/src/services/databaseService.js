@@ -134,27 +134,26 @@ export const getClientConfig = async (clientId) => {
                 updated_at,
                 subscription_id,
                 subscription_status,
-                subscription_current_period_end 
-            `) // Eliminado billing_cycle_id.
-               // subscription_current_period_end ya estaba en tu tabla, lo incluyo aquí si fuera necesario
-               // o puedes eliminarlo también si no se usa en este contexto.
-               // La clave es quitar el que no existe: billing_cycle_id.
+                billing_cycle_id
+            `)
             .eq('client_id', clientId)
             .single();
 
         if (error) {
-            if (error.code === 'PGRST116') {
+            if (error.code === 'PGRST116') { // PostgREST code for "Matching row not found"
                 logger.warn(`(DB Service) getClientConfig: Cliente no encontrado con ID: ${clientId}. Error: ${error.message}`);
-                return null;
+                return null; // Or handle as per application logic, e.g., throw new Error('Client not found');
             }
+            // Log other types of errors
             logger.error(`(DB Service) Error fetching client config for ID ${clientId}:`, error);
-            throw error;
+            throw error; // Re-throw other errors to be handled by the caller
         }
         logger.debug(`(DB Service) getClientConfig: Datos encontrados para cliente ${clientId}: ${data ? 'Sí' : 'No'}`);
         return data;
     } catch (err) {
+        // Catch any other unexpected errors (network issues, etc.)
         logger.error(`(DB Service) Unexpected exception fetching client config for ID ${clientId}:`, err);
-        throw err;
+        throw err; // Re-throw to allow higher-level error handling
     }
 };
 
