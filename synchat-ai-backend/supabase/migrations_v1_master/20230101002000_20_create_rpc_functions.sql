@@ -1,99 +1,99 @@
 -- Define or replace all core RPC functions for the application
 
 -- 1. vector_search (latest version with category filter and ivfflat_probes_param)
-CREATE OR REPLACE FUNCTION public.vector_search(
-    client_id_param uuid,
-    query_embedding vector(1536),
-    match_threshold double precision,
-    match_count integer,
-    p_category_filter text[] DEFAULT NULL,
-    ivfflat_probes_param INT DEFAULT 10
-)
-RETURNS TABLE (
-    id bigint,
-    content text,
-    metadata jsonb,
-    knowledge_source_id uuid,
-    similarity double precision
-)
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    EXECUTE 'SET LOCAL ivfflat.probes = ' || ivfflat_probes_param::TEXT;
-    -- For HNSW (if used as the index): SET LOCAL hnsw.ef_search = <value>; -- Default is 40.
-
-    RETURN QUERY
-    SELECT
-        kb.id,
-        kb.content,
-        kb.metadata,
-        (kb.metadata->>'original_source_id')::uuid AS knowledge_source_id,
-        1 - (kb.embedding <=> query_embedding) AS similarity -- Cosine distance
-    FROM
-        public.knowledge_base kb
-    WHERE
-        kb.client_id = client_id_param
-        AND (1 - (kb.embedding <=> query_embedding)) > match_threshold
-        AND (p_category_filter IS NULL OR (kb.metadata->'category_tags')::jsonb ?| p_category_filter)
-    ORDER BY
-        similarity DESC
-    LIMIT
-        match_count;
-END;
-$$;
-COMMENT ON FUNCTION public.vector_search(uuid, vector, double precision, integer, text[], integer)
-IS 'Performs vector similarity search on knowledge_base, with optional category filtering and configurable ivfflat_probes. Assumes cosine similarity.';
+-- CREATE OR REPLACE FUNCTION public.vector_search(
+--     client_id_param uuid,
+--     query_embedding vector(1536),
+--     match_threshold double precision,
+--     match_count integer,
+--     p_category_filter text[] DEFAULT NULL,
+--     ivfflat_probes_param INT DEFAULT 10
+-- )
+-- RETURNS TABLE (
+--     id bigint,
+--     content text,
+--     metadata jsonb,
+--     knowledge_source_id uuid,
+--     similarity double precision
+-- )
+-- LANGUAGE plpgsql
+-- AS $$
+-- BEGIN
+--     EXECUTE 'SET LOCAL ivfflat.probes = ' || ivfflat_probes_param::TEXT;
+--     -- For HNSW (if used as the index): SET LOCAL hnsw.ef_search = <value>; -- Default is 40.
+--
+--     RETURN QUERY
+--     SELECT
+--         kb.id,
+--         kb.content,
+--         kb.metadata,
+--         (kb.metadata->>'original_source_id')::uuid AS knowledge_source_id,
+--         1 - (kb.embedding <=> query_embedding) AS similarity -- Cosine distance
+--     FROM
+--         public.knowledge_base kb
+--     WHERE
+--         kb.client_id = client_id_param
+--         AND (1 - (kb.embedding <=> query_embedding)) > match_threshold
+--         AND (p_category_filter IS NULL OR (kb.metadata->'category_tags')::jsonb ?| p_category_filter)
+--     ORDER BY
+--         similarity DESC
+--     LIMIT
+--         match_count;
+-- END;
+-- $$;
+-- COMMENT ON FUNCTION public.vector_search(uuid, vector, double precision, integer, text[], integer)
+-- IS 'Performs vector similarity search on knowledge_base, with optional category filtering and configurable ivfflat_probes. Assumes cosine similarity.';
 
 -- 2. fts_search_with_rank (latest version with category filter and corrected fts column)
-CREATE OR REPLACE FUNCTION public.fts_search_with_rank(
-    client_id_param uuid,
-    query_text text,
-    match_count integer,
-    p_category_filter text[] DEFAULT NULL,
-    language_config REGCONFIG DEFAULT 'pg_catalog.spanish' -- Defaulting to Spanish as per fts_update_trigger_function
-)
-RETURNS TABLE (
-    id bigint,
-    content text,
-    metadata jsonb,
-    knowledge_source_id uuid,
-    rank real,
-    highlighted_content TEXT
-)
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    ts_query_obj tsquery;
-BEGIN
-    ts_query_obj := websearch_to_tsquery(language_config, query_text);
-
-    RETURN QUERY
-    SELECT
-        kb.id,
-        kb.content,
-        kb.metadata,
-        (kb.metadata->>'original_source_id')::uuid AS knowledge_source_id,
-        ts_rank_cd(kb.fts, ts_query_obj) AS rank,
-        ts_headline(
-            language_config,
-            kb.content,
-            ts_query_obj,
-            'StartSel=**,StopSel=**,MaxWords=35,MinWords=15,ShortWord=3,HighlightAll=FALSE'
-        ) AS highlighted_content
-    FROM
-        public.knowledge_base kb
-    WHERE
-        kb.client_id = client_id_param
-        AND kb.fts @@ ts_query_obj
-        AND (p_category_filter IS NULL OR (kb.metadata->'category_tags')::jsonb ?| p_category_filter)
-    ORDER BY
-        rank DESC
-    LIMIT
-        match_count;
-END;
-$$;
-COMMENT ON FUNCTION public.fts_search_with_rank(uuid, text, integer, text[], regconfig)
-IS 'Performs Full-Text Search on knowledge_base (using kb.fts and specified language_config), with ranking, highlighting, and optional category filtering.';
+-- CREATE OR REPLACE FUNCTION public.fts_search_with_rank(
+--     client_id_param uuid,
+--     query_text text,
+--     match_count integer,
+--     p_category_filter text[] DEFAULT NULL,
+--     language_config REGCONFIG DEFAULT 'pg_catalog.spanish' -- Defaulting to Spanish as per fts_update_trigger_function
+-- )
+-- RETURNS TABLE (
+--     id bigint,
+--     content text,
+--     metadata jsonb,
+--     knowledge_source_id uuid,
+--     rank real,
+--     highlighted_content TEXT
+-- )
+-- LANGUAGE plpgsql
+-- AS $$
+-- DECLARE
+--     ts_query_obj tsquery;
+-- BEGIN
+--     ts_query_obj := websearch_to_tsquery(language_config, query_text);
+--
+--     RETURN QUERY
+--     SELECT
+--         kb.id,
+--         kb.content,
+--         kb.metadata,
+--         (kb.metadata->>'original_source_id')::uuid AS knowledge_source_id,
+--         ts_rank_cd(kb.fts, ts_query_obj) AS rank,
+--         ts_headline(
+--             language_config,
+--             kb.content,
+--             ts_query_obj,
+--             'StartSel=**,StopSel=**,MaxWords=35,MinWords=15,ShortWord=3,HighlightAll=FALSE'
+--         ) AS highlighted_content
+--     FROM
+--         public.knowledge_base kb
+--     WHERE
+--         kb.client_id = client_id_param
+--         AND kb.fts @@ ts_query_obj
+--         AND (p_category_filter IS NULL OR (kb.metadata->'category_tags')::jsonb ?| p_category_filter)
+--     ORDER BY
+--         rank DESC
+--     LIMIT
+--         match_count;
+-- END;
+-- $$;
+-- COMMENT ON FUNCTION public.fts_search_with_rank(uuid, text, integer, text[], regconfig)
+-- IS 'Performs Full-Text Search on knowledge_base (using kb.fts and specified language_config), with ranking, highlighting, and optional category filtering.';
 
 -- 3. proposition_vector_search (from 20240715100500_create_search_rpc_functions.sql, assuming no later changes)
 -- This RPC depends on knowledge_propositions table, which is NOT YET defined in this sequence.
