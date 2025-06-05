@@ -1,51 +1,40 @@
-// widget.js
+// mi-bot-atencion/widget.js
 
 // --- i18n Initialization ---
-let i18nStrings = {}; // To hold loaded strings
+let i18nStrings = {};
 async function loadI18nStrings() {
-    // Assuming widget.js is in mi-bot-atencion/ and locales/ is at mi-bot-atencion/locales/
-    // Adjust path if widget.js moves relative to locales/
     const widgetScriptSrc = document.currentScript.src;
     const widgetBaseUrl = widgetScriptSrc.substring(0, widgetScriptSrc.lastIndexOf('/') + 1);
-    const langFilePath = `${widgetBaseUrl}locales/es.json`; // Assumes locales/ is in the same dir as widget.js
+    const langFilePath = `${widgetBaseUrl}locales/es.json`;
     try {
         const response = await fetch(langFilePath);
         if (!response.ok) {
-            // widgetLogger might not be defined here if loadI18nStrings is called BEFORE widgetLogger is defined.
-            // Using console.error as a safe fallback if this function is ever moved outside/before IIFE.
             (typeof widgetLogger !== 'undefined' ? widgetLogger : console).error(`Failed to load language file from ${langFilePath}. Status: ${response.status}`);
-            return {}; // Return empty or default strings as fallback
+            return {};
         }
         return await response.json();
     } catch (error) {
         (typeof widgetLogger !== 'undefined' ? widgetLogger : console).error(`Error fetching language file from ${langFilePath}:`, error);
-        return {}; // Fallback
+        return {};
     }
 }
-// Load strings immediately
-// i18nStrings = await loadI18nStrings(); // This needs to be inside the main async function
 
 (async function() {
     i18nStrings = await loadI18nStrings();
 
-    // --- Debug Configuration & Logger ---
-    // Set window.SYNCHAT_WIDGET_DEBUG = true in browser console to enable debug logs.
-    const DEBUG = window.SYNCHAT_WIDGET_DEBUG || false; // Default to false
-
+    const DEBUG = window.SYNCHAT_WIDGET_DEBUG || false;
     const widgetLogger = {
         log: (...args) => { if (DEBUG) console.log("SynChat Widget:", ...args); },
-        warn: (...args) => console.warn("SynChat Widget WARNING:", ...args), // Warnings usually always shown
-        error: (...args) => console.error("SynChat Widget ERROR:", ...args)  // Errors always shown
+        warn: (...args) => console.warn("SynChat Widget WARNING:", ...args),
+        error: (...args) => console.error("SynChat Widget ERROR:", ...args)
     };
 
-    // Fallback for i18n strings if loading failed or key is missing
     const getString = (key, defaultString = '', params = {}) => {
         const keys = key.split('.');
         let current = i18nStrings;
         for (const k of keys) {
             current = current[k];
             if (current === undefined) {
-                // getString is defined inside the IIFE where widgetLogger will be available.
                 widgetLogger.warn(`i18n: Missing string for key: ${key}. Using default: "${defaultString}"`);
                 return defaultString;
             }
@@ -57,41 +46,36 @@ async function loadI18nStrings() {
         return str;
     };
 
-    // --- Dynamic Client ID Retrieval ---
     let dynamicClientId = null;
     const scripts = document.getElementsByTagName('script');
     for (let i = 0; i < scripts.length; i++) {
         const script = scripts[i];
-        // Ensure script.src exists and is a string before calling .includes()
         if (script.src && typeof script.src === 'string' && script.src.includes('widget.js') && script.hasAttribute('data-client-id')) {
             dynamicClientId = script.getAttribute('data-client-id');
             break;
         }
     }
 
-    // Error if not found after the loop
     if (!dynamicClientId) {
-        // Ensure widgetLogger is available or fallback to console.error
-        const logError = (typeof widgetLogger !== 'undefined' ? widgetLogger.error : console.error);
-        // Ensure getString is available or use a hardcoded string
-        const errorMessage = (typeof getString !== 'undefined' ? getString('widget.criticalClientIdMissing', "SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize.") : "SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize.");
-        logError(errorMessage);
-        return; // Stop execution
+        widgetLogger.error(getString('widget.criticalClientIdMissing', "SynChat AI Widget: Critical - 'data-client-id' attribute not found on script tag. Widget cannot initialize."));
+        return;
+    }
+    if (!window.SYNCHAT_CONFIG || !window.SYNCHAT_CONFIG.API_BASE_URL) {
+        widgetLogger.error("SynChat AI Widget: Critical - 'window.SYNCHAT_CONFIG.API_BASE_URL' is not defined. Widget cannot fetch configuration.");
+        return;
     }
 
-    // --- Configuración del Backend ---
     const VERCEL_BACKEND_BASE_URL = window.SYNCHAT_CONFIG.API_BASE_URL;
 
-    // --- Configuración Inicial del Widget (con valores por defecto) ---
     let WIDGET_CONFIG = {
         clientId: dynamicClientId,
         backendUrl: `${VERCEL_BACKEND_BASE_URL}/api/public-chat`,
         publicConfigUrl: `${VERCEL_BACKEND_BASE_URL}/api/public-chat/widget-config`,
-        botName: "SynChat Bot", // Not yet internationalized, as per instructions
+        botName: "SynChat Bot",
         welcomeMessage: getString('widget.defaultWelcomeMessage', "Hello! How can I help you today?"),
         inputPlaceholder: getString('widget.defaultInputPlaceholder', "Escribe tu mensaje..."),
-        triggerLogoUrl: "/images/zoe.png",
-        avatarUrl: "/images/zoe.png"
+        triggerLogoUrl: "/images/zoe.png", // Default, puede ser sobrescrito por la config del cliente
+        avatarUrl: "/images/zoe.png"     // Default, puede ser sobrescrito por la config del cliente
     };
 
     async function fetchWidgetConfiguration(clientId) {
@@ -120,78 +104,140 @@ async function loadI18nStrings() {
     if (dynamicData) {
         WIDGET_CONFIG.botName = dynamicData.botName || WIDGET_CONFIG.botName;
         WIDGET_CONFIG.welcomeMessage = dynamicData.welcomeMessage || WIDGET_CONFIG.welcomeMessage;
+        // Sobrescribir URLs de imágenes si vienen en la configuración del cliente
+        WIDGET_CONFIG.triggerLogoUrl = dynamicData.triggerLogoUrl || WIDGET_CONFIG.triggerLogoUrl;
+        WIDGET_CONFIG.avatarUrl = dynamicData.avatarUrl || WIDGET_CONFIG.avatarUrl;
+        // Aquí podrías añadir más configuraciones como colores, fuentes, si el backend las provee
+        // Ejemplo: WIDGET_CONFIG.primaryColor = dynamicData.primaryColor || WIDGET_CONFIG.primaryColor;
     }
 
     let conversationId = sessionStorage.getItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`);
     let isChatOpen = false;
+    let currentClarificationDetails = null; // Para guardar detalles de la clarificación
 
-    const essentialCSS = `
-    #synchat-trigger {
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        z-index: 9999;
-        cursor: pointer;
-        /* Other styles like width, height, background for the trigger button */
-    }
-    #synchat-window {
-        position: fixed;
-        bottom: 80px; /* Or adjusted based on trigger size */
-        right: 20px;
-        width: 350px;
-        max-height: 500px;
-        display: none; /* Initially hidden */
-        z-index: 10000;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-        border-radius: 8px;
-        overflow: hidden; /* To contain children like header, messages, input */
-        background-color: #fff; /* Assuming a white background */
-        display: flex; /* Use flex to structure header, messages, input vertically */
-        flex-direction: column;
-    }
-    /* Basic structure for children if not already present or to ensure they work with flex */
-    .synchat-header {
-        /* flex-shrink: 0; */ /* Prevent header from shrinking */
-    }
-    .synchat-messages {
-        flex-grow: 1; /* Allow messages area to take available space */
-        overflow-y: auto; /* Scroll for messages */
-    }
-    .synchat-input-area {
-        /* flex-shrink: 0; */ /* Prevent input area from shrinking */
-    }
-    `;
-
-    const originalWidgetCSS = `
-        /* ... (existing CSS as before, with addition for quick replies) ... */
-        .synchat-trigger, .synchat-window, .synchat-header, .synchat-messages, .synchat-input-area, #synchat-input, .synchat-send-btn, .synchat-message, .message-content, #requestHumanBtn, .synchat-quick-reply-options button {
-            box-sizing: border-box;
-            font-family: var(--synchat-font-primary);
+    const widgetCSS = `
+        :root {
+            --synchat-font-primary: 'Poppins', sans-serif; /* Definido para consistencia con styles.css */
+            --synchat-primary: ${dynamicData?.primaryColor || '#3B4018'}; /* Verde Oliva Oscuro por defecto */
+            --synchat-primary-darker: ${dynamicData?.primaryDarkerColor || '#2F3314'};
+            --synchat-secondary: ${dynamicData?.secondaryColor || '#F5F5DC'}; /* Beige por defecto */
+            --synchat-accent: ${dynamicData?.accentColor || '#B8860B'}; /* Dorado Oscuro por defecto */
+            --synchat-accent-hover: ${dynamicData?.accentHoverColor || '#A0740A'};
+            --synchat-text-light: ${dynamicData?.textLightColor || '#F5F5DC'};
+            --synchat-border-radius: 6px;
         }
-        /* ... (rest of existing CSS) ... */
+        #synchat-trigger {
+            position: fixed; bottom: 20px; right: 20px;
+            width: 60px; height: 60px; background-color: var(--synchat-primary);
+            border-radius: 50%; cursor: pointer; z-index: 9999;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15); transition: transform 0.2s ease-out;
+        }
+        #synchat-trigger:hover { transform: scale(1.1); }
+        #synchat-trigger img { width: 36px; height: 36px; }
+
+        #synchat-window {
+            position: fixed; bottom: 90px; right: 20px;
+            width: 370px; max-height: 70vh; min-height: 400px;
+            background-color: #fff; border-radius: var(--synchat-border-radius);
+            box-shadow: 0 5px 25px rgba(0,0,0,0.2);
+            display: none; /* Initially hidden */
+            flex-direction: column; z-index: 10000;
+            overflow: hidden;
+        }
+        #synchat-window.synchat-is-open { display: flex; }
+
+        .synchat-header {
+            background-color: var(--synchat-primary); color: var(--synchat-text-light);
+            padding: 12px 15px; display: flex; align-items: center;
+            border-top-left-radius: var(--synchat-border-radius);
+            border-top-right-radius: var(--synchat-border-radius);
+        }
+        .synchat-header .zoe-avatar { width: 40px; height: 40px; border-radius: 50%; margin-right: 10px; border: 1px solid var(--synchat-secondary); }
+        .synchat-header .header-title { flex-grow: 1; }
+        .synchat-header .zoe-name { font-weight: 600; display: block; font-size: 1.1em; }
+        .synchat-header .powered-by { font-size: 0.75em; opacity: 0.8; display:flex; align-items:center; }
+        .synchat-header .powered-by img { width:12px; height:12px; margin: 0 4px; }
+        .synchat-close-btn {
+            background: none; border: none; color: var(--synchat-text-light);
+            font-size: 24px; cursor: pointer; opacity: 0.7;
+            padding: 5px; line-height: 1;
+        }
+        .synchat-close-btn:hover { opacity: 1; }
+
+        #synchat-messages {
+            flex-grow: 1; padding: 15px; overflow-y: auto;
+            background-color: #f9f9f9;
+            display: flex; flex-direction: column;
+        }
+        .synchat-message {
+            max-width: 85%; padding: 8px 12px; margin-bottom: 10px;
+            border-radius: 12px; line-height: 1.4; word-wrap: break-word;
+            font-size: 0.95em;
+        }
+        .synchat-message.user {
+            background-color: var(--synchat-primary); color: var(--synchat-text-light);
+            border-bottom-right-radius: 4px; align-self: flex-end;
+        }
+        .synchat-message.bot {
+            background-color: #e9e9eb; color: #333;
+            border-bottom-left-radius: 4px; align-self: flex-start;
+        }
+         .synchat-message.system {
+            background-color: #fffbe6; color: #725c00;
+            border: 1px solid #ffe58f; text-align: center;
+            font-size: 0.85em; align-self: center; max-width: 95%;
+            border-radius: 4px;
+        }
+        .synchat-message .message-content { /* No specific styles needed if textContent is used directly */ }
+
+        #synchat-input-area {
+            display: flex; align-items: flex-end; padding: 10px 15px;
+            border-top: 1px solid #e0e0e0; background-color: #fff;
+        }
+        #synchat-input {
+            flex-grow: 1; padding: 10px; border: 1px solid #ccc;
+            border-radius: var(--synchat-border-radius); resize: none;
+            font-family: var(--synchat-font-primary); font-size: 1em;
+            max-height: 100px; overflow-y: auto;
+            margin-right: 8px;
+            line-height: 1.4;
+        }
+        #synchat-send-btn {
+            background-color: var(--synchat-primary); color: var(--synchat-text-light);
+            border: none; border-radius: 50%;
+            width: 40px; height: 40px; display: flex;
+            align-items: center; justify-content: center; cursor: pointer;
+            transition: background-color 0.2s ease; flex-shrink: 0;
+        }
+        #synchat-send-btn:hover { background-color: var(--synchat-primary-darker); }
+        #synchat-send-btn svg { width: 20px; height: 20px; }
+
+        #requestHumanBtn {
+            display: block; width: calc(100% - 30px); margin: 0 auto 10px auto;
+            padding: 8px 10px; font-size: 0.85em; text-align:center;
+            background-color: var(--synchat-secondary); color: var(--synchat-primary);
+            border: 1px solid var(--synchat-primary);
+            border-radius: var(--synchat-border-radius); cursor: pointer;
+        }
+        #requestHumanBtn:disabled { background-color: #ccc; color: #777; border-color: #bbb; cursor: not-allowed; }
+
         .synchat-quick-reply-options {
-            display: flex;
-            flex-wrap: wrap; /* Allow buttons to wrap */
-            justify-content: flex-start; /* Align to the start (typically left) */
-            padding: 5px 15px 10px 15px; /* Padding around the options area */
-            gap: 8px; /* Spacing between buttons */
+            display: flex; flex-wrap: wrap; justify-content: flex-start;
+            padding: 5px 0px 10px 0px; /* Reduced padding inside message area */
+            gap: 8px; align-self: flex-start; /* Align to bot side */
+            max-width: 100%;
         }
         .synchat-quick-reply-btn {
-            background-color: var(--synchat-accent);
-            color: var(--synchat-text-light);
-            border: none;
-            padding: 8px 12px;
-            border-radius: var(--synchat-border-radius);
-            cursor: pointer;
-            font-size: 0.9em;
-            transition: background-color 0.2s ease;
+            background-color: var(--synchat-accent); color: var(--synchat-text-light);
+            border: none; padding: 8px 12px;
+            border-radius: var(--synchat-border-radius); cursor: pointer;
+            font-size: 0.9em; transition: background-color 0.2s ease;
         }
-        .synchat-quick-reply-btn:hover {
-            background-color: var(--synchat-accent-hover);
-        }
+        .synchat-quick-reply-btn:hover { background-color: var(--synchat-accent-hover); }
+        /* Ensure box-sizing for all widget elements */
+        #synchat-trigger *, #synchat-window * { box-sizing: border-box; }
     `;
-
-    const widgetCSS = essentialCSS + originalWidgetCSS;
 
     function clearQuickReplyOptions() {
         const existingOptionsContainer = document.getElementById('synchat-quick-reply-container');
@@ -200,45 +246,14 @@ async function loadI18nStrings() {
         }
     }
 
-    function handleClarificationRequest(responseData) {
-        addMessageToChat("bot", responseData.reply); // Display Zoe's clarification question
-
-        clearQuickReplyOptions(); // Clear any old ones
-
-        if (responseData.clarification_options && responseData.clarification_options.length > 0) {
-            const messagesContainer = document.getElementById('synchat-messages');
-            const optionsContainer = document.createElement('div');
-            optionsContainer.id = 'synchat-quick-reply-container';
-            optionsContainer.classList.add('synchat-quick-reply-options');
-
-            responseData.clarification_options.forEach(optionText => {
-                const optionButton = document.createElement('button');
-                optionButton.classList.add('synchat-quick-reply-btn');
-                optionButton.textContent = optionText;
-                optionButton.addEventListener('click', () => {
-                    addMessageToChat("user", optionText); // Display user's choice
-                    sendMessage(optionText); // Send choice to backend
-                    clearQuickReplyOptions(); // Remove options after selection
-                });
-                optionsContainer.appendChild(optionButton);
-            });
-            messagesContainer.appendChild(optionsContainer);
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
-        }
-        // User input field remains active for typed responses if no options or if user prefers typing
-    }
-
-
     function addMessageToChat(sender, text, type = 'text') {
-        // Before adding a new message, clear any existing quick reply buttons
-        // unless the message being added is the one that *contains* the quick replies.
-        // This specific call to clearQuickReplyOptions is now better handled within handleClarificationRequest
-        // or just before a new bot message that isn't a clarification request.
-        // For now, let's assume it's handled by handleClarificationRequest for new options,
-        // and when user sends a message (text or quick reply), options are cleared.
-
         const messagesContainer = document.getElementById('synchat-messages');
         if (!messagesContainer) return;
+
+        // No borrar opciones de clarificación si el mensaje que se añade es la propia pregunta de clarificación del bot
+        if (type !== 'clarification_question') {
+             clearQuickReplyOptions();
+        }
 
         const messageDiv = document.createElement('div');
         const messageClass = (type === 'system') ? 'system' : sender;
@@ -252,15 +267,65 @@ async function loadI18nStrings() {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
 
-    function toggleChatWindow() { /* ... (existing as before) ... */ }
+    function handleClarificationRequest(responseData) {
+        addMessageToChat("bot", responseData.reply, "clarification_question");
+
+        if (responseData.clarification_options && responseData.clarification_options.length > 0) {
+            const messagesContainer = document.getElementById('synchat-messages');
+            const optionsContainer = document.createElement('div');
+            optionsContainer.id = 'synchat-quick-reply-container';
+            optionsContainer.classList.add('synchat-quick-reply-options');
+
+            responseData.clarification_options.forEach(optionText => {
+                const optionButton = document.createElement('button');
+                optionButton.classList.add('synchat-quick-reply-btn');
+                optionButton.textContent = optionText;
+                optionButton.addEventListener('click', () => {
+                    currentClarificationDetails = { // Guardar detalles para el siguiente envío
+                        original_query: responseData.original_ambiguous_query,
+                        original_chunks: responseData.original_retrieved_chunks
+                    };
+                    addMessageToChat("user", optionText);
+                    sendMessage(optionText); // El texto de la opción es la respuesta
+                });
+                optionsContainer.appendChild(optionButton);
+            });
+            messagesContainer.appendChild(optionsContainer);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+        currentClarificationDetails = { // Guardar para si el usuario escribe en vez de clickear
+            original_query: responseData.original_ambiguous_query,
+            original_chunks: responseData.original_retrieved_chunks
+        };
+    }
+
+    function toggleChatWindow() {
+        const windowEl = document.getElementById('synchat-window');
+        if (windowEl) {
+            isChatOpen = !windowEl.classList.contains('synchat-is-open');
+            if (isChatOpen) {
+                windowEl.classList.add('synchat-is-open');
+                if (!conversationId) {
+                    startNewConversation();
+                }
+                const inputField = document.getElementById('synchat-input');
+                if (inputField) inputField.focus();
+            } else {
+                windowEl.classList.remove('synchat-is-open');
+            }
+            const trigger = document.getElementById('synchat-trigger');
+            if (trigger) trigger.setAttribute('aria-expanded', isChatOpen);
+        }
+    }
 
     async function startNewConversation() {
         widgetLogger.log("Iniciando nueva conversación...");
         clearQuickReplyOptions();
+        currentClarificationDetails = null;
         const messagesContainer = document.getElementById('synchat-messages');
-        if(messagesContainer) messagesContainer.innerHTML = ''; // Limpiar mensajes anteriores
-        conversationId = null;
-        sessionStorage.removeItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`);
+        if (messagesContainer) messagesContainer.innerHTML = '';
+        conversationId = null; // Resetear conversationId
+        sessionStorage.removeItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`); // Limpiar de sessionStorage
 
         const startUrl = `${WIDGET_CONFIG.backendUrl}/start`;
         try {
@@ -273,71 +338,69 @@ async function loadI18nStrings() {
             if (!response.ok) {
                 let errorDetail = 'Error desconocido al iniciar.';
                 try {
-                    // Attempt to parse JSON error first
                     const errorDataJson = await response.json();
                     errorDetail = errorDataJson.error || errorDataJson.message || `Error del servidor: ${response.status}`;
                 } catch (e) {
-                    // If JSON parsing fails, try to get text, then fallback
                     errorDetail = `Error del servidor: ${response.status} - ${await response.text().catch(() => 'No se pudo leer el cuerpo del error.')}`;
                 }
                 widgetLogger.error("Error del servidor al iniciar nueva conversación:", errorDetail);
                 addMessageToChat("bot", getString('widget.errorStartChat', "Lo siento, hubo un problema al iniciar el chat. Inténtalo de nuevo más tarde.") + ` (Detalle: ${errorDetail})`, "system");
-                return; // Salir de la función si no se pudo iniciar la conversación.
+                return;
             }
 
             const data = await response.json();
             if (data && data.conversationId) {
                 conversationId = data.conversationId;
                 sessionStorage.setItem(`synchat_conversationId_${WIDGET_CONFIG.clientId}`, conversationId);
-                addMessageToChat("bot", WIDGET_CONFIG.welcomeMessage); // Mostrar mensaje de bienvenida
+                addMessageToChat("bot", WIDGET_CONFIG.welcomeMessage);
                 const input = document.getElementById('synchat-input');
-                if(input) input.focus();
+                if (input) input.focus();
             } else {
                 widgetLogger.error("No se recibió conversationId del backend tras la solicitud /start.");
                 addMessageToChat("bot", getString('widget.errorCriticalSession', "Error crítico: No se pudo establecer una sesión de chat."), "system");
-                // No return here, as the chat window is already open and should show this message.
             }
-        } catch (error) { // Captura errores de red (Failed to fetch)
+        } catch (error) {
             widgetLogger.error("Excepción al iniciar conversación:", error.message);
             addMessageToChat("bot", getString('widget.errorStartChat', "Lo siento, hubo un problema al iniciar el chat. Inténtalo de nuevo más tarde.") + ` (Detalle: ${error.message})`, "system");
         }
     }
 
     async function sendMessage(text, intent = null) {
-        if (!text.trim() && !intent) return;
+        const trimmedText = text ? text.trim() : '';
+        if (!trimmedText && !intent) return;
 
-        // Clear quick replies as soon as user sends a message (either typed or by clicking an option)
-        clearQuickReplyOptions();
-
-        if (!conversationId && intent !== 'request_human_escalation') {
-            await startNewConversation();
-            if (!conversationId) {
-                addMessageToChat("bot", getString('widget.errorCriticalSession', "Error crítico: No se pudo establecer una sesión de chat."), "system");
-                return;
-            }
-        }
-
-        if (intent !== 'request_human_escalation' && text.trim()) {
-             addMessageToChat("user", text);
+        if (intent !== 'request_human_escalation' && trimmedText) {
+             // No añadir mensaje de usuario aquí si es una respuesta a clarificación por botón
+             // ya que addMessageToChat("user", optionText) lo hace en el handler del botón
+             // Solo añadir si es un mensaje tecleado
+             if (!currentClarificationDetails || currentClarificationDetails?.original_query !== text ) { // Una heurística simple
+                 addMessageToChat("user", trimmedText);
+             }
         }
 
         const input = document.getElementById('synchat-input');
-        if(input && intent !== 'request_human_escalation') {
+        if (input && intent !== 'request_human_escalation') {
             input.value = '';
-            input.style.height = 'auto';
+            input.style.height = 'auto'; // Reset height
         }
 
         const messageUrl = `${WIDGET_CONFIG.backendUrl}/message`;
         const payload = {
-            message: text,
+            message: trimmedText,
             conversationId: conversationId,
             clientId: WIDGET_CONFIG.clientId
         };
         if (intent) {
             payload.intent = intent;
         }
+        if (currentClarificationDetails) {
+            payload.clarification_response_details = currentClarificationDetails;
+            widgetLogger.log("Enviando con clarification_response_details:", currentClarificationDetails);
+        }
 
         widgetLogger.log('SynChat AI Widget: Calling message endpoint:', messageUrl, 'with payload:', payload);
+        currentClarificationDetails = null; // Resetear después de enviar
+        clearQuickReplyOptions(); // Limpiar opciones después de cualquier envío
 
         try {
             const response = await fetch(messageUrl, {
@@ -346,10 +409,10 @@ async function loadI18nStrings() {
                 body: JSON.stringify(payload)
             });
             if (!response.ok) {
-                 let errorDetail = 'Error desconocido';
-                 try { const errorDataJson = await response.json(); errorDetail = errorDataJson.error || errorDataJson.message || await response.text(); }
-                 catch(e) { errorDetail = await response.text(); }
-                 throw new Error(`Error del servidor: ${response.status} - ${errorDetail}`);
+                let errorDetail = 'Error desconocido';
+                try { const errorDataJson = await response.json(); errorDetail = errorDataJson.error || errorDataJson.message || await response.text(); }
+                catch(e) { errorDetail = await response.text().catch(() => 'No se pudo leer cuerpo del error'); }
+                throw new Error(`Error del servidor: ${response.status} - ${errorDetail}`);
             }
             const data = await response.json();
 
@@ -373,37 +436,46 @@ async function loadI18nStrings() {
         }
     }
 
-    async function handleRequestHumanEscalation() { /* ... (existing as before) ... */ }
-    function createWidget() { /* ... (existing as before, ensure CSS is merged if needed) ... */ }
+    async function handleRequestHumanEscalation() {
+        widgetLogger.log("Solicitando escalación humana...");
+        const reqHumanBtn = document.getElementById('requestHumanBtn');
+        if (reqHumanBtn) reqHumanBtn.disabled = true;
 
-    // --- Merging createWidget and its event listeners with the rest of the script ---
-    // (The full createWidget function from the provided context, including its internal event listeners, should be here)
-    // For brevity, assuming the provided createWidget structure is complete and correct.
-    // Crucially, the CSS for quick replies needs to be in the styleTag.textContent.
+        if (!conversationId) {
+            widgetLogger.log("No hay ID de conversación, iniciando una nueva para la escalación.");
+            await startNewConversation(); // Esperar a que se establezca conversationId
+            if (!conversationId) { // Si sigue sin establecerse, hay un problema mayor
+                addMessageToChat("bot", getString('widget.errorCriticalSession', "Error crítico: No se pudo establecer una sesión de chat para la escalación."), "system");
+                if (reqHumanBtn) reqHumanBtn.disabled = false; // Re-habilitar si falla
+                return;
+            }
+        }
+        // El mensaje del input actual podría ser relevante para la escalación
+        const currentInputText = document.getElementById('synchat-input')?.value || "";
+        sendMessage(currentInputText, 'request_human_escalation');
+    }
 
-    // --- Inicialización del Widget ---
     function initializeWidget() {
-        if (document.getElementById('synchat-trigger')) return;
+        if (document.getElementById('synchat-trigger')) {
+            widgetLogger.log("Widget ya inicializado.");
+            return;
+        }
 
         const styleTag = document.createElement('style');
         styleTag.id = 'synchat-styles';
-        styleTag.textContent = widgetCSS; // CSS includes quick reply styles now
+        styleTag.textContent = widgetCSS;
         document.head.appendChild(styleTag);
 
         const trigger = document.createElement('div');
         trigger.id = 'synchat-trigger';
-        trigger.classList.add('synchat-trigger');
         trigger.setAttribute('role', 'button');
         trigger.setAttribute('tabindex', '0');
         trigger.setAttribute('aria-label', getString('widget.ariaLabelOpenChat', 'Abrir chat de ayuda'));
         trigger.innerHTML = `<img src="${WIDGET_CONFIG.triggerLogoUrl}" alt="Abrir Chat SynChat AI">`;
-        trigger.addEventListener('click', toggleChatWindow);
-        trigger.addEventListener('keydown', (e) => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleChatWindow(); } });
         document.body.appendChild(trigger);
 
         const windowEl = document.createElement('div');
         windowEl.id = 'synchat-window';
-        windowEl.classList.add('synchat-window');
         windowEl.innerHTML = `
             <div class="synchat-header">
                 <img src="${WIDGET_CONFIG.avatarUrl}" alt="Avatar de ${WIDGET_CONFIG.botName}" class="zoe-avatar">
@@ -414,64 +486,61 @@ async function loadI18nStrings() {
                 <button id="synchat-close-btn" class="synchat-close-btn" aria-label="${getString('widget.ariaLabelCloseChat', 'Cerrar Chat')}">&times;</button>
             </div>
             <div id="synchat-messages" class="synchat-messages" aria-live="polite"></div>
+            <button id="requestHumanBtn" title="Solicitar hablar con un agente">${getString('widget.requestHumanInitial', 'Hablar con Humano')}</button>
             <div id="synchat-input-area" class="synchat-input-area">
                 <textarea id="synchat-input" placeholder="${WIDGET_CONFIG.inputPlaceholder}" rows="1" aria-label="Escribe tu mensaje"></textarea>
                 <button id="synchat-send-btn" class="synchat-send-btn" aria-label="${getString('widget.ariaLabelSendMessage', 'Enviar Mensaje')}">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5" /></svg>
                 </button>
-                </div>
-        `;
+            </div>`;
         document.body.appendChild(windowEl);
+
+        // Add event listeners after elements are in the DOM
+        trigger.addEventListener('click', toggleChatWindow);
+        trigger.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleChatWindow(); } });
 
         const closeButton = document.getElementById('synchat-close-btn');
         const sendButton = document.getElementById('synchat-send-btn');
         const inputField = document.getElementById('synchat-input');
-        const inputArea = document.getElementById('synchat-input-area');
+        const requestHumanBtn = document.getElementById('requestHumanBtn');
 
-        if(closeButton) {
-          closeButton.addEventListener('click', toggleChatWindow);
-          closeButton.addEventListener('keydown', (e) => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleChatWindow(); } });
+        if (closeButton) {
+            closeButton.addEventListener('click', toggleChatWindow);
+            closeButton.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleChatWindow(); } });
         }
 
         function handleSend() {
-            if(inputField && inputField.value) {
+            if (inputField && inputField.value.trim()) {
                 sendMessage(inputField.value.trim());
             }
         }
 
-        if(sendButton) {
-          sendButton.addEventListener('click', handleSend);
-          sendButton.addEventListener('keydown', (e) => { if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSend(); } });
+        if (sendButton) {
+            sendButton.addEventListener('click', handleSend);
         }
 
-        if(inputField) {
-             inputField.addEventListener('keypress', (e) => {
-                 if (e.key === 'Enter' && !e.shiftKey) {
-                     e.preventDefault();
-                     handleSend();
-                 }
-             });
-             inputField.addEventListener('input', () => {
-                 inputField.style.height = 'auto';
-                 const maxHeight = 100;
-                 const scrollHeight = inputField.scrollHeight;
-                 inputField.style.height = Math.min(scrollHeight, maxHeight) + 'px';
-             });
+        if (inputField) {
+            inputField.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                }
+            });
+            inputField.addEventListener('input', () => {
+                inputField.style.height = 'auto';
+                const maxHeight = 100;
+                const scrollHeight = inputField.scrollHeight;
+                inputField.style.height = Math.min(scrollHeight, maxHeight) + 'px';
+            });
         }
 
-        if (inputArea) {
-            const requestHumanBtn = document.createElement('button');
-            requestHumanBtn.id = 'requestHumanBtn';
-            requestHumanBtn.title = 'Solicitar hablar con un agente'; // This title could also be internationalized if needed
-            requestHumanBtn.textContent = getString('widget.requestHumanInitial', 'Hablar con Humano');
-            inputArea.appendChild(requestHumanBtn);
+        if (requestHumanBtn) {
             requestHumanBtn.addEventListener('click', handleRequestHumanEscalation);
-        } else {
-            widgetLogger.warn("SynChat AI Widget: '#synchat-input-area' not found. Cannot append escalation button.");
         }
+
+        widgetLogger.log("Widget UI inicializado.");
     }
 
     initializeWidget();
 
 })();
-// Trivial comment to force a new commit state.
