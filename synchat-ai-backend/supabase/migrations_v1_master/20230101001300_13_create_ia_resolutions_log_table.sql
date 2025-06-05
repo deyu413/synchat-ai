@@ -20,12 +20,12 @@ COMMENT ON COLUMN public.ia_resolutions_log.details IS 'JSONB field to store add
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_ia_resolutions_log_client_id ON public.ia_resolutions_log(client_id);
-CREATE INDEX IF NOT EXISTS idx_ia_resolutions_log_conversation_id ON public.ia_resolutions_log(conversation_id WHERE conversation_id IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_ia_resolutions_log_conversation_id ON public.ia_resolutions_log(conversation_id) WHERE conversation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ia_resolutions_log_resolved_at ON public.ia_resolutions_log(resolved_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ia_resolutions_log_billing_cycle_id ON public.ia_resolutions_log(billing_cycle_id);
 CREATE INDEX IF NOT EXISTS idx_ia_resolutions_log_details_gin ON public.ia_resolutions_log USING GIN (details) WHERE details IS NOT NULL;
 
-RAISE NOTICE 'Table public.ia_resolutions_log created with comments and indexes.';
+-- RAISE NOTICE 'Table public.ia_resolutions_log created with comments and indexes.';
 
 -- RLS: By default, this table might be sensitive. Add policies as needed.
 -- For now, enabling RLS and a restrictive default will be handled later or assumed service_role access.
