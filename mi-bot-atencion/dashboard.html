@@ -122,13 +122,32 @@
             <form id="configForm">
                 <label for="botName">Nombre del Bot (para el widget):</label>
                 <input type="text" id="botName" name="botName"><br><br>
-                
+
                 <label for="welcomeMessage">Mensaje de Bienvenida (para el widget):</label>
                 <textarea id="welcomeMessage" name="welcomeMessage"></textarea><br><br>
-                
+
                 <label for="knowledgeUrl">URL para Ingesta de Conocimiento (ej. sitemap.xml, documento, etc.):</label>
                 <input type="text" id="knowledgeUrl" name="knowledgeUrl" style="width: 100%;"><br><br>
-                
+
+                <label for="botFormality">Formalidad del Bot:</label>
+                <select id="botFormality" name="botFormality" style="width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+                    <option value="neutral" selected>Neutral</option>
+                    <option value="formal">Formal</option>
+                    <option value="informal">Informal</option>
+                </select><br><br>
+
+                <label for="botPersonaDescription">Descripción de la Personalidad del Bot (para el LLM):</label>
+                <textarea id="botPersonaDescription" name="botPersonaDescription" placeholder="Ej: Amable, servicial, directo y conciso..." style="width: calc(100% - 22px); padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; min-height: 80px; resize: vertical;"></textarea><br><br>
+
+                <label for="botKeyPhrasesToUse">Frases Clave que el Bot Debería Usar (una por línea):</label>
+                <textarea id="botKeyPhrasesToUse" name="botKeyPhrasesToUse" placeholder="Ej: Gracias por contactar con SynChat AI\nEstamos aquí para ayudarte" style="width: calc(100% - 22px); padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; min-height: 80px; resize: vertical;"></textarea><br><br>
+
+                <label for="botKeyPhrasesToAvoid">Frases Clave que el Bot Debería Evitar (una por línea):</label>
+                <textarea id="botKeyPhrasesToAvoid" name="botKeyPhrasesToAvoid" placeholder="Ej: No lo sé\nImposible" style="width: calc(100% - 22px); padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; min-height: 80px; resize: vertical;"></textarea><br><br>
+
+                <label for="basePromptOverride">Override del Prompt Base del Sistema (avanzado):</label>
+                <textarea id="basePromptOverride" name="basePromptOverride" placeholder="Deja en blanco para usar el prompt por defecto del sistema..." style="width: calc(100% - 22px); padding: 10px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; min-height: 120px; resize: vertical;"></textarea><br><br>
+
                 <button type="submit">Guardar Configuración</button>
             </form>
             <div id="configMessage"></div>
