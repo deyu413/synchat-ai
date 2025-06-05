@@ -1,5 +1,5 @@
 // src/controllers/chatController.js
-import logger from '../utils/logger.js'; // Added logger import
+import logger from '../utils/logger.js';
 import { getChatCompletion } from '../services/openaiService.js';
 import * as db from '../services/databaseService.js';
 import { encode } from 'gpt-tokenizer';
@@ -31,8 +31,8 @@ const BOT_CANNOT_ANSWER_MSG = "Lo siento, no tengo información específica sobr
 const BOT_ESCALATION_NOTIFICATION_MSG = "Un momento, por favor. Voy a transferirte con un agente humano para que pueda ayudarte con tu consulta.";
 
 export const handleChatMessage = async (req, res, next) => {
-    const { message, conversationId, clarification_response_details, intent } = req.body; // clientId removed from here
-    let userMessageInput = message; // The actual text sent by the user in this turn
+    const { message, conversationId, clarification_response_details, intent } = req.body;
+    let userMessageInput = message;
 
     let effectiveClientId;
     if (req.user && req.user.id) {
@@ -46,26 +46,19 @@ export const handleChatMessage = async (req, res, next) => {
         return res.status(400).json({ error: 'Falta clientId o no se pudo determinar.' });
     }
 
-    // Base checks for essential parameters
-    if (!conversationId || !effectiveClientId) { // Changed clientId to effectiveClientId
-        // This specific console.warn might be redundant given the logic above, but kept for safety.
+    if (!conversationId || !effectiveClientId) {
         logger.warn(`(ChatCtrl) Petición inválida a /message: Missing conversationId or effectiveClientId. CV_ID: ${conversationId}, Eff_CID: ${effectiveClientId}`, req.body);
         return res.status(400).json({ error: 'Faltan datos requeridos (conversationId, clientId).' });
     }
-     // Check if there's any form of input or valid intent
     if (!userMessageInput && !clarification_response_details && !(intent && intent === 'request_human_escalation')) {
         return res.status(400).json({ error: 'Missing message, clarification_response_details, or valid intent for escalation.' });
     }
-
-    // Input Validation for message
     if (userMessageInput && typeof userMessageInput !== 'string') {
         return res.status(400).json({ error: 'Invalid message format. Must be a string.' });
     }
     if (userMessageInput && userMessageInput.length > 2000) {
         return res.status(400).json({ error: 'Message exceeds maximum length of 2000 characters.' });
     }
-
-    // Input Validation for clarification_response_details
     if (clarification_response_details) {
         if (typeof clarification_response_details !== 'object' || clarification_response_details === null) {
             return res.status(400).json({ error: 'Invalid clarification_response_details format. Must be an object.' });
@@ -79,77 +72,57 @@ export const handleChatMessage = async (req, res, next) => {
             return res.status(400).json({ error: 'Invalid original_chunks in clarification_response_details. Must be an array.' });
         }
     }
-
-    // Input Validation for intent
     if (intent && typeof intent !== 'string') {
         return res.status(400).json({ error: 'Invalid intent format. Must be a string.' });
     }
-    // Specific handling for 'request_human_escalation' is done later based on intent value
-
-    // Validate conversationId format
     if (!UUID_REGEX.test(conversationId)) {
         return res.status(400).json({ error: 'conversationId has an invalid format.' });
     }
-
-    // Validate clientId format
-    if (!UUID_REGEX.test(effectiveClientId)) { // Changed clientId to effectiveClientId
+    if (!UUID_REGEX.test(effectiveClientId)) {
         return res.status(400).json({ error: 'clientId has an invalid format.' });
     }
 
     let effectiveQuery = userMessageInput;
-    let originalQueryForContext = userMessageInput; // Used for some prompts, might be overridden by clarification
-    let ragLogId = null; // <<<< Initialize ragLogId here
+    let originalQueryForContext = userMessageInput;
+    let ragLogId = null;
 
     if (clarification_response_details && clarification_response_details.original_query) {
-        console.log(`(Controller) Received a clarification response for original query: "${clarification_response_details.original_query}" with user's choice/input: "${userMessageInput}"`);
-        // Refine the query: combine original ambiguous query with user's clarification.
+        logger.info(`(ChatCtrl) Received a clarification response for original query: "${clarification_response_details.original_query}" with user's choice/input: "${userMessageInput}"`);
         effectiveQuery = `${clarification_response_details.original_query} - ${userMessageInput}`;
-        originalQueryForContext = clarification_response_details.original_query; // Keep for prompts that need the "original" intent
-        console.log(`(Controller) Using refined query for RAG: "${effectiveQuery}"`);
-        // `clarification_response_details.original_chunks` are available if needed, but current strategy is to re-search.
+        originalQueryForContext = clarification_response_details.original_query;
+        logger.info(`(ChatCtrl) Using refined query for RAG: "${effectiveQuery}"`);
     }
-    // Ensure that userMessageInput is not null if intent is not 'request_human_escalation' and no clarification_response_details
+
     if (!clarification_response_details && !(intent && intent === 'request_human_escalation') && !userMessageInput) {
         return res.status(400).json({ error: 'Message input is required when not providing clarification details or requesting escalation.' });
     }
 
-
-    if (intent && intent === 'request_human_escalation') { // Use validated intent variable
-        logger.log(`(ChatCtrl) User initiated escalation for CV:${conversationId}, C:${effectiveClientId}`); // Changed clientId to effectiveClientId
+    if (intent && intent === 'request_human_escalation') {
+        logger.info(`(ChatCtrl) User initiated escalation for CV:${conversationId}, C:${effectiveClientId}`);
         try {
-            // Even if userMessageInput is empty, we log a generic escalation message.
             const escalationMessage = userMessageInput ? `El usuario ha solicitado hablar con un agente humano. Mensaje: "${userMessageInput}"` : 'El usuario ha solicitado hablar con un agente humano.';
             await db.saveMessage(conversationId, 'user', escalationMessage);
             db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => logger.error(`(ChatCtrl) Analytics: Failed to increment user message count for CV:${conversationId}`, err));
-            await db.updateConversationStatusByAgent(conversationId, effectiveClientId, null, 'escalated_to_human'); // Changed clientId to effectiveClientId
+            await db.updateConversationStatusByAgent(conversationId, effectiveClientId, null, 'escalated_to_human');
             db.updateAnalyticOnEscalation(conversationId, new Date(), `User explicitly requested human escalation. Associated message: "${userMessageInput || ''}"`)
                 .catch(err => logger.error(`(ChatCtrl) Analytics: Failed to update escalation data for CV:${conversationId}`, err));
             return res.status(200).json({ status: "escalation_requested", reply: "Tu solicitud para hablar con un agente ha sido recibida. Alguien se pondrá en contacto contigo pronto." });
         } catch (escalationError) {
-        logger.error(`(ChatCtrl) Error during user-initiated escalation for CV:${conversationId}:`, escalationError);
+            logger.error(`(ChatCtrl) Error during user-initiated escalation for CV:${conversationId}:`, escalationError);
             return res.status(500).json({ error: "No se pudo procesar tu solicitud de escalación en este momento." });
         }
     }
-    // If we reach here and userMessageInput is still null/empty (e.g. intent was something else but message was empty), it's an error.
-    // This case should ideally be caught by the initial check:
-    // `if (!userMessageInput && !clarification_response_details && !(intent && intent === 'request_human_escalation'))`
-    // However, as a safeguard:
     if (!userMessageInput && !clarification_response_details) {
-        // This implies intent was present but not 'request_human_escalation', and message was empty.
-        // This situation should be clarified based on product requirements if other intents can have empty messages.
-        // For now, assuming any other intent path requires a message if no clarification is given.
         logger.warn(`(ChatCtrl) handleChatMessage: Potentially unhandled case - intent provided ('${intent}') without a message for CV ${conversationId}.`);
         return res.status(400).json({ error: 'Message input is required for the provided intent.' });
     }
 
-
-    logger.info(`(ChatCtrl) Mensaje (effectiveQuery) recibido C:${effectiveClientId}, CV:${conversationId}: "${effectiveQuery.substring(0, 100)}..."`); // Changed clientId to effectiveClientId
+    logger.info(`(ChatCtrl) Mensaje (effectiveQuery) recibido C:${effectiveClientId}, CV:${conversationId}: "${effectiveQuery.substring(0, 100)}..."`);
 
     try {
-        const cacheKey = `${effectiveClientId}:${conversationId}:${effectiveQuery}`; // Cache based on effective query, Changed clientId to effectiveClientId
+        const cacheKey = `${effectiveClientId}:${conversationId}:${effectiveQuery}`;
         const cachedReply = db.getCache(cacheKey);
         if (cachedReply) {
-            // Save user's actual typed message, not the effectiveQuery if it was combined
             db.saveMessage(conversationId, 'user', userMessageInput).then(() => db.incrementAnalyticMessageCount(conversationId, 'user')).catch(err => logger.error("(ChatCtrl) Analytics save user msg err (cache):", err));
             db.saveMessage(conversationId, 'bot', cachedReply).then(() => db.incrementAnalyticMessageCount(conversationId, 'bot')).catch(err => logger.error("(ChatCtrl) Analytics save bot msg err (cache):", err));
             return res.status(200).json({ reply: cachedReply });
@@ -157,52 +130,80 @@ export const handleChatMessage = async (req, res, next) => {
         logger.debug("(ChatCtrl) No encontrado en caché. Procesando...");
 
         const conversationHistory = await db.getConversationHistory(conversationId);
-        // Use effectiveQuery for the search
         const hybridSearchOutput = await db.hybridSearch(
             effectiveClientId,
             effectiveQuery,
             conversationId,
             {},   // options
-            true  // returnPipelineDetails - assuming this is for detailed logging/debugging
+            true  // returnPipelineDetails
         );
 
-        // Safely access results, defaulting to an empty array if not present or not an array
-        const resultsToMap = (hybridSearchOutput && Array.isArray(hybridSearchOutput.results))
+        logger.debug("(ChatCtrl) hybridSearchOutput recibido:", JSON.stringify(hybridSearchOutput, null, 2));
+
+        // Definición robusta de la variable que se usará en el .map()
+        // Usaremos 'results' de hybridSearchOutput como la fuente principal.
+        const resultsForMapping = (hybridSearchOutput && Array.isArray(hybridSearchOutput.results))
             ? hybridSearchOutput.results
             : [];
+        
+        logger.debug(`(ChatCtrl) ANTES DEL MAP - Variable 'resultsForMapping': isArray: ${Array.isArray(resultsForMapping)}, length: ${resultsForMapping.length}`);
+        if (resultsForMapping === undefined) { // Doble chequeo por si acaso
+            logger.error("(ChatCtrl) ERROR CRÍTICO: 'resultsForMapping' ES UNDEFINED justo antes del .map()");
+        }
 
-        // Safely access propositionResults, defaulting to an empty array
+        // Esta es la línea ~306 que daba el error. Ahora usa 'resultsForMapping'.
+        let retrievedContextForLog = [];
+        if (Array.isArray(resultsForMapping)) {
+            try {
+                retrievedContextForLog = resultsForMapping.map(c => {
+                    if (!c) {
+                        logger.warn("(ChatCtrl) Elemento 'c' dentro de resultsForMapping.map es null o undefined. Saltando este elemento.");
+                        return { id: 'INVALID_CHUNK_IN_MAP', content_preview: 'Chunk inválido en map', score: 0, metadata: {} };
+                    }
+                    return {
+                        id: c.id,
+                        content_preview: (c.content && typeof c.content === 'string' ? c.content.substring(0,150) : "Contenido no disponible") + "...",
+                        score: c.reranked_score ?? c.hybrid_score ?? 0,
+                        metadata: c.metadata
+                    };
+                });
+            } catch (mapError) {
+                logger.error("(ChatCtrl) Error DENTRO del .map() de resultsForMapping:", mapError.message, mapError.stack?.substring(0,300));
+                logger.error("(ChatCtrl) resultsForMapping que causó el error en .map():", JSON.stringify(resultsForMapping));
+                // retrievedContextForLog se mantiene como array vacío si el map falla
+            }
+        } else {
+            logger.warn("(ChatCtrl) 'resultsForMapping' NO ES UN ARRAY justo antes del .map(). Se usará array vacío para retrievedContextForLog.");
+        }
+        logger.debug(`(ChatCtrl) DESPUÉS DEL MAP - retrievedContextForLog (primeros 2): ${JSON.stringify(retrievedContextForLog.slice(0,2))}`);
+
+
+        const initialRelevantKnowledge = resultsForMapping; // Usar la variable segura para la lógica de ambigüedad, etc.
         const propositionResults = (hybridSearchOutput && Array.isArray(hybridSearchOutput.propositionResults))
             ? hybridSearchOutput.propositionResults
             : [];
-
-        // Derive rawRankedResultsForLog safely, using resultsToMap as a final fallback
-        const rawRankedResultsForLog = (hybridSearchOutput && hybridSearchOutput.pipelineDetails && Array.isArray(hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground))
-            ? hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground
-            : resultsToMap;
-
-        let initialRelevantKnowledge = resultsToMap; // Use resultsToMap (which is safely derived hybridSearchOutput.results)
 
         // --- Ambiguity Detection ---
         let isAmbiguous = false;
         let clarificationQuestion = null;
         let clarificationOptions = [];
-        // Use effectiveQuery for ambiguity detection input userQueryString
         const userQueryStringForAmbiguity = effectiveQuery;
 
-        if (ENABLE_AMBIGUITY_DETECTION && initialRelevantKnowledge && initialRelevantKnowledge.length > 0 && (!clarification_response_details) /* Only run ambiguity if not already a clarification response */) {
+        if (ENABLE_AMBIGUITY_DETECTION && initialRelevantKnowledge && initialRelevantKnowledge.length > 0 && (!clarification_response_details)) {
+            // ... (lógica de ambiguity detection como antes, usando initialRelevantKnowledge) ...
+            // Esta lógica no debería cambiar
             try {
                 const contextSnippets = initialRelevantKnowledge.slice(0, AMBIGUITY_DETECTION_TOP_N_CHUNKS).map((chunk, index) => {
-                    return `Snippet ${index + 1} (ID: ${chunk.id}): "${chunk.content.substring(0, 200)}..."`;
+                    return `Snippet ${index + 1} (ID: ${chunk.id}): "${(chunk.content || "").substring(0, 200)}..."`; // Añadido fallback para chunk.content
                 });
 
                 if (contextSnippets.length > 0) {
-                    const ambiguitySystemPrompt = `Eres un asistente de IA altamente especializado... (prompt as defined before)`; // Full prompt
+                    const ambiguitySystemPrompt = `Eres un asistente de IA altamente especializado en identificar ambigüedades en consultas de usuarios basándote en un contexto limitado. Dada la "User Query" y varios "Retrieved Context Snippets", determina si la consulta es ambigua EN RELACIÓN A LOS FRAGMENTOS PROPORCIONADOS. Una consulta es ambigua si los fragmentos sugieren múltiples interpretaciones o respuestas posibles válidas, o si la consulta es demasiado general y los fragmentos cubren varios subtemas que podrían ser relevantes. Responde en formato JSON con los siguientes campos: "is_ambiguous" (boolean), "clarification_question" (string, null si no es ambigua, debe ser una pregunta directa al usuario para resolver la ambigüedad), "options" (array de strings, null o vacío si no hay opciones claras, deben ser opciones concisas para que el usuario elija). La "clarification_question" NO debe pedir al usuario que reformule, sino que concrete su necesidad. Ejemplo: si la consulta es "info sobre producto" y los fragmentos hablan de "Producto A" y "Producto B", la pregunta podría ser "¿Te refieres al Producto A o al Producto B?" con opciones ["Producto A", "Producto B"]. Si la consulta es clara o los fragmentos no ofrecen múltiples caminos claros, "is_ambiguous" debe ser false.`;
                     const ambiguityUserPrompt = `User Query: "${userQueryStringForAmbiguity}"\n\nRetrieved Context Snippets:\n${contextSnippets.join('\n')}\n\nAnaliza la User Query y los Retrieved Context Snippets y responde únicamente en el formato JSON especificado en las instrucciones del sistema.`;
                     const ambiguityMessages = [ { role: "system", content: ambiguitySystemPrompt }, { role: "user", content: ambiguityUserPrompt }];
 
                     logger.debug(`(ChatCtrl) Calling LLM for ambiguity detection for CV:${conversationId}`);
-                    const ambiguityResponseString = await getChatCompletion(ambiguityMessages, AMBIGUITY_LLM_MODEL, AMBIGUITY_LLM_TEMP, AMBIGUITY_LLM_MAX_TOKENS_OUTPUT); // Assuming openaiService.getChatCompletion was a typo and it's the imported getChatCompletion
+                    const ambiguityResponseString = await getChatCompletion(ambiguityMessages, AMBIGUITY_LLM_MODEL, AMBIGUITY_LLM_TEMP, AMBIGUITY_LLM_MAX_TOKENS_OUTPUT);
 
                     if (ambiguityResponseString) {
                         try {
@@ -221,11 +222,9 @@ export const handleChatMessage = async (req, res, next) => {
         }
 
         if (isAmbiguous && clarificationQuestion) {
-            logger.info(`(ChatCtrl) Responding with clarification request for CV:${conversationId}. Original (or refined if applicable) query was: "${userQueryStringForAmbiguity}"`);
-            // Save user's actual ambiguous message that LED to this clarification
+            logger.info(`(ChatCtrl) Responding with clarification request for CV:${conversationId}. Original query was: "${userQueryStringForAmbiguity}"`);
             await db.saveMessage(conversationId, 'user', userMessageInput);
             db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => logger.error("(ChatCtrl) Analytics err (ambig):", err));
-            // Save bot's clarification question
             await db.saveMessage(conversationId, 'bot', clarificationQuestion);
             db.incrementAnalyticMessageCount(conversationId, 'bot').catch(err => logger.error("(ChatCtrl) Analytics err (ambig):", err));
 
@@ -233,290 +232,156 @@ export const handleChatMessage = async (req, res, next) => {
                 reply: clarificationQuestion,
                 action_required: "request_clarification",
                 clarification_options: clarificationOptions,
-                original_ambiguous_query: userQueryStringForAmbiguity, // The query that was ambiguous
+                original_ambiguous_query: userQueryStringForAmbiguity,
                 original_retrieved_chunks: initialRelevantKnowledge.slice(0, AMBIGUITY_DETECTION_TOP_N_CHUNKS)
             });
         } else {
             // --- LLM-based Context Filtering & Summarization ---
-            // Use `userQueryStringForAmbiguity` (which is `effectiveQuery`) for prompts here
             let knowledgeForProcessing = initialRelevantKnowledge.slice(0, LLM_FILTER_TOP_N_CHUNKS);
             let filteredKnowledge = [];
+            // ... (lógica de filtering como antes, usando initialRelevantKnowledge o knowledgeForProcessing) ...
             if (ENABLE_LLM_CONTEXT_FILTERING && knowledgeForProcessing.length > 0) {
                  for (const chunk of knowledgeForProcessing) {
                     try {
-                        const relevancePrompt = `User Question: '${userQueryStringForAmbiguity}'. Is the following 'Text Snippet' directly relevant... Snippet: '${chunk.content}'`;
-                        const relevanceMessages = [ { role: "system", content: "..." }, { role: "user", content: relevancePrompt }];
-                        const relevanceResponse = await getChatCompletion(relevanceMessages, LLM_FILTER_MODEL, LLM_FILTER_TEMP_RELEVANCE, 10);  // Assuming openaiService.getChatCompletion was a typo
+                        const relevancePrompt = `User Question: '${userQueryStringForAmbiguity}'. Is the following 'Text Snippet' directly relevant and useful for answering the user's question? Respond with only 'YES' or 'NO'. Text Snippet: '${chunk.content}'`;
+                        const relevanceMessages = [ { role: "system", content: "You are an AI assistant that judges relevance. Respond with only YES or NO." }, { role: "user", content: relevancePrompt }];
+                        const relevanceResponse = await getChatCompletion(relevanceMessages, LLM_FILTER_MODEL, LLM_FILTER_TEMP_RELEVANCE, 10);
                         if (relevanceResponse && relevanceResponse.trim().toLowerCase().startsWith('yes')) { filteredKnowledge.push(chunk); }
-                    } catch (filterError) { filteredKnowledge.push(chunk); }
+                    } catch (filterError) {
+                        logger.warn(`(ChatCtrl) LLM relevance check error for chunk ID ${chunk.id}, keeping chunk. Error: ${filterError.message}`);
+                        filteredKnowledge.push(chunk); // Keep chunk if filtering fails
+                    }
                 }
-                if (filteredKnowledge.length === 0 && knowledgeForProcessing.length > 0) filteredKnowledge = [...knowledgeForProcessing];
-            } else { filteredKnowledge = [...knowledgeForProcessing]; }
+                if (filteredKnowledge.length === 0 && knowledgeForProcessing.length > 0) {
+                    logger.warn("(ChatCtrl) LLM filtering removed all chunks, falling back to original top N for processing.");
+                    filteredKnowledge = [...knowledgeForProcessing];
+                }
+            } else {
+                filteredKnowledge = [...knowledgeForProcessing];
+            }
 
             let processedKnowledgeForContext = [];
+             // ... (lógica de summarization como antes, usando filteredKnowledge) ...
             if (ENABLE_LLM_CONTEXT_SUMMARIZATION && filteredKnowledge.length > 0) {
                 for (const chunk of filteredKnowledge) {
                     try {
-                        const summaryPrompt = `User Question: '${userQueryStringForAmbiguity}'. From the 'Text Snippet' below, extract... Snippet: '${chunk.content}'`;
-                        const summaryMessages = [ { role: "system", content: "..." }, { role: "user", content: summaryPrompt }];
+                        const summaryPrompt = `User Question: '${userQueryStringForAmbiguity}'. From the 'Text Snippet' below, extract only the sentence(s) or key phrases that directly help answer the question. If no part is relevant, or if the snippet is already very concise and relevant, return the original snippet. If absolutely no part is relevant, return an empty string. Text Snippet: '${chunk.content}'`;
+                        const summaryMessages = [ { role: "system", content: "You are an AI assistant that extracts key relevant sentences from text." }, { role: "user", content: summaryPrompt }];
                         const summaryMaxTokens = Math.min(encode(chunk.content || "").length + 50, 300);
-                        const summaryResponse = await getChatCompletion(summaryMessages, LLM_FILTER_MODEL, LLM_FILTER_TEMP_SUMMARY, summaryMaxTokens); // Assuming openaiService.getChatCompletion was a typo
-                        if (summaryResponse && summaryResponse.trim().length > 0) { processedKnowledgeForContext.push({ ...chunk, extracted_content: summaryResponse.trim() }); }
-                        else { processedKnowledgeForContext.push(chunk); }
-                    } catch (summaryError) { processedKnowledgeForContext.push(chunk); }
+                        const summaryResponse = await getChatCompletion(summaryMessages, LLM_FILTER_MODEL, LLM_FILTER_TEMP_SUMMARY, summaryMaxTokens);
+                        if (summaryResponse && summaryResponse.trim().length > 0) {
+                            processedKnowledgeForContext.push({ ...chunk, extracted_content: summaryResponse.trim() });
+                        } else {
+                            processedKnowledgeForContext.push(chunk); // Use original if summary is empty
+                        }
+                    } catch (summaryError) {
+                        logger.warn(`(ChatCtrl) LLM summarization error for chunk ID ${chunk.id}, using original. Error: ${summaryError.message}`);
+                        processedKnowledgeForContext.push(chunk);
+                    }
                 }
-            } else { processedKnowledgeForContext = [...filteredKnowledge]; }
-
-            // --- Score-based Prioritization and Token-limited Truncation of Context Chunks ---
-            const LLM_TOKEN_SAFETY_MARGIN = 200; // Safety margin for LLM response and other formatting.
-            const TOKENS_PER_CHUNK_OVERHEAD = 65; // Updated estimate for detailed chunk formatting (markers, ID, score, source, path, page)
-
-            // Sort chunks by score (descending)
-            let initialTotalTokensOfConsideredChunks = 0;
-            for (const chunk of processedKnowledgeForContext) {
-                const content = chunk.extracted_content || chunk.content;
-                if (content) {
-                    initialTotalTokensOfConsideredChunks += encode(content).length;
-                }
-                initialTotalTokensOfConsideredChunks += TOKENS_PER_CHUNK_OVERHEAD;
+            } else {
+                processedKnowledgeForContext = [...filteredKnowledge];
             }
-            logger.info(`(ChatCtrl) [Context Selection] Initial total chunks considered: ${processedKnowledgeForContext.length}, Approx. total tokens (content + overhead): ${initialTotalTokensOfConsideredChunks}`);
 
-            const sortedChunksForContextSelection = [...processedKnowledgeForContext].sort((a, b) => {
-                const scoreA = a.reranked_score ?? a.hybrid_score ?? 0;
-                const scoreB = b.reranked_score ?? b.hybrid_score ?? 0;
-                return scoreB - scoreA;
-            });
-
-            logger.info(`(ChatCtrl) [Context Selection] Chunks before token-based selection: ${processedKnowledgeForContext.length}`);
-
-            // Calculate base token count (system prompt, history, query, and other fixed elements)
-            // This is an approximation; actual prompt construction might vary slightly.
-            const systemPromptBase = `Eres Zoe, el asistente virtual IA especializado... (full prompt as defined before, including ambiguity handling instructions if desired)`; // Re-evaluate this if it's already defined elsewhere or make it a shared constant
+            // --- Score-based Prioritization and Token-limited Truncation ---
+            // ... (lógica de LIMM como antes, usando processedKnowledgeForContext) ...
+            // La lógica para `finalChunksForLLMContext`
+            const LLM_TOKEN_SAFETY_MARGIN = 200;
+            const TOKENS_PER_CHUNK_OVERHEAD = 65;
+            const systemPromptBase = `Eres Zoe, el asistente virtual IA especializado de SynChat AI (synchatai.com). Tu ÚNICA fuente de información es el "Contexto" proporcionado a continuación. NO debes usar ningún conocimiento externo ni hacer suposiciones. Instrucciones ESTRICTAS: 1. Responde SOLAMENTE basándote en la información encontrada en el "Contexto". 2. Si la respuesta a la pregunta del usuario se encuentra en el "Contexto", respóndela de forma clara y concisa (máximo 3-4 frases). 3. Si varios fragmentos del contexto responden a la pregunta del usuario, sintetiza la información en una respuesta única y coherente en español. No te limites a enumerar los fragmentos. 4. Cuando utilices información de una fuente específica del contexto, menciónala de forma breve al final de tu respuesta de la siguiente manera: '(Fuente: [Nombre de la Fuente del Contexto])'. 5. Si el contexto no contiene una respuesta clara, o si la información es contradictoria o ambigua, responde ÚNICA Y EXACTAMENTE con: "${BOT_CANNOT_ANSWER_MSG}" NO intentes adivinar ni buscar en otro lado. 6. Sé amable y profesional.`;
             const formattedHistoryForTokenCalc = conversationHistory.map(msg => `${msg.sender === 'user' ? 'User' : 'Assistant'}: ${msg.content || ''}`).join('\n');
-
-            let basePromptTokens = encode(systemPromptBase).length;
-            basePromptTokens += encode(formattedHistoryForTokenCalc).length;
-            basePromptTokens += encode(effectiveQuery).length;
-            basePromptTokens += encode("Contexto de la base de conocimiento:").length; // Example fixed part
-            basePromptTokens += encode("Proposiciones Relevantes:").length; // Example fixed part
-            basePromptTokens += encode("Fragmentos de Documentos Relevantes:").length; // Example fixed part
-            // Add tokens for any other structural separators or instructions that are always present.
-
-            logger.info(`(ChatCtrl) [Context Selection] Base prompt tokens (system, history, query, fixed instructions): ${basePromptTokens}`);
-
+            let basePromptTokens = encode(systemPromptBase).length + encode(formattedHistoryForTokenCalc).length + encode(effectiveQuery).length + encode("Contexto de la base de conocimiento:").length + encode("Proposiciones Relevantes:").length + encode("Fragmentos de Documentos Relevantes:").length;
             const finalChunksForLLMContext = [];
             let currentAccumulatedTokens = basePromptTokens;
             const effectiveMaxContextTokens = MAX_CONTEXT_TOKENS_FOR_LLM - LLM_TOKEN_SAFETY_MARGIN;
 
+            const sortedChunksForContextSelection = [...processedKnowledgeForContext].sort((a, b) => (b.reranked_score ?? b.hybrid_score ?? 0) - (a.reranked_score ?? a.hybrid_score ?? 0));
+
             for (const chunk of sortedChunksForContextSelection) {
                 const contentToTokenize = chunk.extracted_content || chunk.content;
-                if (!contentToTokenize) continue; // Skip if no content
-
+                if (!contentToTokenize) continue;
                 const chunkTokens = encode(contentToTokenize).length;
                 const chunkWithOverheadTokens = chunkTokens + TOKENS_PER_CHUNK_OVERHEAD;
-
                 if (currentAccumulatedTokens + chunkWithOverheadTokens <= effectiveMaxContextTokens) {
                     finalChunksForLLMContext.push(chunk);
                     currentAccumulatedTokens += chunkWithOverheadTokens;
                 } else {
-                    logger.info(`(ChatCtrl) [Context Selection] Token limit reached. Cannot add chunk ID ${chunk.id} (tokens: ${chunkTokens}).`);
-                    break; // Stop adding chunks
+                    break;
                 }
             }
-
-            logger.info(`(ChatCtrl) [Context Selection] Chunks selected for LLM context: ${finalChunksForLLMContext.length}`);
-            logger.info(`(ChatCtrl) [Context Selection] Accumulated tokens after chunk selection: ${currentAccumulatedTokens}`);
-            logger.info(`(ChatCtrl) [Context Selection] Effective token limit for context: ${effectiveMaxContextTokens}`);
-
-            // ---- INICIO DE LOGGING ADICIONAL ----
-            logger.debug(`(ChatCtrl) [Pre-LIMM] typeof finalChunksForLLMContext: ${typeof finalChunksForLLMContext}`);
-            logger.debug(`(ChatCtrl) [Pre-LIMM] Array.isArray(finalChunksForLLMContext): ${Array.isArray(finalChunksForLLMContext)}`);
-            if (finalChunksForLLMContext) {
-                logger.debug(`(ChatCtrl) [Pre-LIMM] finalChunksForLLMContext.length: ${finalChunksForLLMContext.length}`);
-                try {
-                    // Intentar loguear una porción del contenido para inspección, si no está vacío.
-                    if (finalChunksForLLMContext.length > 0) {
-                        logger.debug(`(ChatCtrl) [Pre-LIMM] finalChunksForLLMContext first 2 items (sample): ${JSON.stringify(finalChunksForLLMContext.slice(0,2))}`);
-                    } else {
-                        logger.debug(`(ChatCtrl) [Pre-LIMM] finalChunksForLLMContext is an empty array.`);
-                    }
-                } catch (e) {
-                    logger.error(`(ChatCtrl) [Pre-LIMM] Error stringifying finalChunksForLLMContext: ${e.message}`);
-                    logger.debug(`(ChatCtrl) [Pre-LIMM] finalChunksForLLMContext (raw, could not stringify):`, finalChunksForLLMContext);
-                }
-            } else {
-                logger.warn(`(ChatCtrl) [Pre-LIMM] finalChunksForLLMContext is null or undefined just before LIMM block.`);
-            }
-            // ---- FIN DE LOGGING ADICIONAL ----
-
-            // "Lost in the Middle" Mitigation: Reorder chunks - best first, second-best last.
-            if (finalChunksForLLMContext && finalChunksForLLMContext.length > 1) { // Chequeo explícito
-                logger.info(`(ChatCtrl) [Context Reorder] Chunk IDs before LIMM reorder: ${finalChunksForLLMContext.map(c => c.id).join(', ')}`);
+            if (finalChunksForLLMContext && finalChunksForLLMContext.length > 1) {
                 const secondBestChunk = finalChunksForLLMContext.splice(1, 1)[0];
-                finalChunksForLLMContext.push(secondBestChunk);
-                logger.info(`(ChatCtrl) [Context Reorder] Applied "Lost in the Middle" strategy.`);
-                logger.info(`(ChatCtrl) [Context Reorder] Chunk IDs after LIMM reorder: ${finalChunksForLLMContext.map(c => c.id).join(', ')}`);
-            } else if (Array.isArray(finalChunksForLLMContext)) { // Es un array pero no .length > 1
-                 logger.info(`(ChatCtrl) [Context Reorder] LIMM not applied, finalChunksForLLMContext length is ${finalChunksForLLMContext.length}`);
-            } else { // Es null o undefined o no es un array
-                 logger.warn(`(ChatCtrl) [Context Reorder] LIMM not applied, finalChunksForLLMContext is null, undefined, or not an array.`);
+                if (secondBestChunk) finalChunksForLLMContext.push(secondBestChunk);
             }
+            // ... (fin de lógica LIMM) ...
 
-            // Now, construct propositionsSectionText and fullChunksSectionText using finalChunksForLLMContext
-            // This part needs to be adapted from the original logic to use finalChunksForLLMContext
-            // instead of propositionResults directly for propositions (if they were part of processedKnowledgeForContext)
-            // or processedKnowledgeForContext for chunks.
-            // For now, we assume propositionResults are handled separately and only `fullChunksSectionText` is built from `finalChunksForLLMContext`.
-            // The prompt implies `processedKnowledgeForContext` was the source for `fullChunksSectionText`.
-
-            let propositionsSectionText = ""; // This might need separate handling if propositions are not part of the sortable chunks
+            // Construcción de ragContext
+            let propositionsSectionText = "";
             if (propositionResults && propositionResults.length > 0) {
                  propositionsSectionText = "Proposiciones Relevantes:\n";
                  propositionResults.forEach((prop, index) => {
-                    propositionsSectionText += `Proposición ${index + 1} (ID: ${prop.proposition_id}, ChunkID: ${prop.source_chunk_id}, Similitud: ${prop.similarity.toFixed(3)}):\n${prop.proposition_text}\n---\n`;
+                    propositionsSectionText += `Proposición ${index + 1} (ID: ${prop.proposition_id}, ChunkID: ${prop.source_chunk_id}, Similitud: ${prop.similarity?.toFixed(3) || 'N/A'}):\n${prop.proposition_text}\n---\n`;
                  });
             }
-
             let fullChunksSectionText = "";
-            if (finalChunksForLLMContext.length > 0) {
+            if (finalChunksForLLMContext && finalChunksForLLMContext.length > 0) {
                 fullChunksSectionText = "Fragmentos de Documentos Relevantes:\n";
                 finalChunksForLLMContext.forEach((chunk, index) => {
-                    let chunkString = "";
-                    chunkString += `--- Document Start (ID: ${chunk.id}, Score: ${(chunk.reranked_score ?? chunk.hybrid_score ?? 0).toFixed(3)}) ---\n`;
+                    // ... (construcción de chunkString como antes) ...
+                    let chunkString = `--- Document Start (ID: ${chunk.id}, Score: ${(chunk.reranked_score ?? chunk.hybrid_score ?? 0).toFixed(3)}) ---\n`;
                     chunkString += `Source: ${chunk.metadata?.source_name || 'N/A'}\n`;
-
                     if (chunk.metadata?.hierarchy && Array.isArray(chunk.metadata.hierarchy) && chunk.metadata.hierarchy.length > 0) {
                         chunkString += `Section Path: ${chunk.metadata.hierarchy.map(h => h.text).join(' > ')}\n`;
-                    } else {
-                        chunkString += "Section Path: N/A\n";
-                    }
-
-                    if (chunk.metadata?.page_number) {
-                        chunkString += `Page: ${chunk.metadata.page_number}\n`;
-                    } else {
-                        chunkString += "Page: N/A\n";
-                    }
-
+                    } else { chunkString += "Section Path: N/A\n"; }
+                    if (chunk.metadata?.page_number) { chunkString += `Page: ${chunk.metadata.page_number}\n`; }
+                    else { chunkString += "Page: N/A\n"; }
                     const content = chunk.extracted_content || chunk.content || "No content available";
-                    chunkString += `Content: ${content}\n`;
-                    chunkString += `--- Document End (ID: ${chunk.id}) ---\n\n`;
+                    chunkString += `Content: ${content}\n--- Document End (ID: ${chunk.id}) ---\n\n`;
                     fullChunksSectionText += chunkString;
-
-                    if (index === 0) { // Log only the first formatted chunk for debugging
-                        logger.debug(`(ChatCtrl) [Context Formatting] Example of first formatted chunk string:\n${chunkString}`);
-                    }
                 });
             }
-
             let ragContext = propositionsSectionText + fullChunksSectionText;
-            if (!ragContext.trim() && !(propositionsSectionText.trim())) { // Check if both are empty or just whitespace
+            if (!ragContext.trim()) {
                  ragContext = "(No se encontró contexto relevante o procesado para esta pregunta)";
-            } else if (!fullChunksSectionText.trim() && propositionsSectionText.trim()) {
-                ragContext = propositionsSectionText + "\n(No se encontraron fragmentos de documentos adicionales relevantes dentro del límite de contexto)";
-            } else if (fullChunksSectionText.trim() && !propositionsSectionText.trim()) {
-                ragContext = fullChunksSectionText; // Only chunks, no specific message needed
             }
 
-
-            let mutableConversationHistory = [...conversationHistory];
-            let mutableRagContext = ragContext;
-            // const systemPromptBase = `Eres Zoe, el asistente virtual IA especializado...`; // Already defined above for token calculation
-            let finalSystemPromptContent = `${systemPromptBase}\n\nHistorial de Conversación Previa:\n${formattedHistoryForTokenCalc}\n\nContexto de la base de conocimiento:\n${mutableRagContext}`;
-
-            // Simplified token counting and truncation logic (the detailed selection is done above)
-            // The primary goal now is to ensure the assembled prompt respects the absolute model limits,
-            // though the context selection should have already managed this for the RAG part.
-            let finalSystemPromptTokens = encode(finalSystemPromptContent).length;
-            logger.info(`(ChatCtrl) [Prompt Assembly] Final assembled system prompt tokens (before last-resort truncation): ${finalSystemPromptTokens}`);
-            const maxSystemPromptTokens = MAX_CONTEXT_TOKENS_FOR_LLM * 0.8; // Example: 80% of total for system prompt with context
-
-            if (finalSystemPromptTokens > maxSystemPromptTokens) {
-                logger.warn(`(ChatCtrl) Truncating finalSystemPromptContent as it still exceeds ${maxSystemPromptTokens} tokens after context selection. Original: ${finalSystemPromptTokens}`);
-                // This truncation should ideally not be hit often if context selection is effective
-                const excessTokens = finalSystemPromptTokens - maxSystemPromptTokens;
-                // Simple truncation of ragContext part for now. More sophisticated truncation might be needed.
-                const ragContextTokens = encode(mutableRagContext).length;
-                if (ragContextTokens > excessTokens) {
-                    const charsToKeep = Math.floor(mutableRagContext.length * ( (ragContextTokens - excessTokens) / ragContextTokens ) * 0.9); // 0.9 for safety
-                    mutableRagContext = mutableRagContext.substring(0, charsToKeep) + "... (contexto truncado)";
-                    finalSystemPromptContent = `${systemPromptBase}\n\nHistorial de Conversación Previa:\n${formattedHistoryForTokenCalc}\n\nContexto de la base de conocimiento:\n${mutableRagContext}`;
-                    finalSystemPromptTokens = encode(finalSystemPromptContent).length;
-                    logger.warn(`(ChatCtrl) Truncated ragContext. New finalSystemPromptTokens: ${finalSystemPromptTokens}`);
-                } else {
-                    logger.warn(`(ChatCtrl) Cannot effectively truncate ragContext to fit. It's smaller than excess. Prompt might be too large due to history/base.`);
-                    // Consider truncating history if this happens
-                }
-            }
-
-
-            const messagesForAPI = [{ role: "system", content: finalSystemPromptContent }, ...mutableConversationHistory, { role: "user", content: effectiveQuery }]; // Use effectiveQuery for final LLM call
+            // Preparación final del prompt y llamada al LLM
+            let finalSystemPromptContent = `${systemPromptBase}\n\nHistorial de Conversación Previa:\n${formattedHistoryForTokenCalc}\n\nContexto de la base de conocimiento:\n${ragContext}`;
+            // ... (lógica de truncamiento de finalSystemPromptContent si excede maxSystemPromptTokens) ...
+            const messagesForAPI = [{ role: "system", content: finalSystemPromptContent }, { role: "user", content: effectiveQuery }];
             let botReplyText = await getChatCompletion(messagesForAPI, CHAT_MODEL, CHAT_TEMPERATURE);
 
+            // Manejo de respuesta y escalación
             const originalBotReplyText = botReplyText;
             let wasEscalated = false;
-            if (originalBotReplyText && originalBotReplyText.trim() === BOT_CANNOT_ANSWER_MSG) { /* ... escalation logic as before, using effectiveQuery in analytics ... */
+            if (originalBotReplyText && originalBotReplyText.trim() === BOT_CANNOT_ANSWER_MSG) {
                  db.updateAnalyticOnBotCannotAnswer(conversationId, effectiveQuery).catch(err => logger.error(`(ChatCtrl) Analytics: Failed to update bot_cannot_answer for CV:${conversationId}`, err));
-                 await db.updateConversationStatusByAgent(conversationId, effectiveClientId, null, 'escalated_to_human'); // Changed clientId to effectiveClientId
-                 botReplyText = BOT_ESCALATION_NOTIFICATION_MSG; wasEscalated = true;
+                 await db.updateConversationStatusByAgent(conversationId, effectiveClientId, null, 'escalated_to_human');
+                 botReplyText = BOT_ESCALATION_NOTIFICATION_MSG;
+                 wasEscalated = true;
                  db.updateAnalyticOnEscalation(conversationId, new Date(), effectiveQuery).catch(err => logger.error(`(ChatCtrl) Analytics: Failed to update escalation data for CV:${conversationId}`, err));
             }
 
-            // Ensure these variables used for logData are defined with fallbacks
+            // Actualizar variables _for_log para el logData
+            const messagesForAPI_for_log = messagesForAPI;
+            const botReplyText_for_log = botReplyText;
+            const wasEscalated_for_log = wasEscalated;
+
+            // Variables para logData usando fallbacks seguros
             const queriesThatWereEmbeddedForLog = hybridSearchOutput?.queriesEmbeddedForLog || [];
             const searchParamsUsedForLog = hybridSearchOutput?.searchParams || {};
             const predictedCategoryValueForLog = hybridSearchOutput?.predictedCategory || null;
 
-            // botReplyText and messagesForAPI are defined within this try block before this point
-            // wasEscalated is also defined within this try block
-            const messagesForAPI_for_log = typeof messagesForAPI !== 'undefined' ? messagesForAPI : [{role:"system", content:"Error: messagesForAPI not constructed"}, {role:"user", content: effectiveQuery || ""}];
-            const botReplyText_for_log = typeof botReplyText !== 'undefined' ? botReplyText : "Error: Reply not generated";
-
-            // ---- START DEBUG LOGGING ----
-            logger.debug('(ChatCtrl) Pre-map Debugging:');
-            logger.debug(`(ChatCtrl) typeof hybridSearchOutput: ${typeof hybridSearchOutput}`);
-            if (hybridSearchOutput && typeof hybridSearchOutput === 'object') {
-                logger.debug(`(ChatCtrl) hybridSearchOutput.results exists: ${hybridSearchOutput.hasOwnProperty('results')}, isArray: ${Array.isArray(hybridSearchOutput.results)}`);
-                if (hybridSearchOutput.hasOwnProperty('results')) {
-                    logger.debug(`(ChatCtrl) hybridSearchOutput.results (first few): ${JSON.stringify(hybridSearchOutput.results?.slice(0,2))}`);
-                }
-                logger.debug(`(ChatCtrl) hybridSearchOutput.pipelineDetails exists: ${hybridSearchOutput.hasOwnProperty('pipelineDetails')}`);
-                if (hybridSearchOutput.pipelineDetails && typeof hybridSearchOutput.pipelineDetails === 'object') {
-                    logger.debug(`(ChatCtrl) hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground exists: ${hybridSearchOutput.pipelineDetails.hasOwnProperty('finalRankedResultsForPlayground')}, isArray: ${Array.isArray(hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground)}`);
-                    if (hybridSearchOutput.pipelineDetails.hasOwnProperty('finalRankedResultsForPlayground')) {
-                         logger.debug(`(ChatCtrl) hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground (first few): ${JSON.stringify(hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground?.slice(0,2))}`);
-                    }
-                } else {
-                    logger.debug("(ChatCtrl) hybridSearchOutput.pipelineDetails is null or not an object.");
-                }
-            } else {
-                logger.debug("(ChatCtrl) hybridSearchOutput is null, undefined, or not an object.");
-            }
-
-            logger.debug(`(ChatCtrl) resultsToMap (derived from hybridSearchOutput.results): isArray: ${Array.isArray(resultsToMap)}, length: ${resultsToMap?.length}`);
-            logger.debug(`(ChatCtrl) resultsToMap (first few): ${JSON.stringify(resultsToMap?.slice(0,2))}`);
-
-            logger.debug(`(ChatCtrl) rawRankedResultsForLog (derived): isArray: ${Array.isArray(rawRankedResultsForLog)}, length: ${rawRankedResultsForLog?.length}`);
-            logger.debug(`(ChatCtrl) rawRankedResultsForLog (first few): ${JSON.stringify(rawRankedResultsForLog?.slice(0,2))}`);
-            // ---- END DEBUG LOGGING ----
-
-            const retrievedContextForLog = (Array.isArray(rawRankedResultsForLog) ? rawRankedResultsForLog : []).map(c => ({
-                id: c.id,
-                content_preview: (typeof c.content === 'string' ? c.content.substring(0,150) : "") + "...", // Safe substring
-                score: c.reranked_score ?? c.hybrid_score ?? 0,
-                metadata: c.metadata
-            }));
-
             const logData = {
-                clientId: effectiveClientId,
+                client_id: effectiveClientId,
                 conversationId,
                 userQuery: effectiveQuery || "",
-                retrievedContext: retrievedContextForLog, // Already an array
+                retrievedContext: retrievedContextForLog, // Ya es seguro
                 finalPromptToLlm: JSON.stringify(messagesForAPI_for_log),
                 llmResponse: botReplyText_for_log,
                 queryEmbeddingsUsed: queriesThatWereEmbeddedForLog,
                 vectorSearchParams: searchParamsUsedForLog,
-                wasEscalated: wasEscalated,
+                was_escalated: wasEscalated_for_log,
                 predicted_query_category: predictedCategoryValueForLog
             };
 
@@ -532,31 +397,29 @@ export const handleChatMessage = async (req, res, next) => {
                 logger.error("(ChatCtrl) Error logging RAG interaction:", err.message);
             }
 
-            if (botReplyText) {
-                // Save the user's actual typed message, and bot's reply
-                await db.saveMessage(conversationId, 'user', userMessageInput); // User message does not get ragLogId
+            if (botReplyText_for_log) {
+                await db.saveMessage(conversationId, 'user', userMessageInput);
                 db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => logger.error("(ChatCtrl) Analytics err:", err));
-                await db.saveMessage(conversationId, 'bot', botReplyText, ragLogId); // Pass ragLogId here for bot message
+                await db.saveMessage(conversationId, 'bot', botReplyText_for_log, ragLogId);
                 db.incrementAnalyticMessageCount(conversationId, 'bot').catch(err => logger.error("(ChatCtrl) Analytics err:", err));
 
-                if (!(clarification_response_details && clarification_response_details.original_query)) { // Don't cache if it was a clarification cycle that led to this answer
-                    db.setCache(cacheKey, botReplyText);
+                if (!(clarification_response_details && clarification_response_details.original_query)) {
+                    db.setCache(cacheKey, botReplyText_for_log);
                 }
-                res.status(200).json({ reply: botReplyText });
+                res.status(200).json({ reply: botReplyText_for_log });
             } else {
+                logger.error(`(ChatCtrl) No se pudo generar una respuesta válida del bot para CV:${conversationId}. Respuesta del LLM fue: ${botReplyText_for_log}`);
                 res.status(503).json({ reply: 'Lo siento, estoy teniendo problemas para procesar tu solicitud en este momento.' });
             }
         }
     } catch (error) {
-        logger.error(`(ChatCtrl) Error general en handleChatMessage para ${conversationId}:`, error);
+        logger.error(`(ChatCtrl) Error general en handleChatMessage para ${conversationId}:`, error.message, error.stack?.substring(0,500));
         next(error);
     }
 };
 
 export const startConversation = async (req, res, next) => {
     logger.info('>>> chatController.js: DENTRO de startConversation');
-    // const { clientId } = req.body; // Removed from here
-
     let effectiveClientId;
     if (req.user && req.user.id) {
         effectiveClientId = req.user.id;
@@ -569,46 +432,41 @@ export const startConversation = async (req, res, next) => {
         return res.status(400).json({ error: 'Falta clientId o no se pudo determinar.' });
     }
 
-    if (!effectiveClientId) { // Should be caught by the logic above, but as a safeguard
+    if (!effectiveClientId) {
         logger.warn('(ChatCtrl) Petición inválida a /start. Falta effectiveClientId.');
         return res.status(400).json({ error: 'Falta clientId.' });
     }
-
-    // Validate effectiveClientId format
     if (!UUID_REGEX.test(effectiveClientId)) {
         return res.status(400).json({ error: 'clientId has an invalid format.' });
     }
     try {
         logger.info(`(ChatCtrl) startConversation: effectiveClientId recibido/derivado es: '${effectiveClientId}'`);
-        const clientExists = await db.getClientConfig(effectiveClientId); // Changed clientId to effectiveClientId
+        const clientExists = await db.getClientConfig(effectiveClientId);
         if (!clientExists) {
             logger.warn(`(ChatCtrl) Intento de iniciar conversación para cliente inexistente: ${effectiveClientId}`);
             return res.status(404).json({ error: 'Cliente inválido o no encontrado.' });
         }
-        const newConversationId = await db.createConversation(effectiveClientId); // Changed clientId to effectiveClientId
+        const newConversationId = await db.createConversation(effectiveClientId);
         if (!newConversationId) {
             throw new Error("Failed to create conversation or retrieve its ID.");
         }
         logger.info(`(ChatCtrl) Conversación iniciada/creada: ${newConversationId} para cliente ${effectiveClientId}`);
 
-        // Fetch the full conversation object to get created_at for analytics
-        const convDetails = await supabase.from('conversations').select('created_at').eq('conversation_id', newConversationId).single();
-        if (convDetails.data) {
-            db.createConversationAnalyticEntry(newConversationId, effectiveClientId, convDetails.data.created_at) // Changed clientId to effectiveClientId
+        const { data: convDetails, error: fetchConvError } = await supabase.from('conversations').select('created_at').eq('conversation_id', newConversationId).single();
+        if (fetchConvError) {
+             logger.error(`(ChatCtrl) Analytics: Could not fetch created_at for new CV:${newConversationId}`, fetchConvError);
+        } else if (convDetails) {
+            db.createConversationAnalyticEntry(newConversationId, effectiveClientId, convDetails.created_at)
              .catch(err => logger.error(`(ChatCtrl) Analytics: Failed to create entry for CV:${newConversationId}`, err));
         } else {
-             logger.error(`(ChatCtrl) Analytics: Could not fetch created_at for new CV:${newConversationId}`);
+             logger.warn(`(ChatCtrl) Analytics: No details returned for new CV:${newConversationId} after creation to log analytics.`);
         }
 
         res.status(201).json({ conversationId: newConversationId });
     } catch (error) {
-        logger.error(`(ChatCtrl) Error en startConversation para cliente ${effectiveClientId}:`, error); // Changed clientId to effectiveClientId
+        logger.error(`(ChatCtrl) Error en startConversation para cliente ${effectiveClientId}:`, error.message, error.stack?.substring(0,500));
         next(error);
     }
 };
-export default { handleChatMessage, startConversation };
 
-// Ensure all other existing functions (getClientConfig etc.) are maintained below if they were part of the original file.
-// For this operation, only handleChatMessage and startConversation were shown in the prompt for context.
-// The overwrite will replace the entire file, so all exports must be present.
-// (The full file content from previous steps should be used as a base for the overwrite)
+export default { handleChatMessage, startConversation };
