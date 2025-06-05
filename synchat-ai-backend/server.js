@@ -44,8 +44,14 @@ let allowAllForWidget = false;
 
 if (widgetAllowedOriginsEnv === '*') {
     allowAllForWidget = true;
-} else if (widgetAllowedOriginsEnv) {
-    widgetOriginsList = widgetAllowedOriginsEnv.split(',').map(origin => origin.trim().replace(/\/$/, '')).filter(Boolean);
+} else {
+    if (widgetAllowedOriginsEnv) {
+        widgetOriginsList = widgetAllowedOriginsEnv.split(',').map(origin => origin.trim().replace(/\/$/, '')).filter(Boolean);
+    }
+    // Ensure frontendAppURL is included if not allowing all and it's not already in the list
+    if (frontendAppURL && !widgetOriginsList.includes(frontendAppURL)) {
+        widgetOriginsList.push(frontendAppURL);
+    }
 }
 
 const corsOptionsDelegate = function (req, callback) {
