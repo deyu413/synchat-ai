@@ -711,13 +711,13 @@ Classification:`;
             if (currentLoopEmbeddings.length > 0) {
                 for (const { query: eqQuery, embedding: eqEmbedding } of currentLoopEmbeddings) {
                     const rpcParamsVector = {
-                        client_id_param: clientId,
-                        query_embedding: eqEmbedding,
-                        match_threshold: finalVectorMatchThreshold,
-                        match_count: initialRetrieveLimit,
-                        p_category_filter: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? [predictedCategory] : null
-                    };
-                    const { data: vsData, error: vsError } = await supabase.rpc('vector_search', rpcParamsVector);
+    client_id_param: clientId,
+    query_embedding: eqEmbedding,
+    match_threshold: finalVectorMatchThreshold,
+    match_count: initialRetrieveLimit,
+    p_category_filter: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? [predictedCategory] : null
+};
+const { data: vsData, error: vsError } = await supabase.rpc('vector_search', rpcParamsVector);
                     if (vsError) { logger.error(`(DB Service) Vector search error for "${eqQuery.substring(0,50)}...":`, vsError.message); }
                     else if (vsData) {
                         aggregatedVectorResults.push(...vsData);
