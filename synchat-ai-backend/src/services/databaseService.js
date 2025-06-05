@@ -9,8 +9,7 @@ import { pipeline, env } from '@xenova/transformers'; // Asegúrate de que 'env'
 // --- INICIO DEL CÓDIGO A AÑADIR ---
 // Configurar Transformers.js para usar un directorio escribible en Vercel/Lambda.
 // El directorio /tmp es el único lugar donde se pueden escribir archivos en tiempo de ejecución.
-env.cacheDir = '/tmp/transformers-cache';
-env.allowLocalModels = false; // Opcional: deshabilita la búsqueda de modelos locales.
+// Opcional: deshabilita la búsqueda de modelos locales.
 // --- FIN DEL CÓDIGO A AÑADIR ---
 
 
