@@ -63,7 +63,7 @@ BEGIN
     -- Attempt to convert plain text to a tsquery.
     -- This example uses plainto_tsquery, which is simple.
     -- More complex scenarios might use websearch_to_tsquery or build the tsquery manually.
-    ts_query_obj := plainto_tsquery('spanish', query_text); -- Assuming 'spanish' config
+    ts_query_obj := plainto_tsquery('english', query_text); -- Assuming 'english' config to match fts column
 
     RETURN QUERY
     SELECT
