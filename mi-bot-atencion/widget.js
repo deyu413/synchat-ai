@@ -509,8 +509,19 @@ async function loadI18nStrings() {
             closeButton.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleChatWindow(); } });
         }
 
-        function handleSend() {
+        async function handleSend() {
             if (inputField && inputField.value.trim()) {
+                if (!conversationId) {
+                    widgetLogger.log("handleSend: conversationId es nulo o vacío, intentando iniciar nueva conversación...");
+                    await startNewConversation();
+                }
+
+                if (!conversationId) {
+                    widgetLogger.error("handleSend: Error crítico - conversationId sigue siendo nulo después de intentar iniciar una nueva. Mensaje no enviado.");
+                    // Opcionalmente, mostrar un mensaje al usuario en la UI del chat.
+                    // addMessageToChat("system", getString('widget.errorCriticalSession', "Error crítico: No se pudo establecer una sesión de chat. Intenta recargar."));
+                    return;
+                }
                 sendMessage(inputField.value.trim());
             }
         }
