@@ -345,7 +345,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function loadKnowledgeSources() {
-        const token = localStorage.getItem('synchat_session_token'); // MOVED TO THE TOP
+        console.log('loadKnowledgeSources called'); // <<< ADD
+        const token = localStorage.getItem('synchat_session_token');
+        console.log('Using token:', token); // <<< ADD
 
         // Verificar elementos del DOM primero
         if (!knowledgeSourcesList || !loadingSourcesMsg) {
@@ -370,11 +372,15 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`${API_BASE_URL}/api/client/me/knowledge/sources`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
+            console.log('API response status:', response.status, 'OK:', response.ok); // <<< ADD
+
             if (!response.ok) {
                 const errData = await response.json().catch(() => ({}));
+                console.error('API error data:', errData); // <<< ADD
                 throw new Error(errData.message || `Error fetching sources: ${response.status}`);
             }
             const sources = await response.json();
+            console.log('Fetched sources:', sources); // <<< ADD
 
             if (sources && sources.length > 0) {
                 sources.forEach(source => {
@@ -439,7 +445,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 knowledgeSourcesList.innerHTML = '<p>No se encontraron fuentes de conocimiento.</p>';
             }
         } catch (error) {
-            console.error("Error loading knowledge sources:", error);
+            console.error("Error loading knowledge sources (caught exception):", error); // <<< MODIFY to be more specific
             if(knowledgeSourcesList) knowledgeSourcesList.innerHTML = `<p>Error al cargar fuentes: ${error.message}</p>`;
             if(knowledgeManagementMessage) displayMessage(knowledgeManagementMessage, `Error al cargar fuentes: ${error.message}`, false);
         } finally {
@@ -1198,11 +1204,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (targetSectionId) {
                     allDashboardSections.forEach(section => {
-                        section.style.display = (section.id === targetSectionId) ? 'block' : 'none';
+                        // This needs to map 'ingest' to 'knowledgeManagement' for display
+                        section.style.display = (section.id === (targetSectionId === 'ingest' ? 'knowledgeManagement' : targetSectionId)) ? 'block' : 'none';
                     });
                     // Load data for the activated section
                     if (targetSectionId === 'config') fetchClientConfig();
-                    else if (targetSectionId === 'ingest') loadKnowledgeSources(); // 'ingest' is the ID for knowledge management section
+                    else if (targetSectionId === 'ingest') loadKnowledgeSources();
                     else if (targetSectionId === 'usage') fetchClientUsageStats();
                     else if (targetSectionId === 'inboxSection') loadInboxConversations();
                     else if (targetSectionId === 'analyticsSection') loadAnalyticsData();
@@ -1216,7 +1223,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let initialSectionIdToShow = 'config';
     if (window.location.hash) {
         const hash = window.location.hash.substring(1);
-        if (document.getElementById(hash)) initialSectionIdToShow = hash;
+        if (document.getElementById(hash)) { // This is true if hash is 'config', 'widget', 'usage' etc.
+            initialSectionIdToShow = hash;
+        } else if (hash === 'ingest') { // <<< ADD THIS CASE
+            initialSectionIdToShow = 'knowledgeManagement';
+        }
     }
 
     allDashboardSections.forEach(s => s.style.display = 'none'); // Hide all first
@@ -1224,7 +1235,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (initialSectionElement) {
         initialSectionElement.style.display = 'block';
         if (initialSectionIdToShow === 'config') fetchClientConfig();
-        else if (initialSectionIdToShow === 'ingest') loadKnowledgeSources();
+        // Ensure this condition correctly triggers data loading for the ingest section
+        else if (initialSectionIdToShow === 'knowledgeManagement') loadKnowledgeSources(); // <<< CHANGE 'ingest' to 'knowledgeManagement' here
         else if (initialSectionIdToShow === 'usage') fetchClientUsageStats();
         else if (initialSectionIdToShow === 'inboxSection') loadInboxConversations();
         else if (initialSectionIdToShow === 'analyticsSection') loadAnalyticsData();
