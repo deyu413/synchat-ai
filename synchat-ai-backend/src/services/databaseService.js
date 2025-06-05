@@ -116,6 +116,10 @@ const questionCache = new Map();
 export function getCache(key) { /* ... */ }
 export function setCache(key, value) { /* ... */ }
 // (Existing cache functions as before)
+// synchat-ai-backend/src/services/databaseService.js
+
+// ... (otros imports y código) ...
+
 export const getClientConfig = async (clientId) => {
     try {
         logger.debug(`(DB Service) getClientConfig: Buscando cliente con ID: ${clientId}`);
@@ -130,28 +134,31 @@ export const getClientConfig = async (clientId) => {
                 updated_at,
                 subscription_id,
                 subscription_status,
-                billing_cycle_id
-            `)
+                subscription_current_period_end 
+            `) // Eliminado billing_cycle_id.
+               // subscription_current_period_end ya estaba en tu tabla, lo incluyo aquí si fuera necesario
+               // o puedes eliminarlo también si no se usa en este contexto.
+               // La clave es quitar el que no existe: billing_cycle_id.
             .eq('client_id', clientId)
             .single();
 
         if (error) {
-            if (error.code === 'PGRST116') { // PostgREST code for "Matching row not found"
+            if (error.code === 'PGRST116') {
                 logger.warn(`(DB Service) getClientConfig: Cliente no encontrado con ID: ${clientId}. Error: ${error.message}`);
-                return null; // Or handle as per application logic, e.g., throw new Error('Client not found');
+                return null;
             }
-            // Log other types of errors
             logger.error(`(DB Service) Error fetching client config for ID ${clientId}:`, error);
-            throw error; // Re-throw other errors to be handled by the caller
+            throw error;
         }
         logger.debug(`(DB Service) getClientConfig: Datos encontrados para cliente ${clientId}: ${data ? 'Sí' : 'No'}`);
         return data;
     } catch (err) {
-        // Catch any other unexpected errors (network issues, etc.)
         logger.error(`(DB Service) Unexpected exception fetching client config for ID ${clientId}:`, err);
-        throw err; // Re-throw to allow higher-level error handling
+        throw err;
     }
 };
+
+// ... (resto del archivo databaseService.js) ...
 export const getAllActiveClientIds = async () => { /* ... */ }; // Keep only one definition
 // Note: There are two getAllActiveClientIds, removing one. The one using subscription_status seems more robust.
 export const getChunkSampleForSource = async (clientId, sourceId, limit = 5) => { /* ... */ };
