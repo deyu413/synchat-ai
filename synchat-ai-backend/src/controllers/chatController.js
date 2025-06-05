@@ -447,6 +447,34 @@ export const handleChatMessage = async (req, res, next) => {
             const messagesForAPI_for_log = typeof messagesForAPI !== 'undefined' ? messagesForAPI : [{role:"system", content:"Error: messagesForAPI not constructed"}, {role:"user", content: effectiveQuery || ""}];
             const botReplyText_for_log = typeof botReplyText !== 'undefined' ? botReplyText : "Error: Reply not generated";
 
+            // ---- START DEBUG LOGGING ----
+            logger.debug('(ChatCtrl) Pre-map Debugging:');
+            logger.debug(`(ChatCtrl) typeof hybridSearchOutput: ${typeof hybridSearchOutput}`);
+            if (hybridSearchOutput && typeof hybridSearchOutput === 'object') {
+                logger.debug(`(ChatCtrl) hybridSearchOutput.results exists: ${hybridSearchOutput.hasOwnProperty('results')}, isArray: ${Array.isArray(hybridSearchOutput.results)}`);
+                if (hybridSearchOutput.hasOwnProperty('results')) {
+                    logger.debug(`(ChatCtrl) hybridSearchOutput.results (first few): ${JSON.stringify(hybridSearchOutput.results?.slice(0,2))}`);
+                }
+                logger.debug(`(ChatCtrl) hybridSearchOutput.pipelineDetails exists: ${hybridSearchOutput.hasOwnProperty('pipelineDetails')}`);
+                if (hybridSearchOutput.pipelineDetails && typeof hybridSearchOutput.pipelineDetails === 'object') {
+                    logger.debug(`(ChatCtrl) hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground exists: ${hybridSearchOutput.pipelineDetails.hasOwnProperty('finalRankedResultsForPlayground')}, isArray: ${Array.isArray(hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground)}`);
+                    if (hybridSearchOutput.pipelineDetails.hasOwnProperty('finalRankedResultsForPlayground')) {
+                         logger.debug(`(ChatCtrl) hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground (first few): ${JSON.stringify(hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground?.slice(0,2))}`);
+                    }
+                } else {
+                    logger.debug("(ChatCtrl) hybridSearchOutput.pipelineDetails is null or not an object.");
+                }
+            } else {
+                logger.debug("(ChatCtrl) hybridSearchOutput is null, undefined, or not an object.");
+            }
+
+            logger.debug(`(ChatCtrl) resultsToMap (derived from hybridSearchOutput.results): isArray: ${Array.isArray(resultsToMap)}, length: ${resultsToMap?.length}`);
+            logger.debug(`(ChatCtrl) resultsToMap (first few): ${JSON.stringify(resultsToMap?.slice(0,2))}`);
+
+            logger.debug(`(ChatCtrl) rawRankedResultsForLog (derived): isArray: ${Array.isArray(rawRankedResultsForLog)}, length: ${rawRankedResultsForLog?.length}`);
+            logger.debug(`(ChatCtrl) rawRankedResultsForLog (first few): ${JSON.stringify(rawRankedResultsForLog?.slice(0,2))}`);
+            // ---- END DEBUG LOGGING ----
+
             const retrievedContextForLog = (Array.isArray(rawRankedResultsForLog) ? rawRankedResultsForLog : []).map(c => ({
                 id: c.id,
                 content_preview: (typeof c.content === 'string' ? c.content.substring(0,150) : "") + "...", // Safe substring

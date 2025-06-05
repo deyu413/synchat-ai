@@ -802,26 +802,46 @@ Classification:`;
         if (returnPipelineDetails) pipelineDetails.mergedAndPreRankedResultsPreview = rankedResults.slice(0,50).map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', metadata: item.metadata, initialHybridScore: item.hybrid_score, vectorSimilarity: item.vector_similarity, ftsScore: item.fts_score, highlighted_content: item.highlighted_content }));
 
         if (rankedResults.length === 0) {
+            const originalQueryForEmptyReturn = originalUserQueryAtStart || queryText || "";
+            const queriesForEmptyReturn = aggregatedQueriesEmbeddedForLog && aggregatedQueriesEmbeddedForLog.length > 0 ? aggregatedQueriesEmbeddedForLog : (originalQueryForEmptyReturn ? [originalQueryForEmptyReturn] : []);
+
             const emptyReturn = {
                 results: [], // CRITICAL
                 propositionResults: [],
                 searchParams: searchParamsForLog || {},
-                queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog || (originalUserQueryAtStart ? [originalUserQueryAtStart] : []),
+                queriesEmbeddedForLog: queriesForEmptyReturn,
                 predictedCategory: predictedCategory || null,
-                // rawRankedResultsForLog: [] // This was added before, but chatController will derive from results or pipelineDetails
+                // No direct rawRankedResultsForLog here; chatController derives it
             };
+
             if (returnPipelineDetails) {
-                emptyReturn.pipelineDetails = pipelineDetails || {
-                    originalQuery: originalUserQueryAtStart || queryText,
-                    finalRankedResultsForPlayground: [], // CRITICAL for chatController derivation
-                    // Add other safe defaults for pipelineDetails if necessary
-                 };
-                // Ensure finalRankedResultsForPlayground is an array if pipelineDetails exists
-                if (emptyReturn.pipelineDetails && !Array.isArray(emptyReturn.pipelineDetails.finalRankedResultsForPlayground)) {
+                // Ensure pipelineDetails itself is an object and contains the critical part for chatController
+                const basePipelineDetails = (typeof pipelineDetails === 'object' && pipelineDetails !== null) ? pipelineDetails : {};
+                emptyReturn.pipelineDetails = {
+                    ...basePipelineDetails, // Spread any existing details
+                    originalQuery: originalQueryForEmptyReturn,
+                    // CRITICAL: Ensure finalRankedResultsForPlayground is an array for chatController's derivation of rawRankedResultsForLog
+                    finalRankedResultsForPlayground: (basePipelineDetails.finalRankedResultsForPlayground && Array.isArray(basePipelineDetails.finalRankedResultsForPlayground)) ? basePipelineDetails.finalRankedResultsForPlayground : [],
+                    // Add other essential pipeline details with defaults if they might be accessed
+                    queryCorrection: basePipelineDetails.queryCorrection || { originalQuery: originalQueryForEmptyReturn, correctedQuery: originalQueryForEmptyReturn, wasChanged: false },
+                    queryClassification: basePipelineDetails.queryClassification || { predictedCategory: (predictedCategory || null), categoriesAvailable: (typeof clientCategoriesArray !== 'undefined' ? clientCategoriesArray : []) }
+                };
+                // If the primary 'results' for the playground wasn't set, default it too within pipelineDetails
+                // This check is somewhat redundant due to the above, but ensures it explicitly.
+                if (!Array.isArray(emptyReturn.pipelineDetails.finalRankedResultsForPlayground)) {
                     emptyReturn.pipelineDetails.finalRankedResultsForPlayground = [];
                 }
             }
-            logger.info("(DB Service) No results after merging. Returning empty structure."); // Log the structure being returned
+
+            logger.info("(DB Service) No results after merging. Returning empty structure.");
+            // Log the actual object being returned for deep debugging
+            // Using JSON.stringify to avoid issues with circular refs if any, though unlikely for this structure
+            try {
+                logger.debug(`(DB Service) [No Results Path] Returning object: ${JSON.stringify(emptyReturn, null, 2)}`);
+            } catch (e) {
+                logger.error("(DB Service) [No Results Path] Error stringifying emptyReturn for debug log:", e);
+                logger.debug("(DB Service) [No Results Path] Returning object (partial on stringify error):", {results: emptyReturn.results, pipelineDetailsExists: !!emptyReturn.pipelineDetails});
+            }
             return emptyReturn;
         }
 
