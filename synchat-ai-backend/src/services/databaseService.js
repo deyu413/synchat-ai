@@ -1,19 +1,22 @@
-// src/services/databaseService.js
+// Archivo: src/services/databaseService.js
+
 import logger from '../utils/logger.js';
-import { supabase } from './supabaseClient.js'; // Importar cliente inicializado
-import { getEmbedding } from './embeddingService.js'; // Necesario para búsqueda híbrida
-import { getChatCompletion } from './openaiService.js'; // Import for query reformulation
-import { pipeline, env } from '@xenova/transformers';
+import { supabase } from './supabaseClient.js';
+import { getEmbedding } from './embeddingService.js';
+import { getChatCompletion } from './openaiService.js';
+import { pipeline, env } from '@xenova/transformers'; // Asegúrate de que 'env' se importa aquí.
 
-// --- INICIO DE LA ACTUALIZACIÓN ---
+// --- INICIO DEL CÓDIGO A AÑADIR ---
+// Configurar Transformers.js para usar un directorio escribible en Vercel/Lambda.
+// El directorio /tmp es el único lugar donde se pueden escribir archivos en tiempo de ejecución.
+env.cacheDir = '/tmp/transformers-cache';
+env.allowLocalModels = false; // Opcional: deshabilita la búsqueda de modelos locales.
+// --- FIN DEL CÓDIGO A AÑADIR ---
 
-// TODO: Future Enhancements for Query Expansion Dictionaries:
-// - Consider making the use of THESAURUS_ES and ACRONYMS_ES configurable (e.g., enable/disable globally or per client).
-// - Explore loading these dictionaries from a database or external configuration files instead of hardcoding.
-// - Investigate potential for client-specific thesauri or acronym lists.
 
-// Expanded Spanish Thesaurus for query expansion
+// Hardcoded Spanish Thesaurus for query expansion
 const THESAURUS_ES = {
+// ... el resto de tu archivo continúa aquí sin cambios ...
     // General & Support
     "precio": ["costo", "tarifa", "valor", "importe"],
     "soporte": ["ayuda", "asistencia", "atención", "apoyo"],
