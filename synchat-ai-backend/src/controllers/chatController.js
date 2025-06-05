@@ -158,16 +158,40 @@ export const handleChatMessage = async (req, res, next) => {
 
         const conversationHistory = await db.getConversationHistory(conversationId);
         // Use effectiveQuery for the search
-        const {
-            results: hybridSearchResultsOnly, // Renamed to avoid conflict with a var name `results` if any
-            propositionResults,
-            searchParams: searchParamsUsed,
-            queriesEmbeddedForLog: queriesThatWereEmbedded,
-            predictedCategory, // Capture predictedCategory
-            rawRankedResultsForLog // Ensure this is also captured if it was part of hybridSearchResult
-        } = await db.hybridSearch(effectiveClientId, effectiveQuery, conversationId, {}); // Changed clientId to effectiveClientId
+        const hybridSearchOutput = await db.hybridSearch(effectiveClientId, effectiveQuery, conversationId, {}); // Changed clientId to effectiveClientId
 
-        let initialRelevantKnowledge = hybridSearchResultsOnly; // Use the renamed variable
+        // Safely access results, defaulting to an empty array if not present or not an array
+        const hybridSearchResultsOnly = (hybridSearchOutput && Array.isArray(hybridSearchOutput.results))
+            ? hybridSearchOutput.results
+            : [];
+
+        // Safely access propositionResults, defaulting to an empty array
+        const propositionResults = (hybridSearchOutput && Array.isArray(hybridSearchOutput.propositionResults))
+            ? hybridSearchOutput.propositionResults
+            : [];
+
+        // Safely access searchParams, defaulting to an empty object
+        const searchParamsUsed = (hybridSearchOutput && typeof hybridSearchOutput.searchParams === 'object' && hybridSearchOutput.searchParams !== null)
+            ? hybridSearchOutput.searchParams
+            : {};
+
+        // Safely access queriesEmbeddedForLog, defaulting to an empty array
+        const queriesThatWereEmbedded = (hybridSearchOutput && Array.isArray(hybridSearchOutput.queriesEmbeddedForLog))
+            ? hybridSearchOutput.queriesEmbeddedForLog
+            : [];
+
+        // Safely access predictedCategory, defaulting to null
+        const predictedCategoryValue = (hybridSearchOutput && typeof hybridSearchOutput.predictedCategory !== 'undefined')
+            ? hybridSearchOutput.predictedCategory
+            : null;
+
+        // Derive rawRankedResultsForLog safely
+        // Fallback chain: pipelineDetails.finalRankedResultsForPlayground -> hybridSearchOutput.results -> empty array
+        const rawRankedResultsForLog = (hybridSearchOutput && hybridSearchOutput.pipelineDetails && Array.isArray(hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground))
+            ? hybridSearchOutput.pipelineDetails.finalRankedResultsForPlayground
+            : hybridSearchResultsOnly; // Fallback to hybridSearchResultsOnly which is already safely an array
+
+        let initialRelevantKnowledge = hybridSearchResultsOnly;
 
         // --- Ambiguity Detection ---
         let isAmbiguous = false;
@@ -423,18 +447,25 @@ export const handleChatMessage = async (req, res, next) => {
                  db.updateAnalyticOnEscalation(conversationId, new Date(), effectiveQuery).catch(err => logger.error(`(ChatCtrl) Analytics: Failed to update escalation data for CV:${conversationId}`, err));
             }
 
-            const retrievedContextForLog = rawRankedResultsForLog ? rawRankedResultsForLog.map(c => ({ id: c.id, content_preview: c.content.substring(0,150)+"...", score: c.reranked_score, metadata: c.metadata })) : [];
+            const retrievedContextForLog = (Array.isArray(rawRankedResultsForLog) ? rawRankedResultsForLog : []).map(c => ({
+                id: c.id,
+                // Ensure c.content is a string before calling substring, and provide a fallback.
+                content_preview: (typeof c.content === 'string' ? c.content.substring(0,150) : "") + "...",
+                score: c.reranked_score ?? c.hybrid_score ?? 0, // Use nullish coalescing for score
+                metadata: c.metadata // Assuming metadata is an object or null
+            }));
+
             const logData = {
-                clientId: effectiveClientId, // Changed clientId to effectiveClientId
+                clientId: effectiveClientId,
                 conversationId,
-                userQuery: effectiveQuery,
-                retrievedContext: retrievedContextForLog,
-                finalPromptToLlm: JSON.stringify(messagesForAPI),
-                llmResponse: botReplyText,
-                queryEmbeddingsUsed: queriesThatWereEmbedded,
-                vectorSearchParams: searchParamsUsed,
-                wasEscalated,
-                predicted_query_category: predictedCategory // Add this line
+                userQuery: effectiveQuery || "", // Fallback for userQuery
+                retrievedContext: retrievedContextForLog, // Already an array
+                finalPromptToLlm: JSON.stringify(messagesForAPI), // messagesForAPI should be constructed to be valid
+                llmResponse: botReplyText || "", // Fallback for botReplyText
+                queryEmbeddingsUsed: queriesThatWereEmbedded || [], // Fallback for queriesThatWereEmbedded
+                vectorSearchParams: searchParamsUsed || {}, // Fallback for searchParamsUsed
+                wasEscalated: wasEscalated || false, // Fallback for wasEscalated
+                predicted_query_category: predictedCategoryValue // Use the safely derived value
             };
 
             try {

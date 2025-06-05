@@ -963,20 +963,47 @@ Classification:`;
         const propositionDataForReturn = propositionResults || [];
         if (returnPipelineDetails) pipelineDetails.finalPropositionResults = propositionDataForReturn.map(p => ({ propositionId: p.proposition_id, text: p.proposition_text, sourceChunkId: p.source_chunk_id, score: p.similarity }));
 
+        const returnObject = {
+            results: finalResultsMapped || [],
+            propositionResults: propositionDataForReturn || [],
+            searchParams: searchParamsForLog || {},
+            queriesEmbeddedForLog: (aggregatedQueriesEmbeddedForLog && aggregatedQueriesEmbeddedForLog.length > 0) ? aggregatedQueriesEmbeddedForLog : (originalUserQueryAtStart ? [originalUserQueryAtStart] : []),
+            predictedCategory: predictedCategory !== undefined ? predictedCategory : null
+        };
+
         if (returnPipelineDetails) {
-            return { results: finalResultsMapped, propositionResults: propositionDataForReturn, searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog, predictedCategory, pipelineDetails: pipelineDetails };
-        } else {
-            return { results: finalResultsMapped, propositionResults: propositionDataForReturn, searchParams: searchParamsForLog, queriesEmbeddedForLog: aggregatedQueriesEmbeddedForLog, predictedCategory };
+            returnObject.pipelineDetails = pipelineDetails || { originalQuery: originalUserQueryAtStart, error: "Pipeline details were not fully generated." };
         }
+        return returnObject;
+
     } catch (error) {
         logger.error(`(DB Service) Error general durante la búsqueda híbrida para cliente ${clientId}:`, { message: error.message, stack: error.stack });
-        const errorReturn = { results: [], propositionResults: [], searchParams: searchParamsForLog, queriesEmbeddedForLog: [originalUserQueryAtStart], rawRankedResultsForLog: [], predictedCategory }; // Use originalUserQueryAtStart
-        if (returnPipelineDetails && pipelineDetails) {
-            pipelineDetails.error = error.message;
-            // pipelineDetails.queryClassification might already be set or remain at its initial values
-            errorReturn.pipelineDetails = pipelineDetails;
-        } else if (returnPipelineDetails) { // This case implies pipelineDetails might not have been fully initialized if error was early
-             errorReturn.pipelineDetails = { originalQuery: originalUserQueryAtStart, error: error.message, queryClassification: { predictedCategory: predictedCategory, categoriesAvailable: clientCategoriesArray || [] } };
+
+        // Ensure predictedCategory is defined in this scope, or use a safe default.
+        // It's declared at the beginning of hybridSearch, so it should be available.
+        // clientCategoriesArray might not be defined if error occurred before its initialization.
+
+        const errorReturn = {
+            results: [],
+            propositionResults: [],
+            searchParams: searchParamsForLog || {}, // searchParamsForLog might be undefined if error is very early
+            queriesEmbeddedForLog: (originalUserQueryAtStart ? [originalUserQueryAtStart] : (queryText ? [queryText] : [])),
+            predictedCategory: predictedCategory !== undefined ? predictedCategory : null, // predictedCategory should be in scope
+            error: error.message
+        };
+
+        if (returnPipelineDetails) {
+            if (pipelineDetails) { // If pipelineDetails was partially built
+                pipelineDetails.error = error.message;
+                errorReturn.pipelineDetails = pipelineDetails;
+            } else { // If pipelineDetails is null (error happened very early)
+                errorReturn.pipelineDetails = {
+                    originalQuery: originalUserQueryAtStart || queryText, // Use whichever is available
+                    error: error.message,
+                    queryCorrection: queryCorrectionDetails || { attempted: false, originalQuery: originalUserQueryAtStart || queryText, correctedQuery: originalUserQueryAtStart || queryText, wasChanged: false },
+                    queryClassification: { predictedCategory: predictedCategory !== undefined ? predictedCategory : null, categoriesAvailable: clientCategoriesArray || [] }
+                };
+            }
         }
         return errorReturn;
     }
