@@ -40,11 +40,11 @@ const HYBRID_SEARCH_VECTOR_WEIGHT = 0.5;
 const HYBRID_SEARCH_FTS_WEIGHT = 0.5;
 const HYBRID_SEARCH_LIMIT = 5; // For main chunk search
 const INITIAL_RETRIEVAL_MULTIPLIER = 3;
-const VECTOR_MATCH_THRESHOLD = 0.65; // Umbral de similitud coseno (0 a 1, más alto es más similar)
+const VECTOR_MATCH_THRESHOLD = 0.45; // Umbral de similitud coseno (0 a 1, más alto es más similar)
 const HISTORY_MESSAGE_LIMIT = 8;       // Límite de mensajes de historial
 
 const PROPOSITION_SEARCH_LIMIT = 3; // Max propositions to fetch
-const PROPOSITION_MATCH_THRESHOLD = 0.78; // Stricter threshold for propositions
+const PROPOSITION_MATCH_THRESHOLD = 0.60; // Stricter threshold for propositions
 const DEBUG_PREPROCESSING_DATABASE_SERVICE = false; // Separate debug flag for this service
 const DEBUG_RERANKING = false; // Debug flag for re-ranking logic
 
@@ -719,7 +719,7 @@ const rpcParamsVector = {
     match_threshold: finalVectorMatchThreshold,
     match_count: initialRetrieveLimit,
     p_category_filter: (predictedCategory && predictedCategory.toLowerCase() !== 'none') ? [predictedCategory] : null
-    // ELIMINA la línea 'ivfflat_probes_param: 10'
+    // SIN la línea 'ivfflat_probes_param: 10'
 };
 const { data: vsData, error: vsError } = await supabase.rpc('vector_search', rpcParamsVector);
 
