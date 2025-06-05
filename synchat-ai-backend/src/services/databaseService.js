@@ -748,8 +748,8 @@ Classification:`;
     }
     // Combine all parts with the FTS OR operator '|'
     // E.g., "(termA_expanded) | termB | (termC_expanded)"
-    const ftsQueryString = ftsQueryParts.join(' | '); // Changed from ' & ' to ' | '
-    logger.info(`(DB Service) Original FTS query text for loop: "${processedQueryText.substring(0,50)}...", Constructed FTS query string (OR logic): "${ftsQueryString.substring(0,100)}..."`); // Updated log message
+    const ftsQueryString = loopCurrentQuery; // Pasar la sub-consulta en español directamente
+logger.info(`(DB Service) FTS query text for loop (passed to RPC): "${ftsQueryString.substring(0,100)}..."`);
             // logger.info(...) // This log is already in place and describes the constructed string.
 
             const rpcParamsFts = {
