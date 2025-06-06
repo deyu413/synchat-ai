@@ -141,21 +141,29 @@ export const handleChatMessage = async (req, res, next) => {
             {},   // options
             true  // returnPipelineDetails
         );
+        
+        // *** INICIO DEL CAMBIO IMPORTANTE ***
+        // Validación de robustez para prevenir el crash
+        if (!hybridSearchOutput || !Array.isArray(hybridSearchOutput.results)) {
+            logger.error(`(ChatCtrl) hybridSearch devolvió un resultado inesperado o nulo para la consulta: "${effectiveQuery}"`);
+            // Devuelve una respuesta segura en lugar de fallar
+            await db.saveMessage(conversationId, 'user', userMessageInput);
+            await db.saveMessage(conversationId, 'bot', BOT_CANNOT_ANSWER_MSG);
+            db.incrementAnalyticMessageCount(conversationId, 'user').catch(err => logger.error("(ChatCtrl) Analytics err (robustness fallback):", err));
+            db.incrementAnalyticMessageCount(conversationId, 'bot').catch(err => logger.error("(ChatCtrl) Analytics err (robustness fallback):", err));
+            return res.status(200).json({ reply: BOT_CANNOT_ANSWER_MSG });
+        }
+        // *** FIN DEL CAMBIO IMPORTANTE ***
 
         logger.debug("(ChatCtrl) hybridSearchOutput recibido:", JSON.stringify(hybridSearchOutput, null, 2));
 
-        // Definición robusta de la variable que se usará en el .map()
-        // Usaremos 'results' de hybridSearchOutput como la fuente principal.
-        const resultsForMapping = (hybridSearchOutput && Array.isArray(hybridSearchOutput.results))
-            ? hybridSearchOutput.results
-            : [];
+        const resultsForMapping = hybridSearchOutput.results;
         
         logger.debug(`(ChatCtrl) ANTES DEL MAP - Variable 'resultsForMapping': isArray: ${Array.isArray(resultsForMapping)}, length: ${resultsForMapping.length}`);
-        if (resultsForMapping === undefined) { // Doble chequeo por si acaso
+        if (resultsForMapping === undefined) { 
             logger.error("(ChatCtrl) ERROR CRÍTICO: 'resultsForMapping' ES UNDEFINED justo antes del .map()");
         }
 
-        // Esta es la línea ~306 que daba el error. Ahora usa 'resultsForMapping'.
         let retrievedContextForLog = [];
         if (Array.isArray(resultsForMapping)) {
             try {
@@ -174,7 +182,6 @@ export const handleChatMessage = async (req, res, next) => {
             } catch (mapError) {
                 logger.error("(ChatCtrl) Error DENTRO del .map() de resultsForMapping:", mapError.message, mapError.stack?.substring(0,300));
                 logger.error("(ChatCtrl) resultsForMapping que causó el error en .map():", JSON.stringify(resultsForMapping));
-                // retrievedContextForLog se mantiene como array vacío si el map falla
             }
         } else {
             logger.warn("(ChatCtrl) 'resultsForMapping' NO ES UN ARRAY justo antes del .map(). Se usará array vacío para retrievedContextForLog.");
@@ -182,7 +189,7 @@ export const handleChatMessage = async (req, res, next) => {
         logger.debug(`(ChatCtrl) DESPUÉS DEL MAP - retrievedContextForLog (primeros 2): ${JSON.stringify(retrievedContextForLog.slice(0,2))}`);
 
 
-        const initialRelevantKnowledge = resultsForMapping; // Usar la variable segura para la lógica de ambigüedad, etc.
+        const initialRelevantKnowledge = resultsForMapping;
         const propositionResults = (hybridSearchOutput && Array.isArray(hybridSearchOutput.propositionResults))
             ? hybridSearchOutput.propositionResults
             : [];
@@ -194,11 +201,9 @@ export const handleChatMessage = async (req, res, next) => {
         const userQueryStringForAmbiguity = effectiveQuery;
 
         if (ENABLE_AMBIGUITY_DETECTION && initialRelevantKnowledge && initialRelevantKnowledge.length > 0 && (!clarification_response_details)) {
-            // ... (lógica de ambiguity detection como antes, usando initialRelevantKnowledge) ...
-            // Esta lógica no debería cambiar
             try {
                 const contextSnippets = initialRelevantKnowledge.slice(0, AMBIGUITY_DETECTION_TOP_N_CHUNKS).map((chunk, index) => {
-                    return `Snippet ${index + 1} (ID: ${chunk.id}): "${(chunk.content || "").substring(0, 200)}..."`; // Añadido fallback para chunk.content
+                    return `Snippet ${index + 1} (ID: ${chunk.id}): "${(chunk.content || "").substring(0, 200)}..."`;
                 });
 
                 if (contextSnippets.length > 0) {
@@ -243,7 +248,7 @@ export const handleChatMessage = async (req, res, next) => {
             // --- LLM-based Context Filtering & Summarization ---
             let knowledgeForProcessing = initialRelevantKnowledge.slice(0, LLM_FILTER_TOP_N_CHUNKS);
             let filteredKnowledge = [];
-            // ... (lógica de filtering como antes, usando initialRelevantKnowledge o knowledgeForProcessing) ...
+
             if (ENABLE_LLM_CONTEXT_FILTERING && knowledgeForProcessing.length > 0) {
                  for (const chunk of knowledgeForProcessing) {
                     try {
@@ -265,7 +270,6 @@ export const handleChatMessage = async (req, res, next) => {
             }
 
             let processedKnowledgeForContext = [];
-             // ... (lógica de summarization como antes, usando filteredKnowledge) ...
             if (ENABLE_LLM_CONTEXT_SUMMARIZATION && filteredKnowledge.length > 0) {
                 for (const chunk of filteredKnowledge) {
                     try {
@@ -288,8 +292,6 @@ export const handleChatMessage = async (req, res, next) => {
             }
 
             // --- Score-based Prioritization and Token-limited Truncation ---
-            // ... (lógica de LIMM como antes, usando processedKnowledgeForContext) ...
-            // La lógica para `finalChunksForLLMContext`
             const LLM_TOKEN_SAFETY_MARGIN = 200;
             const TOKENS_PER_CHUNK_OVERHEAD = 65;
             const systemPromptBase = `Eres Zoe, el asistente virtual IA especializado de SynChat AI (synchatai.com). Tu ÚNICA fuente de información es el "Contexto" proporcionado a continuación. NO debes usar ningún conocimiento externo ni hacer suposiciones. Instrucciones ESTRICTAS: 1. Responde SOLAMENTE basándote en la información encontrada en el "Contexto". 2. Si la respuesta a la pregunta del usuario se encuentra en el "Contexto", respóndela de forma clara y concisa (máximo 3-4 frases). 3. Si varios fragmentos del contexto responden a la pregunta del usuario, sintetiza la información en una respuesta única y coherente en español. No te limites a enumerar los fragmentos. 4. Cuando utilices información de una fuente específica del contexto, menciónala de forma breve al final de tu respuesta de la siguiente manera: '(Fuente: [Nombre de la Fuente del Contexto])'. 5. Si el contexto no contiene una respuesta clara, o si la información es contradictoria o ambigua, responde ÚNICA Y EXACTAMENTE con: "${BOT_CANNOT_ANSWER_MSG}" NO intentes adivinar ni buscar en otro lado. 6. Sé amable y profesional.`;
@@ -317,7 +319,6 @@ export const handleChatMessage = async (req, res, next) => {
                 const secondBestChunk = finalChunksForLLMContext.splice(1, 1)[0];
                 if (secondBestChunk) finalChunksForLLMContext.push(secondBestChunk);
             }
-            // ... (fin de lógica LIMM) ...
 
             // Construcción de ragContext
             let propositionsSectionText = "";
@@ -331,7 +332,6 @@ export const handleChatMessage = async (req, res, next) => {
             if (finalChunksForLLMContext && finalChunksForLLMContext.length > 0) {
                 fullChunksSectionText = "Fragmentos de Documentos Relevantes:\n";
                 finalChunksForLLMContext.forEach((chunk, index) => {
-                    // ... (construcción de chunkString como antes) ...
                     let chunkString = `--- Document Start (ID: ${chunk.id}, Score: ${(chunk.reranked_score ?? chunk.hybrid_score ?? 0).toFixed(3)}) ---\n`;
                     chunkString += `Source: ${chunk.metadata?.source_name || 'N/A'}\n`;
                     if (chunk.metadata?.hierarchy && Array.isArray(chunk.metadata.hierarchy) && chunk.metadata.hierarchy.length > 0) {
@@ -351,7 +351,6 @@ export const handleChatMessage = async (req, res, next) => {
 
             // Preparación final del prompt y llamada al LLM
             let finalSystemPromptContent = `${systemPromptBase}\n\nHistorial de Conversación Previa:\n${formattedHistoryForTokenCalc}\n\nContexto de la base de conocimiento:\n${ragContext}`;
-            // ... (lógica de truncamiento de finalSystemPromptContent si excede maxSystemPromptTokens) ...
             const messagesForAPI = [{ role: "system", content: finalSystemPromptContent }, { role: "user", content: effectiveQuery }];
             let botReplyText = await getChatCompletion(messagesForAPI, CHAT_MODEL, CHAT_TEMPERATURE);
 
@@ -366,12 +365,10 @@ export const handleChatMessage = async (req, res, next) => {
                  db.updateAnalyticOnEscalation(conversationId, new Date(), effectiveQuery).catch(err => logger.error(`(ChatCtrl) Analytics: Failed to update escalation data for CV:${conversationId}`, err));
             }
 
-            // Actualizar variables _for_log para el logData
             const messagesForAPI_for_log = messagesForAPI;
             const botReplyText_for_log = botReplyText;
             const wasEscalated_for_log = wasEscalated;
 
-            // Variables para logData usando fallbacks seguros
             const queriesThatWereEmbeddedForLog = hybridSearchOutput?.queriesEmbeddedForLog || [];
             const searchParamsUsedForLog = hybridSearchOutput?.searchParams || {};
             const predictedCategoryValueForLog = hybridSearchOutput?.predictedCategory || null;
