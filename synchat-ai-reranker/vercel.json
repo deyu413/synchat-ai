@@ -2,7 +2,7 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/rerank.js",
+      "src": "api/index.js",
       "use": "@vercel/node",
       "config": {
         "maxDuration": 60,
@@ -13,7 +13,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "api/rerank.js"
+      "dest": "api/index.js"
     }
   ]
 }
