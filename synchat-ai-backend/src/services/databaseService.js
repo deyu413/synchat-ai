@@ -4,17 +4,13 @@ import logger from '../utils/logger.js';
 import { supabase } from './supabaseClient.js';
 import { getEmbedding } from './embeddingService.js';
 import { getChatCompletion } from './openaiService.js';
-import { pipeline, env as transformersEnv } from '@xenova/transformers';
+
+// --- BEGIN RERANKER CONFIG ---
+const ENABLE_API_RERANKING = true;
+const RERANKER_TIMEOUT_MS = 4000;
+// --- END RERANKER CONFIG ---
 
 const ENABLE_CROSS_ENCODER = false; // ¡Cambia esto a false para la prueba!
-
-// --- INICIO DE LA CORRECCIÓN #1: CONFIGURACIÓN DE TRANSFORMERS ---
-// Se asegura que la librería use un directorio de escritura válido en Vercel
-// antes de que cualquier otra función intente usarla.
-transformersEnv.cacheDir = '/tmp/transformers-cache';
-transformersEnv.allowLocalModels = false;
-logger.info(`(DB Service) Transformers.js cache directory explicitly set to: ${transformersEnv.cacheDir}`);
-// --- FIN DE LA CORRECCIÓN #1 ---
 
 // Hardcoded Spanish Thesaurus for query expansion
 const THESAURUS_ES = {
@@ -89,27 +85,6 @@ const SPANISH_STOP_WORDS = new Set([
   "sobre", "este", "ese", "aquel", "esto", "eso", "aquello", "mi", "tu", "su", "yo", "tú", "él", "ella",
   "nosotros", "vosotros", "ellos", "ellas", "me", "te", "se", "le", "les", "nos", "os"
 ]);
-
-// --- Cross-Encoder Pipeline Singleton ---
-let crossEncoderPipeline = null;
-
-async function getCrossEncoderPipeline() {
-    if (crossEncoderPipeline === null) {
-        try {
-            logger.info(`(DB Service) Initializing cross-encoder pipeline: ${CROSS_ENCODER_MODEL_NAME}`);
-            crossEncoderPipeline = await pipeline('text-classification', CROSS_ENCODER_MODEL_NAME, {});
-            logger.info("(DB Service) Cross-encoder pipeline initialized successfully.");
-        } catch (error) {
-            logger.error("(DB Service) Error initializing cross-encoder pipeline:", error);
-            crossEncoderPipeline = false;
-        }
-    }
-    return crossEncoderPipeline;
-}
-
-function sigmoid(x) {
-    return 1 / (1 + Math.exp(-x));
-}
 
 // --- Cache (Simple en Memoria) ---
 const questionCache = new Map();
@@ -819,28 +794,91 @@ logger.info(`(DB Service) FTS query text for loop (passed to RPC): "${ftsQuerySt
         }
 
         let itemsForFinalSort = [...rankedResults];
-        if (ENABLE_CROSS_ENCODER) {
-            const classifier = await getCrossEncoderPipeline();
+        // --- API-BASED RE-RANKING BLOCK ---
+        if (ENABLE_API_RERANKING && itemsForFinalSort.length > 0) {
+            logger.info(`(DB Service) Calling Reranker microservice.`);
+
+            const itemsToRerank = itemsForFinalSort
+                .sort((a, b) => (b.hybrid_score || 0) - (a.hybrid_score || 0))
+                .slice(0, CROSS_ENCODER_TOP_K); // Assuming CROSS_ENCODER_TOP_K is defined
+
+            const payload = {
+                query: currentQueryText, // Assuming currentQueryText is available
+                documents: itemsToRerank.map(doc => ({ id: doc.id, content: doc.content }))
+            };
+
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), RERANKER_TIMEOUT_MS);
+
+                const response = await fetch(`${process.env.RERANKER_API_URL}/api/rerank`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Internal-Api-Secret': process.env.INTERNAL_API_SECRET
+                    },
+                    body: JSON.stringify(payload),
+                    signal: controller.signal
+                });
+
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    const errorBody = await response.text();
+                    logger.error(`(DB Service) Reranker service responded with status ${response.status}: ${errorBody}`);
+                    throw new Error(`Reranker service responded with status ${response.status}`);
+                }
+
+                const { rerankedDocuments } = await response.json();
+
+                const rerankedScoreMap = new Map();
+                rerankedDocuments.forEach(doc => {
+                    rerankedScoreMap.set(String(doc.id), doc.rerank_score);
+                });
+
+                itemsForFinalSort.forEach(item => {
+                    const idStr = String(item.id);
+                    if (rerankedScoreMap.has(idStr)) {
+                        // The API reranker score is already a logit, suitable for sigmoid
+                        item.cross_encoder_score_raw = rerankedScoreMap.get(idStr); // Store raw logit
+                        item.cross_encoder_score_normalized = sigmoid(rerankedScoreMap.get(idStr));
+                    }
+                });
+                if (returnPipelineDetails) {
+                    pipelineDetails.crossEncoderProcessing.inputs = payload.documents.map(d => ({ query: payload.query, documentContentSnippet: d.content.substring(0,150)+'...' }));
+                    pipelineDetails.crossEncoderProcessing.outputs = itemsForFinalSort
+                        .filter(item => rerankedScoreMap.has(String(item.id)))
+                        .map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', rawScore: item.cross_encoder_score_raw, normalizedScore: item.cross_encoder_score_normalized }));
+                }
+
+                logger.info('(DB Service) Successfully applied reranking from microservice.');
+
+            } catch (e) {
+                logger.error(`(DB Service) Error calling reranker microservice: ${e.message}. Continuing without API reranking.`);
+                // The flow will continue gracefully with the original hybrid_score ordering or local CE if implemented as fallback.
+            }
+        } else if (ENABLE_CROSS_ENCODER) { // Fallback to local cross-encoder if API reranking is disabled but local is enabled
+            const classifier = await getCrossEncoderPipeline(); // This function needs to be defined or removed
             if (classifier && itemsForFinalSort.length > 0) {
                 const itemsToCrossEncode = itemsForFinalSort.sort((a,b) => b.hybrid_score - a.hybrid_score).slice(0, CROSS_ENCODER_TOP_K);
                 const remainingItems = itemsForFinalSort.slice(CROSS_ENCODER_TOP_K);
                 if (itemsToCrossEncode.length > 0) {
-                    // Use correctedQueryText (which is the primary, potentially corrected, user query) for cross-encoder
                     const queryDocumentPairs = itemsToCrossEncode.map(item => [currentQueryText, item.content]);
                     if (returnPipelineDetails) pipelineDetails.crossEncoderProcessing.inputs = queryDocumentPairs.map(p => ({ query: p[0], documentContentSnippet: p[1].substring(0,150)+'...' }));
                     try {
                         const crossEncoderScoresOutput = await classifier(queryDocumentPairs, { topK: null });
-                        itemsToCrossEncode.forEach((item, index) => { /* ... score assignment as before ... */ const scoreOutput = crossEncoderScoresOutput[index]; let rawScore; if (Array.isArray(scoreOutput) && scoreOutput.length > 0) { if (typeof scoreOutput[0].score === 'number') { rawScore = scoreOutput[0].score; } else { const relevantScoreObj = scoreOutput.find(s => s.label === 'LABEL_1' || s.label === 'entailment'); rawScore = relevantScoreObj ? relevantScoreObj.score : (typeof scoreOutput[0].score === 'number' ? scoreOutput[0].score : 0);}} else if (typeof scoreOutput.score === 'number') { rawScore = scoreOutput.score; } else if (typeof scoreOutput === 'number') { rawScore = scoreOutput; } else { rawScore = 0; } item.cross_encoder_score_raw = rawScore; item.cross_encoder_score_normalized = sigmoid(rawScore); });
+                        itemsToCrossEncode.forEach((item, index) => { const scoreOutput = crossEncoderScoresOutput[index]; let rawScore; if (Array.isArray(scoreOutput) && scoreOutput.length > 0) { if (typeof scoreOutput[0].score === 'number') { rawScore = scoreOutput[0].score; } else { const relevantScoreObj = scoreOutput.find(s => s.label === 'LABEL_1' || s.label === 'entailment'); rawScore = relevantScoreObj ? relevantScoreObj.score : (typeof scoreOutput[0].score === 'number' ? scoreOutput[0].score : 0);}} else if (typeof scoreOutput.score === 'number') { rawScore = scoreOutput.score; } else if (typeof scoreOutput === 'number') { rawScore = scoreOutput; } else { rawScore = 0; } item.cross_encoder_score_raw = rawScore; item.cross_encoder_score_normalized = sigmoid(rawScore); });
                         if (returnPipelineDetails) pipelineDetails.crossEncoderProcessing.outputs = itemsToCrossEncode.map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', rawScore: item.cross_encoder_score_raw, normalizedScore: item.cross_encoder_score_normalized }));
-                    } catch (ceError) { logger.error("(DB Service) Error during cross-encoder scoring:", ceError.message); }
+                    } catch (ceError) { logger.error("(DB Service) Error during local cross-encoder scoring:", ceError.message); }
                 }
                 itemsForFinalSort = [...itemsToCrossEncode, ...remainingItems];
-            } else if (itemsForFinalSort.length > 0) { // This condition is part of the ENABLE_CROSS_ENCODER block
-                logger.warn("(DB Service) Cross-encoder pipeline not available (within ENABLE_CROSS_ENCODER block). Skipping CE re-ranking.");
+            } else if (itemsForFinalSort.length > 0) {
+                logger.warn("(DB Service) Local cross-encoder pipeline not available (within ENABLE_CROSS_ENCODER block). Skipping CE re-ranking.");
             }
         } else if (itemsForFinalSort.length > 0) {
-            logger.warn("(DB Service) Cross-encoder pipeline not available or disabled. Skipping CE re-ranking.");
+             logger.info("(DB Service) Reranking (API and local) is disabled or not applicable. Proceeding without it.");
         }
+        // --- END OF API-BASED RE-RANKING BLOCK ---
 
         const rerankedList = itemsForFinalSort.map(item => {
             // Use correctedQueryTokens for Jaccard similarity
@@ -1069,8 +1107,21 @@ function tokenizeText(text, removeStopWords = false) {
     return tokens;
 }
 
-function calculateJaccardSimilarity(set1Tokens, set2Tokens) { /* ... */ }
+function calculateJaccardSimilarity(set1Tokens, set2Tokens) {
+    if (!Array.isArray(set1Tokens) || !Array.isArray(set2Tokens)) return 0;
+    const set1 = new Set(set1Tokens);
+    const set2 = new Set(set2Tokens);
+    const intersectionSize = new Set([...set1].filter(x => set2.has(x))).size;
+    const unionSize = set1.size + set2.size - intersectionSize;
+    return unionSize === 0 ? 0 : intersectionSize / unionSize;
+}
+
 const SPANISH_ABBREVIATIONS = { /* ... */ };
+
+// Ensure sigmoid function is defined if not already (it was removed with getCrossEncoderPipeline)
+function sigmoid(x) {
+    return 1 / (1 + Math.exp(-x));
+}
 
 function preprocessTextForEmbedding(text) {
     if (typeof text !== 'string') {
