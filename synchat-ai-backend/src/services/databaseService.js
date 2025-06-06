@@ -151,6 +151,8 @@ export const getClientConfig = async (clientId) => {
 };
 
 // --- INICIO DE LA CORRECCIÓN #2: IMPLEMENTACIÓN DE getConversationHistory ---
+// --- INICIO DE LA CORRECCIÓN: IMPLEMENTACIÓN DE getConversationHistory ---
+
 export const getConversationHistory = async (conversationId) => {
     if (!conversationId) {
         logger.warn('(DB Service) getConversationHistory: se necesita un conversationId.');
@@ -161,20 +163,24 @@ export const getConversationHistory = async (conversationId) => {
             .from('messages')
             .select('sender, content')
             .eq('conversation_id', conversationId)
-            .order('timestamp', { ascending: true }) // Obtener los mensajes más recientes
+            .order('timestamp', { ascending: false }) // Obtenemos los más recientes
             .limit(HISTORY_MESSAGE_LIMIT);
 
         if (error) {
             logger.error(`(DB Service) Error al obtener el historial de la conversación para CV:${conversationId}`, error);
-            return []; // Devuelve un array vacío en caso de error
+            return []; // Devuelve array vacío en caso de error
         }
-        // Devuelve los datos o un array vacío si no hay resultados
-        return data || [];
+
+        // Los mensajes vienen en orden descendente, los invertimos para que el orden sea cronológico
+        return data ? data.reverse() : [];
+        
     } catch (err) {
         logger.error(`(DB Service) Excepción en getConversationHistory para CV:${conversationId}`, err);
         return []; // Devuelve un array vacío en caso de excepción
     }
 };
+
+// --- FIN DE LA CORRECCIÓN ---
 // --- FIN DE LA CORRECCIÓN #2 ---
 
 
