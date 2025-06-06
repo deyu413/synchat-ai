@@ -51,22 +51,22 @@ const ACRONYMS_ES = {
 // --- Configuración ---
 const HYBRID_SEARCH_VECTOR_WEIGHT = 0.5;
 const HYBRID_SEARCH_FTS_WEIGHT = 0.5;
-const HYBRID_SEARCH_LIMIT = 5; // For main chunk search
+const HYBRID_SEARCH_LIMIT = 5;
 const INITIAL_RETRIEVAL_MULTIPLIER = 3;
-const VECTOR_MATCH_THRESHOLD = 0.45; // Umbral de similitud coseno (0 a 1, más alto es más similar)
-const HISTORY_MESSAGE_LIMIT = 8;       // Límite de mensajes de historial
+const VECTOR_MATCH_THRESHOLD = 0.45;
+const HISTORY_MESSAGE_LIMIT = 8;
 
-const PROPOSITION_SEARCH_LIMIT = 3; // Max propositions to fetch
-const PROPOSITION_MATCH_THRESHOLD = 0.60; // Stricter threshold for propositions
-const DEBUG_PREPROCESSING_DATABASE_SERVICE = false; // Separate debug flag for this service
-const DEBUG_RERANKING = false; // Debug flag for re-ranking logic
+const PROPOSITION_SEARCH_LIMIT = 3;
+const PROPOSITION_MATCH_THRESHOLD = 0.60;
+const DEBUG_PREPROCESSING_DATABASE_SERVICE = false;
+const DEBUG_RERANKING = false;
 
 // Cross-Encoder Configuration
 const CROSS_ENCODER_MODEL_NAME = 'Xenova/bge-reranker-base';
-const CROSS_ENCODER_TOP_K = 20; // Number of initial results to re-rank
+const CROSS_ENCODER_TOP_K = 20;
 
 // Query Correction Configuration
-const ENABLE_ADVANCED_QUERY_CORRECTION = process.env.ENABLE_ADVANCED_QUERY_CORRECTION === 'true' || true; // Default to true
+const ENABLE_ADVANCED_QUERY_CORRECTION = process.env.ENABLE_ADVANCED_QUERY_CORRECTION === 'true' || true;
 const QUERY_CORRECTION_MODEL = "gpt-3.5-turbo";
 const QUERY_CORRECTION_TEMP = 0.1;
 
@@ -79,7 +79,7 @@ const W_RECENCY_SCORE = 0.10;
 const W_SOURCE_AUTHORITY_SCORE = 0.10;
 const W_CHUNK_FEEDBACK_SCORE = 0.10;
 
-// Simple Spanish Stop Words List (customize as needed)
+// Simple Spanish Stop Words List
 const SPANISH_STOP_WORDS = new Set([
   "de", "la", "el", "en", "y", "a", "los", "las", "del", "un", "una", "unos", "unas",
   "ser", "estar", "haber", "tener", "con", "por", "para", "como", "más", "pero", "si",
@@ -111,8 +111,8 @@ function sigmoid(x) {
 
 // --- Cache (Simple en Memoria) ---
 const questionCache = new Map();
-export function getCache(key) { /* ... el código de tu caché ... */ }
-export function setCache(key, value) { /* ... el código de tu caché ... */ }
+export function getCache(key) { /* ... Tu código de caché ... */ }
+export function setCache(key, value) { /* ... Tu código de caché ... */ }
 
 
 export const getClientConfig = async (clientId) => {
@@ -120,17 +120,7 @@ export const getClientConfig = async (clientId) => {
         logger.debug(`(DB Service) getClientConfig: Buscando cliente con ID: ${clientId}`);
         const { data, error } = await supabase
             .from('synchat_clients')
-            .select(`
-                client_id,
-                widget_config,
-                knowledge_source_url,
-                base_prompt_override,
-                created_at,
-                updated_at,
-                subscription_id,
-                subscription_status,
-                billing_cycle_id
-            `)
+            .select('client_id, widget_config, knowledge_source_url, base_prompt_override, created_at, updated_at, subscription_id, subscription_status, billing_cycle_id')
             .eq('client_id', clientId)
             .single();
 
@@ -151,8 +141,6 @@ export const getClientConfig = async (clientId) => {
 };
 
 // --- INICIO DE LA CORRECCIÓN #2: IMPLEMENTACIÓN DE getConversationHistory ---
-// --- INICIO DE LA CORRECCIÓN: IMPLEMENTACIÓN DE getConversationHistory ---
-
 export const getConversationHistory = async (conversationId) => {
     if (!conversationId) {
         logger.warn('(DB Service) getConversationHistory: se necesita un conversationId.');
@@ -179,27 +167,7 @@ export const getConversationHistory = async (conversationId) => {
         return []; // Devuelve un array vacío en caso de excepción
     }
 };
-
-// --- FIN DE LA CORRECCIÓN ---
 // --- FIN DE LA CORRECCIÓN #2 ---
-
-
-// Aquí iría el resto de tus funciones de databaseService.js
-// ...
-// export const saveMessage = async (...) => { ... }
-// export const hybridSearch = async (...) => { ... }
-// etc.
-// ...
-
-// Es importante que el resto del archivo siga aquí.
-// Simplemente he añadido las correcciones en la parte superior y en la función getConversationHistory.
-// Asegúrate de que el resto de tu código (como hybridSearch, saveMessage, etc.) siga presente debajo de esto.
-
-// ... (resto del archivo databaseService.js) ...
-export const getAllActiveClientIds = async () => { /* ... */ }; // Keep only one definition
-// Note: There are two getAllActiveClientIds, removing one. The one using subscription_status seems more robust.
-export const getChunkSampleForSource = async (clientId, sourceId, limit = 5) => { /* ... */ };
-export const getConversationHistory = async (conversationId) => { /* ... */ };
 
 export const saveMessage = async (conversationId, sender, textContent, ragInteractionRef = null) => {
     if (!conversationId || !sender || typeof textContent !== 'string') {
@@ -211,8 +179,7 @@ export const saveMessage = async (conversationId, sender, textContent, ragIntera
         conversation_id: conversationId,
         sender: sender,
         content: textContent,
-        // timestamp is defaulted by DB
-        sentiment: null // Default to null
+        sentiment: null
     };
 
     if (ragInteractionRef) {
@@ -225,21 +192,18 @@ export const saveMessage = async (conversationId, sender, textContent, ragIntera
             const systemPrompt = "Classify the sentiment of the following user message as positive, negative, or neutral. Respond with only one word: positive, negative, or neutral.";
             const userMessageForSentiment = `Message: "${textContent}"`;
 
-            // getChatCompletion is imported from './openaiService.js'
             const sentimentResponse = await getChatCompletion(
                 [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessageForSentiment }],
-                'gpt-3.5-turbo', // Using a standard, cost-effective model
-                0.2, // Low temperature for classification
-                10 // Max tokens for a single word response
+                'gpt-3.5-turbo',
+                0.2,
+                10
             );
 
             if (sentimentResponse) {
                 let rawSentiment = sentimentResponse.trim().toLowerCase();
-                // Additional cleaning for common LLM variations like "Sentiment: positive"
                 if (rawSentiment.startsWith("sentiment:")) {
                     rawSentiment = rawSentiment.substring("sentiment:".length).trim();
                 }
-                // Remove punctuation if any, e.g. "positive." -> "positive"
                 rawSentiment = rawSentiment.replace(/[.,!?;]$/, '');
 
                 if (['positive', 'negative', 'neutral'].includes(rawSentiment)) {
@@ -247,15 +211,12 @@ export const saveMessage = async (conversationId, sender, textContent, ragIntera
                     logger.debug(`(DB Service) Sentiment classified as: ${rawSentiment}`);
                 } else {
                     logger.warn(`(DB Service) Unexpected sentiment response: "${sentimentResponse}". Original message: "${textContent.substring(0,50)}..."`);
-                    // messageData.sentiment remains null
                 }
             } else {
                 logger.warn(`(DB Service) Sentiment analysis returned no response. Original message: "${textContent.substring(0,50)}..."`);
-                // messageData.sentiment remains null
             }
         } catch (sentimentError) {
             logger.error('(DB Service) Error getting sentiment for message:', { error: sentimentError, messageContent: textContent.substring(0,50) });
-            // messageData.sentiment remains null, ensuring message saving is not blocked
         }
     }
 
@@ -264,7 +225,7 @@ export const saveMessage = async (conversationId, sender, textContent, ragIntera
             .from('messages')
             .insert([messageData])
             .select()
-            .single(); // Assuming we want the newly created message back
+            .single();
 
         if (error) {
             logger.error('(DB Service) Error saving message:', error);
@@ -289,7 +250,7 @@ export const getClientKnowledgeCategories = async (clientId) => {
             .from('knowledge_sources')
             .select('category_tags')
             .eq('client_id', clientId)
-            .not('category_tags', 'is', null); // Only sources with tags
+            .not('category_tags', 'is', null);
 
         if (error) {
             logger.error(`(DB Service) Error fetching category_tags for client ${clientId}:`, error);
@@ -301,7 +262,7 @@ export const getClientKnowledgeCategories = async (clientId) => {
             data.forEach(source => {
                 if (Array.isArray(source.category_tags)) {
                     source.category_tags.forEach(tag => {
-                        if (tag && typeof tag === 'string') { // Ensure tag is not null/empty string
+                        if (tag && typeof tag === 'string') {
                             uniqueCategories.add(tag.trim());
                         }
                     });
@@ -318,21 +279,18 @@ export const getClientKnowledgeCategories = async (clientId) => {
 export const createConversation = async (clientId) => {
     if (!clientId) {
         logger.error('(DB Service) createConversation: clientId is required.');
-        return null; // Or throw an error, but returning null aligns with some other patterns seen
+        return null;
     }
 
     try {
         const { data, error } = await supabase
             .from('conversations')
-            .insert([
-                {
-                    client_id: clientId,
-                    status: 'open' // Set an initial status
-                    // created_at and conversation_id have defaults in the DB
-                }
-            ])
-            .select('conversation_id') // Select the conversation_id of the new row
-            .single(); // Expecting a single row to be created and returned
+            .insert([{
+                client_id: clientId,
+                status: 'open'
+            }])
+            .select('conversation_id')
+            .single();
 
         if (error) {
             logger.error('(DB Service) Error creating conversation in Supabase:', error);
@@ -349,62 +307,37 @@ export const createConversation = async (clientId) => {
 
     } catch (err) {
         logger.error('(DB Service) Unexpected exception in createConversation:', err);
-        return null; // Or rethrow, depending on desired error handling strategy
+        return null;
     }
 };
 
-/**
- * Performs a hybrid search combining vector search and Full-Text Search (FTS)
- * to retrieve relevant knowledge base chunks for a given query.
- *
- * The process includes several stages:
- * 1.  Optional advanced query correction using an LLM.
- * 2.  Query classification to predict a category for filtering (if categories are available).
- * 3.  Optional query decomposition into sub-queries for complex questions.
- * 4.  Non-LLM Query Expansion:
- *     a. Acronym expansion (e.g., "IA" -> "IA (Inteligencia Artificial)").
- *     b. Synonym-based variations for vector search (generates a few alternative queries for embedding).
- *     c. Specialized FTS query string construction (uses OR-groups for synonyms, ANDs terms).
- * 5.  Execution of parallel vector and FTS searches for each processed query (original, decomposed, or expanded).
- *     Vector search may further internally use techniques like HyDE or query reformulation for some variations.
- * 6.  Merging and initial ranking of results based on hybrid scores (weighted combination of vector and FTS scores).
- * 7.  Optional re-ranking using a Cross-Encoder model for the top N initial results.
- * 8.  Final re-ranking using a weighted formula that includes the initial hybrid score, cross-encoder score (if available),
- *     keyword match score (Jaccard similarity), metadata relevance, document recency, source authority, and chunk feedback scores.
- * 9.  Retrieval of related propositions based on the primary query embedding.
- *
- * @async
- * @function hybridSearch
- * @param {string} clientId - The ID of the client for whom the search is being performed.
- * @param {string} queryText - The original user query text.
- * @param {string} [conversationId] - Optional ID of the current conversation, used for context or logging.
- * @param {object} [options={}] - Optional parameters to customize search behavior.
- * @param {number} [options.vectorWeight] - Weight for vector search results in the initial hybrid score.
- * @param {number} [options.ftsWeight] - Weight for FTS results in the initial hybrid score.
- * @param {number} [options.vectorMatchThreshold] - Similarity threshold for vector search matches.
- * @param {boolean} [returnPipelineDetails=false] - If true, returns a detailed breakdown of the search pipeline's stages and intermediate results.
- * @returns {Promise<object>} A promise that resolves to an object containing:
- *                            - `results`: An array of final ranked search result chunks, each with content, metadata, and various scores.
- *                            - `propositionResults`: An array of related propositions (if any found).
- *                            - `searchParams`: An object detailing the parameters used for the search (weights, thresholds, limits).
- *                            - `queriesEmbeddedForLog`: An array of query strings that were embedded during the process.
- *                            - `predictedCategory`: The category predicted for the query by the classification step (or null if none).
- *                            - `pipelineDetails`: (Only if `returnPipelineDetails` is true) An object containing detailed information about each stage of the search pipeline,
- *                              including original query, corrected query, decomposed queries, expanded queries, intermediate search results, and final ranked lists.
- */
 export const hybridSearch = async (clientId, queryText, conversationId, options = {}, returnPipelineDetails = false) => {
-    const originalUserQueryAtStart = queryText; // Store the absolute original query
-    let currentQueryText = originalUserQueryAtStart; // This will be used by subsequent steps, potentially corrected
-    let predictedCategory = null; // Initialize predictedCategory
+    // --- NUEVA VALIDACIÓN INICIAL ---
+    if (!queryText || typeof queryText !== 'string' || queryText.trim() === '') {
+        logger.warn(`(DB Service) hybridSearch fue llamado con una consulta vacía o inválida para el cliente ${clientId}`);
+        // Devolver una estructura vacía pero válida para no causar un crash en el controlador
+        return {
+            results: [],
+            propositionResults: [],
+            searchParams: {},
+            queriesEmbeddedForLog: [],
+            predictedCategory: null
+        };
+    }
+    // --- FIN DE LA NUEVA VALIDACIÓN ---
+
+    const originalUserQueryAtStart = queryText;
+    let currentQueryText = originalUserQueryAtStart;
+    let predictedCategory = null;
 
     let queryCorrectionDetails = {
         attempted: false,
         originalQuery: originalUserQueryAtStart,
-        correctedQuery: originalUserQueryAtStart, // Initially same as original
+        correctedQuery: originalUserQueryAtStart,
         wasChanged: false
     };
 
-    if (ENABLE_ADVANCED_QUERY_CORRECTION && originalUserQueryAtStart && originalUserQueryAtStart.trim().length > 0) {
+    if (ENABLE_ADVANCED_QUERY_CORRECTION) {
         queryCorrectionDetails.attempted = true;
         try {
             const correctionMessages = [
@@ -422,28 +355,23 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
                 const trimmedLlmQuery = llmCorrectedQuery.trim();
                 queryCorrectionDetails.correctedQuery = trimmedLlmQuery;
                 queryCorrectionDetails.wasChanged = originalUserQueryAtStart !== trimmedLlmQuery;
-                currentQueryText = trimmedLlmQuery; // Use the corrected query from now on
+                currentQueryText = trimmedLlmQuery;
                 logger.info(`(DB Service) Query Correction: Original='${originalUserQueryAtStart}', Corrected='${currentQueryText}'`);
             } else {
                 logger.warn("(DB Service) Query correction LLM call returned empty or invalid. Using original query.");
-                // correctedQueryText remains originalUserQueryAtStart, wasChanged remains false
             }
         } catch (error) {
             logger.error("(DB Service) Error during query correction LLM call:", { message: error.message, originalQuery: originalUserQueryAtStart });
-            // correctedQueryText remains originalUserQueryAtStart, wasChanged remains false
         }
     }
 
     const finalVectorWeight = options.vectorWeight ?? HYBRID_SEARCH_VECTOR_WEIGHT;
     const finalFtsWeight = options.ftsWeight ?? HYBRID_SEARCH_FTS_WEIGHT;
 
-    // Default weights passed as parameters
     let adjustedVectorWeight = finalVectorWeight;
     let adjustedFtsWeight = finalFtsWeight;
 
-    // Lightweight query analysis
-    const queryTokens = currentQueryText.toLowerCase().split(' '); // Use currentQueryText (potentially corrected)
-    // Using RegExp constructor for potentially safer regex handling in embedded contexts
+    const queryTokens = currentQueryText.toLowerCase().split(' ');
     const hasQuotedPhrase = new RegExp("\"[^\"]+\"").test(currentQueryText);
     const capitalLettersCount = (currentQueryText.match(/[A-Z]/g) || []).length;
     const hasManyCapitals = capitalLettersCount > 3;
@@ -452,18 +380,14 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
 
     if (hasQuotedPhrase || hasManyCapitals) {
         adjustedFtsWeight = Math.min(1.0, finalFtsWeight + 0.15);
-        // Ensure adjustedVectorWeight is derived to maintain sum of 1.0 if that's the desired constraint
-        // If they don't need to sum to 1.0, this line can be: adjustedVectorWeight = Math.max(0.0, finalVectorWeight - 0.15);
         adjustedVectorWeight = 1.0 - adjustedFtsWeight;
         adjustmentReason = hasQuotedPhrase ? "quoted_phrase" : (hasManyCapitals ? "many_capitals" : "fts_boost");
-    } else if (queryTokens.length < 3 && queryTokens.length > 0) { // Very short query (but not empty)
+    } else if (queryTokens.length < 3 && queryTokens.length > 0) {
         adjustedFtsWeight = Math.min(1.0, finalFtsWeight + 0.1);
-        // Similar adjustment for vector weight
         adjustedVectorWeight = 1.0 - adjustedFtsWeight;
         adjustmentReason = "short_query";
     }
 
-    // Log the adjusted weights using console.log
     logger.info(`(DB Service) Hybrid Search: Query: "${currentQueryText.substring(0,50)}...", Original Weights: V=${finalVectorWeight.toFixed(2)}, F=${finalFtsWeight.toFixed(2)}. Adjusted Weights (Reason: ${adjustmentReason}): V=${adjustedVectorWeight.toFixed(2)}, F=${adjustedFtsWeight.toFixed(2)}`);
 
     const finalVectorMatchThreshold = options.vectorMatchThreshold ?? VECTOR_MATCH_THRESHOLD;
@@ -473,8 +397,8 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
     let pipelineDetails = null;
     if (returnPipelineDetails) {
         pipelineDetails = {
-            originalQuery: originalUserQueryAtStart, // True original query
-            queryCorrection: queryCorrectionDetails, // Details of correction step
+            originalQuery: originalUserQueryAtStart,
+            queryCorrection: queryCorrectionDetails,
             queryDecomposition: {},
             processedQueries: [],
             aggregatedResults: { uniqueVectorResultsPreview: [], uniqueFtsResultsPreview: [] },
@@ -482,9 +406,12 @@ export const hybridSearch = async (clientId, queryText, conversationId, options 
             crossEncoderProcessing: { inputs: [], outputs: [] },
             finalRankedResultsForPlayground: [],
             finalPropositionResults: [],
-            queryClassification: { predictedCategory: null, categoriesAvailable: [] } // Initialize for pipelineDetails
+            queryClassification: { predictedCategory: null, categoriesAvailable: [] }
         };
     }
+    
+    // El resto de la función `hybridSearch` continúa aquí...
+    // ...
 
     // Query Correction Logic (existing)
     if (ENABLE_ADVANCED_QUERY_CORRECTION && originalUserQueryAtStart && originalUserQueryAtStart.trim().length > 0) {
