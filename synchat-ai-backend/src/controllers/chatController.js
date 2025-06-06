@@ -141,7 +141,7 @@ export const handleChatMessage = async (req, res, next) => {
             {},   // options
             true  // returnPipelineDetails
         );
-        
+
         // *** INICIO DEL CAMBIO IMPORTANTE ***
         // Validación de robustez para prevenir el crash
         if (!hybridSearchOutput || !Array.isArray(hybridSearchOutput.results)) {
@@ -154,7 +154,7 @@ export const handleChatMessage = async (req, res, next) => {
             return res.status(200).json({ reply: BOT_CANNOT_ANSWER_MSG });
         }
         // *** FIN DEL CAMBIO IMPORTANTE ***
-
+        
         logger.debug("(ChatCtrl) hybridSearchOutput recibido:", JSON.stringify(hybridSearchOutput, null, 2));
 
         const resultsForMapping = hybridSearchOutput.results;
@@ -258,7 +258,7 @@ export const handleChatMessage = async (req, res, next) => {
                         if (relevanceResponse && relevanceResponse.trim().toLowerCase().startsWith('yes')) { filteredKnowledge.push(chunk); }
                     } catch (filterError) {
                         logger.warn(`(ChatCtrl) LLM relevance check error for chunk ID ${chunk.id}, keeping chunk. Error: ${filterError.message}`);
-                        filteredKnowledge.push(chunk); // Keep chunk if filtering fails
+                        filteredKnowledge.push(chunk);
                     }
                 }
                 if (filteredKnowledge.length === 0 && knowledgeForProcessing.length > 0) {
@@ -280,7 +280,7 @@ export const handleChatMessage = async (req, res, next) => {
                         if (summaryResponse && summaryResponse.trim().length > 0) {
                             processedKnowledgeForContext.push({ ...chunk, extracted_content: summaryResponse.trim() });
                         } else {
-                            processedKnowledgeForContext.push(chunk); // Use original if summary is empty
+                            processedKnowledgeForContext.push(chunk);
                         }
                     } catch (summaryError) {
                         logger.warn(`(ChatCtrl) LLM summarization error for chunk ID ${chunk.id}, using original. Error: ${summaryError.message}`);
