@@ -1,71 +1,66 @@
-// Archivo: synchat-ai-reranker/api/index.js (anteriormente rerank.js)
+// Archivo: synchat-ai-reranker/api/index.js
+import { pipeline, env as transformersEnv } from '@xenova/transformers';
 
-const express = require('express');
+// Configura el entorno para Vercel
+transformersEnv.cacheDir = '/tmp/transformers-cache';
+transformersEnv.allowLocalModels = false;
 
-// La importación dinámica se mantiene igual
-const app = express();
-app.use(express.json({ limit: '2mb' }));
-
+// Singleton para el modelo
 class RerankerPipeline {
     static task = 'text-classification';
     static model = 'Xenova/bge-reranker-base';
     static instance = null;
 
-    static async getInstance(progress_callback = null) {
+    static async getInstance() {
         if (this.instance === null) {
-            const { pipeline, env } = await import('@xenova/transformers');
-            env.cacheDir = '/tmp/transformers-cache';
-            env.allowLocalModels = false;
-
-            console.log('Reranker Microservice: Initializing model pipeline...');
-            this.instance = await pipeline(this.task, this.model, { progress_callback });
-            console.log('Reranker Microservice: Model pipeline initialized successfully.');
+            console.log('Reranker Microservice: Initializing model...');
+            this.instance = await pipeline(this.task, this.model);
+            console.log('Reranker Microservice: Model initialized.');
         }
         return this.instance;
     }
 }
 
-const internalAuth = (req, res, next) => {
-    const secret = req.headers['x-internal-api-secret'];
-    if (!process.env.INTERNAL_API_SECRET || secret !== process.env.INTERNAL_API_SECRET) {
-        return res.status(403).json({ error: 'Forbidden: Invalid or missing secret.' });
+// El handler principal que Vercel ejecutará
+export default async function handler(req, res) {
+    // Petición de precalentamiento (warm-up)
+    if (req.method === 'GET') {
+        console.log('Reranker Microservice: Health check / Warm-up ping received.');
+        return res.status(200).send('Rerank service is active.');
     }
-    next();
-};
 
-// --- INICIO DEL CAMBIO ---
-// Se han simplificado las rutas, eliminando el prefijo '/api'
+    // Petición de re-ranking
+    if (req.method === 'POST') {
+        // Autenticación
+        const secret = req.headers['x-internal-api-secret'];
+        if (!process.env.INTERNAL_API_SECRET || secret !== process.env.INTERNAL_API_SECRET) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
 
-// Endpoint de Re-Ranking (ahora en /api/rerank)
-app.post('/rerank', internalAuth, async (req, res) => {
-    // ... la lógica interna de esta función no cambia ...
-    const { query, documents } = req.body;
-    if (!query || !Array.isArray(documents) || documents.length === 0) {
-        return res.status(400).json({ error: 'Bad Request: "query" (string) and "documents" (array of {id, content}) are required.' });
+        const { query, documents } = req.body;
+        if (!query || !Array.isArray(documents) || documents.length === 0) {
+            return res.status(400).json({ error: 'Bad Request' });
+        }
+
+        try {
+            const reranker = await RerankerPipeline.getInstance();
+            const queryDocumentPairs = documents.map(doc => [query, doc.content]);
+            const scores = await reranker(queryDocumentPairs, { topK: null });
+
+            const rankedDocs = documents.map((doc, i) => ({
+                ...doc,
+                rerank_score: scores[i].score
+            }));
+
+            rankedDocs.sort((a, b) => b.rerank_score - a.rerank_score);
+            return res.status(200).json({ rerankedDocuments: rankedDocs });
+
+        } catch (error) {
+            console.error('Reranker Microservice Error:', error);
+            return res.status(500).json({ error: 'Failed to process reranking request' });
+        }
     }
-    try {
-        const reranker = await RerankerPipeline.getInstance();
-        const queryDocumentPairs = documents.map(doc => [query, doc.content]);
-        const scores = await reranker(queryDocumentPairs, { topK: null });
-        const rankedDocs = documents.map((doc, i) => ({ ...doc, rerank_score: scores[i].score }));
-        rankedDocs.sort((a, b) => b.rerank_score - a.rerank_score);
-        res.status(200).json({ rerankedDocuments: rankedDocs });
-    } catch (error) {
-        console.error('Reranker Microservice Error:', error);
-        res.status(500).json({ error: 'Failed to process reranking request.', details: error.message });
-    }
-});
 
-// Endpoint de Health Check (ahora en /api/health)
-app.get('/health', (req, res) => {
-    console.log('Reranker Microservice: Health check / Warm-up ping received.');
-    res.status(200).send('Rerank service is active and warm.');
-});
-// --- FIN DEL CAMBIO ---
-
-// Catch-all (sin cambios)
-app.all('*', (req, res) => {
-    res.status(404).send('Not Found');
-});
-
-module.exports = app;
+    // Si el método no es GET ni POST
+    return res.status(405).send('Method Not Allowed');
+}
