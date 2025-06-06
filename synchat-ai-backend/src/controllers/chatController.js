@@ -418,18 +418,7 @@ export const handleChatMessage = async (req, res, next) => {
         }
     } catch (error) {
         logger.error(`(ChatCtrl) Error general en handleChatMessage para ${conversationId}:`, error.message, error.stack?.substring(0,500));
-        // It's good practice to check if headers have already been sent,
-        // though in this specific flow (error during main processing), it's less likely.
-        if (res.headersSent) {
-            // If headers were already sent, we must delegate to the default Express error handler.
-            // Calling next(error) is appropriate here.
-            return next(error);
-        }
-        res.status(500).json({
-            reply: 'Lo siento, ocurrió un error inesperado al procesar tu mensaje. Por favor, inténtalo de nuevo más tarde.',
-            // Optionally, include a reference or more details if appropriate for client/debugging
-            // error_detail: error.message // Be cautious about exposing raw error messages
-        });
+        next(error);
     }
 };
 
