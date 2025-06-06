@@ -89,9 +89,11 @@ const corsOptionsDelegate = function (req, callback) {
             methods: 'GET,POST,PUT,DELETE,OPTIONS', // Asegúrate que OPTIONS está aquí
             allowedHeaders: 'Content-Type,Authorization,X-Requested-With,X-CSRF-Token,Device-ID,Auth-Token, Supabase-Auth-Token' // Cabeceras personalizadas
         };
+        req.isCorsApproved = true;
         // logger.info(`CORS check PASSED for origin: ${origin || 'Not specified'} (Path: ${req.path})`);
     } else {
         corsOptions = { origin: false }; // Rechazar otros orígenes
+        req.isCorsApproved = false;
         logger.warn(`CORS check FAILED for origin: ${origin || 'Not specified'} (Path: ${req.path})`);
     }
     callback(null, corsOptions);
@@ -165,11 +167,20 @@ app.use((req, res, next) => {
 app.use((err, req, res, next) => {
     logger.error(`Global unhandled error: ${err.message}`, { path: req.path, stack: err.stack });
     if (!res.headersSent) {
+        // Check if CORS was approved and an Origin header is present
+        if (req.isCorsApproved === true && req.header('Origin')) {
+            res.setHeader('Access-Control-Allow-Origin', req.header('Origin'));
+            res.setHeader('Access-Control-Allow-Credentials', 'true');
+            res.setHeader('Vary', 'Origin'); // Important for caching
+            logger.info(`(GlobalErrorHandler) Added CORS headers for approved origin: ${req.header('Origin')} for path: ${req.path}`);
+        }
+
         res.status(err.status || 500).json({
             error: err.message || 'Error interno del servidor',
             ...(process.env.NODE_ENV === 'development' && { stack: err.stack }) // Keep dev stack trace
         });
     }
+    // If headers were sent, Express's default mechanism will handle closing the connection.
 });
 
 // --- Iniciar el Servidor --- // KEEP
