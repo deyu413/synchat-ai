@@ -1,14 +1,11 @@
-import express from 'express';
-import { pipeline, env as transformersEnv } from '@xenova/transformers';
+const express = require('express');
 
-// Configure environment for Vercel
-transformersEnv.cacheDir = '/tmp/transformers-cache';
-transformersEnv.allowLocalModels = false;
+// La importación se hará de forma dinámica más adelante
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 
-// Singleton to ensure the model is loaded only once per warm instance
+// Singleton para asegurar que el modelo se cargue una sola vez
 class RerankerPipeline {
     static task = 'text-classification';
     static model = 'Xenova/bge-reranker-base';
@@ -16,6 +13,15 @@ class RerankerPipeline {
 
     static async getInstance(progress_callback = null) {
         if (this.instance === null) {
+            // --- INICIO DE LA CORRECCIÓN ---
+            // 1. Importar dinámicamente la librería ESM
+            const { pipeline, env } = await import('@xenova/transformers');
+
+            // 2. Configurar el entorno ANTES de usar el pipeline
+            env.cacheDir = '/tmp/transformers-cache';
+            env.allowLocalModels = false;
+            // --- FIN DE LA CORRECCIÓN ---
+
             console.log('Reranker Microservice: Initializing model pipeline...');
             this.instance = await pipeline(this.task, this.model, { progress_callback });
             console.log('Reranker Microservice: Model pipeline initialized successfully.');
@@ -24,7 +30,7 @@ class RerankerPipeline {
     }
 }
 
-// Middleware to secure the endpoint
+// Middleware de autenticación (sin cambios)
 const internalAuth = (req, res, next) => {
     const secret = req.headers['x-internal-api-secret'];
     if (!process.env.INTERNAL_API_SECRET || secret !== process.env.INTERNAL_API_SECRET) {
@@ -33,7 +39,7 @@ const internalAuth = (req, res, next) => {
     next();
 };
 
-// Main re-ranking endpoint
+// Endpoint de Re-Ranking (sin cambios en la lógica interna)
 app.post('/api/rerank', internalAuth, async (req, res) => {
     const { query, documents } = req.body;
 
@@ -43,7 +49,6 @@ app.post('/api/rerank', internalAuth, async (req, res) => {
 
     try {
         const reranker = await RerankerPipeline.getInstance();
-
         const queryDocumentPairs = documents.map(doc => [query, doc.content]);
         const scores = await reranker(queryDocumentPairs, { topK: null });
 
@@ -53,7 +58,6 @@ app.post('/api/rerank', internalAuth, async (req, res) => {
         }));
 
         rankedDocs.sort((a, b) => b.rerank_score - a.rerank_score);
-
         res.status(200).json({ rerankedDocuments: rankedDocs });
 
     } catch (error) {
@@ -62,15 +66,16 @@ app.post('/api/rerank', internalAuth, async (req, res) => {
     }
 });
 
-// Health check / warm-up endpoint
+// Endpoint de Health Check (sin cambios)
 app.get('/api/health', (req, res) => {
     console.log('Reranker Microservice: Health check / Warm-up ping received.');
     res.status(200).send('Rerank service is active and warm.');
 });
 
-// Catch-all for other routes
+// Catch-all (sin cambios)
 app.all('*', (req, res) => {
     res.status(404).send('Not Found');
 });
 
-export default app;
+// Exporta la app para Vercel usando module.exports
+module.exports = app;
