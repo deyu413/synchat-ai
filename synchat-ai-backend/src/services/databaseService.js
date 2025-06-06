@@ -6,6 +6,8 @@ import { getEmbedding } from './embeddingService.js';
 import { getChatCompletion } from './openaiService.js';
 import { pipeline, env as transformersEnv } from '@xenova/transformers';
 
+const ENABLE_CROSS_ENCODER = false; // ¡Cambia esto a false para la prueba!
+
 // --- INICIO DE LA CORRECCIÓN #1: CONFIGURACIÓN DE TRANSFORMERS ---
 // Se asegura que la librería use un directorio de escritura válido en Vercel
 // antes de que cualquier otra función intente usarla.
@@ -817,22 +819,28 @@ logger.info(`(DB Service) FTS query text for loop (passed to RPC): "${ftsQuerySt
         }
 
         let itemsForFinalSort = [...rankedResults];
-        const classifier = await getCrossEncoderPipeline();
-        if (classifier && itemsForFinalSort.length > 0) {
-            const itemsToCrossEncode = itemsForFinalSort.sort((a,b) => b.hybrid_score - a.hybrid_score).slice(0, CROSS_ENCODER_TOP_K);
-            const remainingItems = itemsForFinalSort.slice(CROSS_ENCODER_TOP_K);
-            if (itemsToCrossEncode.length > 0) {
-                // Use correctedQueryText (which is the primary, potentially corrected, user query) for cross-encoder
-                const queryDocumentPairs = itemsToCrossEncode.map(item => [currentQueryText, item.content]);
-                if (returnPipelineDetails) pipelineDetails.crossEncoderProcessing.inputs = queryDocumentPairs.map(p => ({ query: p[0], documentContentSnippet: p[1].substring(0,150)+'...' }));
-                try {
-                    const crossEncoderScoresOutput = await classifier(queryDocumentPairs, { topK: null });
-                    itemsToCrossEncode.forEach((item, index) => { /* ... score assignment as before ... */ const scoreOutput = crossEncoderScoresOutput[index]; let rawScore; if (Array.isArray(scoreOutput) && scoreOutput.length > 0) { if (typeof scoreOutput[0].score === 'number') { rawScore = scoreOutput[0].score; } else { const relevantScoreObj = scoreOutput.find(s => s.label === 'LABEL_1' || s.label === 'entailment'); rawScore = relevantScoreObj ? relevantScoreObj.score : (typeof scoreOutput[0].score === 'number' ? scoreOutput[0].score : 0);}} else if (typeof scoreOutput.score === 'number') { rawScore = scoreOutput.score; } else if (typeof scoreOutput === 'number') { rawScore = scoreOutput; } else { rawScore = 0; } item.cross_encoder_score_raw = rawScore; item.cross_encoder_score_normalized = sigmoid(rawScore); });
-                    if (returnPipelineDetails) pipelineDetails.crossEncoderProcessing.outputs = itemsToCrossEncode.map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', rawScore: item.cross_encoder_score_raw, normalizedScore: item.cross_encoder_score_normalized }));
-                } catch (ceError) { logger.error("(DB Service) Error during cross-encoder scoring:", ceError.message); }
+        if (ENABLE_CROSS_ENCODER) {
+            const classifier = await getCrossEncoderPipeline();
+            if (classifier && itemsForFinalSort.length > 0) {
+                const itemsToCrossEncode = itemsForFinalSort.sort((a,b) => b.hybrid_score - a.hybrid_score).slice(0, CROSS_ENCODER_TOP_K);
+                const remainingItems = itemsForFinalSort.slice(CROSS_ENCODER_TOP_K);
+                if (itemsToCrossEncode.length > 0) {
+                    // Use correctedQueryText (which is the primary, potentially corrected, user query) for cross-encoder
+                    const queryDocumentPairs = itemsToCrossEncode.map(item => [currentQueryText, item.content]);
+                    if (returnPipelineDetails) pipelineDetails.crossEncoderProcessing.inputs = queryDocumentPairs.map(p => ({ query: p[0], documentContentSnippet: p[1].substring(0,150)+'...' }));
+                    try {
+                        const crossEncoderScoresOutput = await classifier(queryDocumentPairs, { topK: null });
+                        itemsToCrossEncode.forEach((item, index) => { /* ... score assignment as before ... */ const scoreOutput = crossEncoderScoresOutput[index]; let rawScore; if (Array.isArray(scoreOutput) && scoreOutput.length > 0) { if (typeof scoreOutput[0].score === 'number') { rawScore = scoreOutput[0].score; } else { const relevantScoreObj = scoreOutput.find(s => s.label === 'LABEL_1' || s.label === 'entailment'); rawScore = relevantScoreObj ? relevantScoreObj.score : (typeof scoreOutput[0].score === 'number' ? scoreOutput[0].score : 0);}} else if (typeof scoreOutput.score === 'number') { rawScore = scoreOutput.score; } else if (typeof scoreOutput === 'number') { rawScore = scoreOutput; } else { rawScore = 0; } item.cross_encoder_score_raw = rawScore; item.cross_encoder_score_normalized = sigmoid(rawScore); });
+                        if (returnPipelineDetails) pipelineDetails.crossEncoderProcessing.outputs = itemsToCrossEncode.map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', rawScore: item.cross_encoder_score_raw, normalizedScore: item.cross_encoder_score_normalized }));
+                    } catch (ceError) { logger.error("(DB Service) Error during cross-encoder scoring:", ceError.message); }
+                }
+                itemsForFinalSort = [...itemsToCrossEncode, ...remainingItems];
+            } else if (itemsForFinalSort.length > 0) { // This condition is part of the ENABLE_CROSS_ENCODER block
+                logger.warn("(DB Service) Cross-encoder pipeline not available (within ENABLE_CROSS_ENCODER block). Skipping CE re-ranking.");
             }
-            itemsForFinalSort = [...itemsToCrossEncode, ...remainingItems];
-        } else if (itemsForFinalSort.length > 0) { logger.warn("(DB Service) Cross-encoder pipeline not available. Skipping CE re-ranking."); }
+        } else if (itemsForFinalSort.length > 0) {
+            logger.warn("(DB Service) Cross-encoder pipeline not available or disabled. Skipping CE re-ranking.");
+        }
 
         const rerankedList = itemsForFinalSort.map(item => {
             // Use correctedQueryTokens for Jaccard similarity
