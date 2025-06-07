@@ -60,7 +60,6 @@ const DEBUG_PREPROCESSING_DATABASE_SERVICE = false;
 const DEBUG_RERANKING = false;
 
 // Cross-Encoder Configuration
-const CROSS_ENCODER_MODEL_NAME = 'Xenova/bge-reranker-base';
 const CROSS_ENCODER_TOP_K = 20;
 
 // Query Correction Configuration
@@ -796,20 +795,20 @@ logger.info(`(DB Service) FTS query text for loop (passed to RPC): "${ftsQuerySt
         let itemsForFinalSort = [...rankedResults];
         // --- API-BASED RE-RANKING BLOCK ---
         if (ENABLE_API_RERANKING && itemsForFinalSort.length > 0) {
-            logger.info(`(DB Service) Calling Reranker microservice.`);
+            logger.info(`(DB Service) Calling Reranker microservice for top ${CROSS_ENCODER_TOP_K} results.`); // Using CROSS_ENCODER_TOP_K
 
             const itemsToRerank = itemsForFinalSort
                 .sort((a, b) => (b.hybrid_score || 0) - (a.hybrid_score || 0))
-                .slice(0, CROSS_ENCODER_TOP_K); // Assuming CROSS_ENCODER_TOP_K is defined
+                .slice(0, CROSS_ENCODER_TOP_K); // Use CROSS_ENCODER_TOP_K for slicing
 
             const payload = {
-                query: currentQueryText, // Assuming currentQueryText is available
+                query: currentQueryText, // Assuming currentQueryText is available from the earlier part of hybridSearch
                 documents: itemsToRerank.map(doc => ({ id: doc.id, content: doc.content }))
             };
 
             try {
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), RERANKER_TIMEOUT_MS);
+                const timeoutId = setTimeout(() => controller.abort(), RERANKER_TIMEOUT_MS); // RERANKER_TIMEOUT_MS is defined at the top
 
                 const response = await fetch(`${process.env.RERANKER_API_URL}/api/rerank`, {
                     method: 'POST',
@@ -826,57 +825,40 @@ logger.info(`(DB Service) FTS query text for loop (passed to RPC): "${ftsQuerySt
                 if (!response.ok) {
                     const errorBody = await response.text();
                     logger.error(`(DB Service) Reranker service responded with status ${response.status}: ${errorBody}`);
-                    throw new Error(`Reranker service responded with status ${response.status}`);
-                }
+                    // Do not throw here, instead log and allow graceful continuation without this reranking
+                    // This matches the original instruction's error handling intent.
+                } else {
+                    const { rerankedDocuments } = await response.json();
 
-                const { rerankedDocuments } = await response.json();
+                    const rerankedScoreMap = new Map();
+                    rerankedDocuments.forEach(doc => {
+                        rerankedScoreMap.set(String(doc.id), doc.rerank_score);
+                    });
 
-                const rerankedScoreMap = new Map();
-                rerankedDocuments.forEach(doc => {
-                    rerankedScoreMap.set(String(doc.id), doc.rerank_score);
-                });
+                    // Apply scores to the itemsForFinalSort array
+                    itemsForFinalSort.forEach(item => {
+                        const idStr = String(item.id);
+                        if (rerankedScoreMap.has(idStr)) {
+                            // The API reranker score is typically a logit, suitable for sigmoid
+                            item.cross_encoder_score_raw = rerankedScoreMap.get(idStr); // Store raw logit
+                            item.cross_encoder_score_normalized = sigmoid(rerankedScoreMap.get(idStr)); // Use existing sigmoid
+                        }
+                    });
 
-                itemsForFinalSort.forEach(item => {
-                    const idStr = String(item.id);
-                    if (rerankedScoreMap.has(idStr)) {
-                        // The API reranker score is already a logit, suitable for sigmoid
-                        item.cross_encoder_score_raw = rerankedScoreMap.get(idStr); // Store raw logit
-                        item.cross_encoder_score_normalized = sigmoid(rerankedScoreMap.get(idStr));
+                    if (returnPipelineDetails && pipelineDetails && pipelineDetails.crossEncoderProcessing) { // Check pipelineDetails and its property
+                        pipelineDetails.crossEncoderProcessing.inputs = payload.documents.map(d => ({ query: payload.query, documentContentSnippet: d.content.substring(0,150)+'...' }));
+                        pipelineDetails.crossEncoderProcessing.outputs = itemsForFinalSort
+                            .filter(item => rerankedScoreMap.has(String(item.id)))
+                            .map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', rawScore: item.cross_encoder_score_raw, normalizedScore: item.cross_encoder_score_normalized }));
                     }
-                });
-                if (returnPipelineDetails) {
-                    pipelineDetails.crossEncoderProcessing.inputs = payload.documents.map(d => ({ query: payload.query, documentContentSnippet: d.content.substring(0,150)+'...' }));
-                    pipelineDetails.crossEncoderProcessing.outputs = itemsForFinalSort
-                        .filter(item => rerankedScoreMap.has(String(item.id)))
-                        .map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', rawScore: item.cross_encoder_score_raw, normalizedScore: item.cross_encoder_score_normalized }));
+                    logger.info('(DB Service) Successfully received and applied reranking from microservice.');
                 }
-
-                logger.info('(DB Service) Successfully applied reranking from microservice.');
-
             } catch (e) {
                 logger.error(`(DB Service) Error calling reranker microservice: ${e.message}. Continuing without API reranking.`);
-                // The flow will continue gracefully with the original hybrid_score ordering or local CE if implemented as fallback.
+                // Fall through to use original hybrid_score based sorting or other logic
             }
-        } else if (ENABLE_CROSS_ENCODER) { // Fallback to local cross-encoder if API reranking is disabled but local is enabled
-            const classifier = await getCrossEncoderPipeline(); // This function needs to be defined or removed
-            if (classifier && itemsForFinalSort.length > 0) {
-                const itemsToCrossEncode = itemsForFinalSort.sort((a,b) => b.hybrid_score - a.hybrid_score).slice(0, CROSS_ENCODER_TOP_K);
-                const remainingItems = itemsForFinalSort.slice(CROSS_ENCODER_TOP_K);
-                if (itemsToCrossEncode.length > 0) {
-                    const queryDocumentPairs = itemsToCrossEncode.map(item => [currentQueryText, item.content]);
-                    if (returnPipelineDetails) pipelineDetails.crossEncoderProcessing.inputs = queryDocumentPairs.map(p => ({ query: p[0], documentContentSnippet: p[1].substring(0,150)+'...' }));
-                    try {
-                        const crossEncoderScoresOutput = await classifier(queryDocumentPairs, { topK: null });
-                        itemsToCrossEncode.forEach((item, index) => { const scoreOutput = crossEncoderScoresOutput[index]; let rawScore; if (Array.isArray(scoreOutput) && scoreOutput.length > 0) { if (typeof scoreOutput[0].score === 'number') { rawScore = scoreOutput[0].score; } else { const relevantScoreObj = scoreOutput.find(s => s.label === 'LABEL_1' || s.label === 'entailment'); rawScore = relevantScoreObj ? relevantScoreObj.score : (typeof scoreOutput[0].score === 'number' ? scoreOutput[0].score : 0);}} else if (typeof scoreOutput.score === 'number') { rawScore = scoreOutput.score; } else if (typeof scoreOutput === 'number') { rawScore = scoreOutput; } else { rawScore = 0; } item.cross_encoder_score_raw = rawScore; item.cross_encoder_score_normalized = sigmoid(rawScore); });
-                        if (returnPipelineDetails) pipelineDetails.crossEncoderProcessing.outputs = itemsToCrossEncode.map(item => ({ id: item.id, contentSnippet: item.content?.substring(0,150)+'...', rawScore: item.cross_encoder_score_raw, normalizedScore: item.cross_encoder_score_normalized }));
-                    } catch (ceError) { logger.error("(DB Service) Error during local cross-encoder scoring:", ceError.message); }
-                }
-                itemsForFinalSort = [...itemsToCrossEncode, ...remainingItems];
-            } else if (itemsForFinalSort.length > 0) {
-                logger.warn("(DB Service) Local cross-encoder pipeline not available (within ENABLE_CROSS_ENCODER block). Skipping CE re-ranking.");
-            }
-        } else if (itemsForFinalSort.length > 0) {
-             logger.info("(DB Service) Reranking (API and local) is disabled or not applicable. Proceeding without it.");
+        } else if (itemsForFinalSort.length > 0) { // This 'else if' replaces the original 'else if (ENABLE_CROSS_ENCODER)'
+             logger.info("(DB Service) API Reranking is disabled or not applicable. Proceeding without it.");
         }
         // --- END OF API-BASED RE-RANKING BLOCK ---
 
