@@ -22,7 +22,7 @@ async function initializeTransformers() {
 // --- Singleton para mantener el modelo cargado en memoria ---
 class RerankerPipeline {
     static task = 'text-classification';
-    static model = 'Xenova/bge-reranker-base';
+    static model = 'Xenova/bge-reranker-small'; // CAMBIO HECHO AQUÍ
     static instance = null;
     static pipelineFunction = null;
 
