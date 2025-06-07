@@ -28,7 +28,14 @@ export default async function handler(req, res) {
     // Petición de precalentamiento (warm-up)
     if (req.method === 'GET') {
         console.log('Reranker Microservice: Health check / Warm-up ping received.');
-        return res.status(200).send('Rerank service is active.');
+        const isModelAlreadyWarm = RerankerPipeline.instance !== null;
+        await RerankerPipeline.getInstance();
+        if (isModelAlreadyWarm) {
+            console.log('Reranker Microservice: Model was already warm.');
+        } else {
+            console.log('Reranker Microservice: Model initialized during warm-up call.');
+        }
+        return res.status(200).send('Rerank service is active and model is warm.');
     }
 
     // Petición de re-ranking
