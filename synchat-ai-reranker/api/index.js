@@ -14,8 +14,17 @@ class RerankerPipeline {
     static async getInstance() {
         if (this.instance === null) {
             console.log('Reranker Microservice: Initializing model...');
-            this.instance = await pipeline(this.task, this.model);
-            console.log('Reranker Microservice: Model initialized.');
+            const startTime = Date.now();
+            try {
+                console.log(`Reranker Microservice: Loading model ${this.model} for task ${this.task}...`);
+                this.instance = await pipeline(this.task, this.model);
+                const endTime = Date.now();
+                const duration = (endTime - startTime) / 1000; // Duration in seconds
+                console.log(`Reranker Microservice: Model initialized successfully in ${duration} seconds.`);
+            } catch (error) {
+                console.error('Reranker Microservice: Failed to initialize model.', error);
+                throw error; // Re-throw the error to be caught by the caller
+            }
         }
         return this.instance;
     }
@@ -29,13 +38,18 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
         console.log('Reranker Microservice: Health check / Warm-up ping received.');
         const isModelAlreadyWarm = RerankerPipeline.instance !== null;
-        await RerankerPipeline.getInstance();
-        if (isModelAlreadyWarm) {
-            console.log('Reranker Microservice: Model was already warm.');
-        } else {
-            console.log('Reranker Microservice: Model initialized during warm-up call.');
+        try {
+            await RerankerPipeline.getInstance();
+            if (isModelAlreadyWarm) {
+                console.log('Reranker Microservice: Model was already warm.');
+            } else {
+                console.log('Reranker Microservice: Model initialized during warm-up call.');
+            }
+            return res.status(200).send('Rerank service is active and model is warm.');
+        } catch (error) {
+            console.error('Reranker Microservice: Error during warm-up model initialization.', error);
+            return res.status(500).json({ error: 'Model initialization failed during warm-up.' });
         }
-        return res.status(200).send('Rerank service is active and model is warm.');
     }
 
     // Petición de re-ranking
