@@ -24,6 +24,8 @@ class RerankerPipeline {
 // El handler principal que Vercel ejecutará
 export default async function handler(req, res) {
     // Petición de precalentamiento (warm-up)
+    // Petición de precalentamiento (warm-up)
+    // Petición de precalentamiento (warm-up)
     if (req.method === 'GET') {
         console.log('Reranker Microservice: Health check / Warm-up ping received.');
         return res.status(200).send('Rerank service is active.');
