@@ -1,3 +1,5 @@
+// synchat-ai-reranker/api/rerank.js
+
 import express from 'express';
 
 let transformers;
@@ -13,8 +15,9 @@ async function initializeTransformers() {
         console.log('Reranker: @xenova/transformers imported successfully.');
 
         transformers.env.cacheDir = '/tmp/transformers-cache';
-        transformers.env.allowLocalModels = false;
-        console.log('Reranker: Transformers environment configured.');
+        // CAMBIO 1: Permite que la librería busque modelos en la carpeta local.
+        transformers.env.allowLocalModels = true; 
+        console.log('Reranker: Transformers environment configured for local models.');
     }
     return transformers;
 }
@@ -22,7 +25,8 @@ async function initializeTransformers() {
 // --- Singleton para mantener el modelo cargado en memoria ---
 class RerankerPipeline {
     static task = 'text-classification';
-    static model = 'Xenova/bge-reranker-small'; // CAMBIO HECHO AQUÍ
+    // CAMBIO 2: Usa el nombre del modelo. La librería lo buscará en la carpeta 'models/' local.
+    static model = 'Xenova/bge-reranker-small'; 
     static instance = null;
     static pipelineFunction = null;
 
@@ -31,7 +35,7 @@ class RerankerPipeline {
             const { pipeline } = await initializeTransformers();
             this.pipelineFunction = pipeline;
 
-            console.log('Reranker: Initializing model pipeline...');
+            console.log('Reranker: Initializing model pipeline from local files...');
             this.instance = await this.pipelineFunction(this.task, this.model, { progress_callback });
             console.log('Reranker: Model pipeline initialized successfully.');
         }
@@ -39,6 +43,7 @@ class RerankerPipeline {
     }
 }
 
+// ... el resto del archivo (internalAuth, app.post, etc.) permanece igual ...
 // --- Middleware para autenticación interna ---
 const internalAuth = (req, res, next) => {
     const secret = req.headers['x-internal-api-secret'];
