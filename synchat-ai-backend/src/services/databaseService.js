@@ -1115,7 +1115,91 @@ function preprocessTextForEmbedding(text) {
 }
 
 export const getConversationDetails = async (conversationId) => { /* ... */ };
-export const logAiResolution = async (clientId, conversationId, billingCycleId, detailsJson) => { /* ... */ };
+
+export const logAiResolution = async (clientId, conversationId, billingCycleId, detailsJson) => {
+    if (!clientId || !conversationId) {
+        logger.error('(DB Service) logAiResolution: clientId and conversationId are required.');
+        return { error: 'Client ID and Conversation ID are required.' };
+    }
+    if (detailsJson && typeof detailsJson !== 'object') {
+        logger.error('(DB Service) logAiResolution: detailsJson must be an object if provided.');
+        return { error: 'detailsJson must be an object.' };
+    }
+
+    try {
+        // Step 1: Fetch current conversation status and verify client_id
+        const { data: convData, error: fetchError } = await supabase
+            .from('conversations')
+            .select('client_id, resolution_status')
+            .eq('conversation_id', conversationId)
+            .single();
+
+        if (fetchError) {
+            logger.error(`(DB Service) logAiResolution: Error fetching conversation ${conversationId}: ${fetchError.message}`);
+            return { error: `Error fetching conversation: ${fetchError.message}` };
+        }
+        if (!convData) {
+            logger.warn(`(DB Service) logAiResolution: Conversation ${conversationId} not found.`);
+            return { error: 'Conversation not found.' };
+        }
+        if (convData.client_id !== clientId) {
+            logger.warn(`(DB Service) logAiResolution: Access denied. Client ${clientId} does not own conversation ${conversationId}.`);
+            return { error: 'Access denied to this conversation.', message: 'Access denied' };
+        }
+
+        // Step 2: Check if conversation is already resolved or escalated
+        // These are considered final states for AI resolution logging purposes.
+        const terminalResolutionStates = ['resolved_by_ia', 'escalated'];
+        if (convData.resolution_status && terminalResolutionStates.includes(convData.resolution_status)) {
+            logger.info(`(DB Service) logAiResolution: Conversation ${conversationId} already marked as ${convData.resolution_status}. No new log entry needed.`);
+            return { error: null, message: `Conversation already marked as ${convData.resolution_status}.`, status: convData.resolution_status };
+        }
+
+        // Step 3: Update conversation's resolution_status to 'resolved_by_ia'
+        const { error: updateError } = await supabase
+            .from('conversations')
+            .update({ resolution_status: 'resolved_by_ia', updated_at: new Date().toISOString() })
+            .eq('conversation_id', conversationId);
+
+        if (updateError) {
+            logger.error(`(DB Service) logAiResolution: Error updating conversation ${conversationId} to resolved_by_ia: ${updateError.message}`);
+            return { error: `Error updating conversation status: ${updateError.message}` };
+        }
+        logger.info(`(DB Service) logAiResolution: Conversation ${conversationId} status updated to 'resolved_by_ia'.`);
+
+        // Step 4: Determine billing cycle if not provided
+        let currentBillingCycle = billingCycleId;
+        if (!currentBillingCycle) {
+            const now = new Date();
+            currentBillingCycle = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        }
+
+        // Step 5: Insert into ia_resolutions_log
+        const logEntry = {
+            client_id: clientId,
+            conversation_id: conversationId,
+            billing_cycle_id: currentBillingCycle,
+            resolution_details: detailsJson || { resolution_method: 'implicit_or_backend_triggered' } // Default if no details given
+        };
+
+        const { error: logInsertError } = await supabase
+            .from('ia_resolutions_log')
+            .insert(logEntry);
+
+        if (logInsertError) {
+            logger.error(`(DB Service) logAiResolution: Error inserting into ia_resolutions_log for CV_ID ${conversationId}: ${logInsertError.message}`);
+            // Potentially consider rolling back the status update or flagging for reconciliation
+            return { error: `Error logging AI resolution event: ${logInsertError.message}` };
+        }
+
+        logger.info(`(DB Service) logAiResolution: AI resolution successfully logged for CV_ID ${conversationId}, ClientID ${clientId}, BillingCycle ${currentBillingCycle}.`);
+        return { error: null, message: 'AI resolution logged successfully.' };
+
+    } catch (err) {
+        logger.error(`(DB Service) logAiResolution: Unexpected exception for CV_ID ${conversationId}, ClientID ${clientId}:`, err);
+        return { error: 'An unexpected server error occurred.' };
+    }
+};
 
 export const logRagInteraction = async (logData) => {
     // Ensure required fields for the initial log are present
