@@ -176,6 +176,7 @@ function updateAuthUI(session) {
 
         localStorage.setItem('synchat_session_token', session.access_token);
         localStorage.setItem('synchat_user_email', session.user.email);
+        localStorage.setItem('synchat_user_id', session.user.id); // Add this line
 
         if (!isOnDashboardPage) {
             console.log("Usuario logueado, redirigiendo a dashboard.html");
@@ -191,6 +192,7 @@ function updateAuthUI(session) {
     } else {
         localStorage.removeItem('synchat_session_token');
         localStorage.removeItem('synchat_user_email');
+        localStorage.removeItem('synchat_user_id'); // Add this line
 
         if (isOnDashboardPage) {
             console.log("No session on dashboard page, redirecting to login.html");

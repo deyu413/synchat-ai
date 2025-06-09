@@ -276,17 +276,20 @@ async function loadI18nStrings() {
             optionsContainer.id = 'synchat-quick-reply-container';
             optionsContainer.classList.add('synchat-quick-reply-options');
 
-            responseData.clarification_options.forEach(optionText => {
+            // Deduplicate the options array before rendering
+            const uniqueOptions = [...new Set(responseData.clarification_options)];
+
+            uniqueOptions.forEach(optionText => { // Use the deduplicated array
                 const optionButton = document.createElement('button');
                 optionButton.classList.add('synchat-quick-reply-btn');
                 optionButton.textContent = optionText;
                 optionButton.addEventListener('click', () => {
-                    currentClarificationDetails = { // Guardar detalles para el siguiente envío
+                    currentClarificationDetails = {
                         original_query: responseData.original_ambiguous_query,
                         original_chunks: responseData.original_retrieved_chunks
                     };
                     addMessageToChat("user", optionText);
-                    sendMessage(optionText); // El texto de la opción es la respuesta
+                    sendMessage(optionText);
                 });
                 optionsContainer.appendChild(optionButton);
             });
