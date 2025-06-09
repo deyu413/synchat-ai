@@ -293,15 +293,12 @@ async function loadI18nStrings() {
         messagesContainer.appendChild(messageDiv);
 
         // START MODIFICATION for resolution button
-        // Remove any existing resolution button before adding a new one
         const existingBtnContainer = messagesContainer.querySelector('.synchat-resolution-btn-container');
         if (existingBtnContainer) {
             existingBtnContainer.remove();
         }
 
-        // Add the resolution button only after a standard bot message
-        // And not if the bot message itself is a clarification question
-        if (sender === 'bot' && type !== 'clarification_question') {
+        if (sender === 'bot' && type !== 'clarification_question') { // Using the more precise condition
             const btnContainer = document.createElement('div');
             btnContainer.className = 'synchat-resolution-btn-container';
 
@@ -315,7 +312,7 @@ async function loadI18nStrings() {
         }
         // END MODIFICATION
 
-        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        messagesContainer.scrollTop = messagesContainer.scrollHeight; // Crucial to scroll after adding new content
     }
 
     async function handleResolutionConfirmation(event) {
@@ -326,26 +323,16 @@ async function loadI18nStrings() {
 
         if (!conversationId) {
             widgetLogger.error("Cannot confirm resolution: conversationId is missing.");
-            // Restore button appearance on error for clarity
-            button.textContent = 'Error: Sin ID Conversación';
-            button.style.backgroundColor = '#d9534f'; // Error color
-            button.disabled = false; // Re-enable if no ID
-            button.classList.remove('clicked');
+            // Task list doesn't specify reverting button on this error for this revision.
             return;
         }
 
-        // Ensure WIDGET_CONFIG.backendUrl is defined and accessible
         if (!WIDGET_CONFIG || !WIDGET_CONFIG.backendUrl) {
              widgetLogger.error("WIDGET_CONFIG.backendUrl is not defined. Cannot mark resolved.");
-             button.textContent = 'Error: Configuración Widget';
-             button.style.backgroundColor = '#d9534f';
-             button.disabled = false;
-             button.classList.remove('clicked');
-             return;
+             return; // Exit if config is missing
         }
 
         const markResolvedUrl = `${WIDGET_CONFIG.backendUrl}/conversations/${conversationId}/mark-resolved`;
-        // const token = localStorage.getItem('synchat_session_token'); // Not needed for public widget route
 
         try {
             const response = await fetch(markResolvedUrl, {
@@ -357,22 +344,17 @@ async function loadI18nStrings() {
             });
 
             if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ message: 'Error desconocido del servidor.' }));
-                widgetLogger.error("Failed to mark conversation as resolved:", errorData.message || response.statusText);
-                button.textContent = 'Error al confirmar';
-                button.style.backgroundColor = '#d9534f'; // Error color
-                // Do not re-enable the button here, user should not retry indefinitely on server error.
+                // Try to parse error, default if parsing fails or no message
+                const errorData = await response.json().catch(() => ({ message: `Server error: ${response.status}` }));
+                widgetLogger.error("Failed to mark conversation as resolved:", errorData.message);
+                // Button remains "Gracias..." as per optimistic update
             } else {
-                // Success, button already updated to "Gracias..."
-                const inputField = document.getElementById('synchat-input');
-                if (inputField) inputField.disabled = true;
-                 widgetLogger.log("Conversation marked as resolved successfully via widget button.");
+                widgetLogger.log("Conversation resolution successfully sent to backend.");
+                // Input field disabling removed from this version of task instructions.
             }
         } catch (error) {
             widgetLogger.error("Exception when marking conversation as resolved:", error.message);
-            button.textContent = 'Error de red';
-            button.style.backgroundColor = '#d9534f';
-            // Do not re-enable here either.
+            // Button remains "Gracias..."
         }
     }
 
@@ -385,20 +367,17 @@ async function loadI18nStrings() {
             optionsContainer.id = 'synchat-quick-reply-container';
             optionsContainer.classList.add('synchat-quick-reply-options');
 
-            // Deduplicate the options array before rendering
-            const uniqueOptions = [...new Set(responseData.clarification_options)];
-
-            uniqueOptions.forEach(optionText => { // Use the deduplicated array
+            responseData.clarification_options.forEach(optionText => {
                 const optionButton = document.createElement('button');
                 optionButton.classList.add('synchat-quick-reply-btn');
                 optionButton.textContent = optionText;
                 optionButton.addEventListener('click', () => {
-                    currentClarificationDetails = {
+                    currentClarificationDetails = { // Guardar detalles para el siguiente envío
                         original_query: responseData.original_ambiguous_query,
                         original_chunks: responseData.original_retrieved_chunks
                     };
                     addMessageToChat("user", optionText);
-                    sendMessage(optionText);
+                    sendMessage(optionText); // El texto de la opción es la respuesta
                 });
                 optionsContainer.appendChild(optionButton);
             });

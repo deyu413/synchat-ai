@@ -1,10 +1,10 @@
 // File: supabase/functions/process-inactive-resolutions/index.ts
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 
 const inactivityTimeoutMinutes = 15; // Configurable: e.g., 15 minutes
 
-interface Conversation {
+interface ConversationCandidate {
   conversation_id: string;
   client_id: string;
   last_message_at: string;
@@ -12,11 +12,13 @@ interface Conversation {
 
 console.log("Edge Function 'process-inactive-resolutions' initializing.");
 
-Deno.serve(async (req) => {
+Deno.serve(async (req: Request) => {
   // Handle OPTIONS preflight request
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
+
+  let supabaseAdmin: SupabaseClient;
 
   try {
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -28,22 +30,29 @@ Deno.serve(async (req) => {
       throw new Error("SUPABASE_URL is not set in environment variables.");
     }
 
-    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+    supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
       auth: {
-        persistSession: false, // Edge functions are stateless
+        persistSession: false,
         autoRefreshToken: false,
         detectSessionInUrl: false,
       },
     });
 
     console.log(`Calculating cutoff time: ${inactivityTimeoutMinutes} minutes ago.`);
+    // Supabase interval syntax is slightly different; constructing for direct SQL filter.
+    // The direct JS Date calculation is fine if the query builder handles it,
+    // but for raw SQL .lt('last_message_at', `(now() - interval '${inactivityTimeoutMinutes} minutes')`) would be used.
+    // The Supabase JS client's .lt() should correctly translate new Date().toISOString().
     const cutoffTime = new Date(Date.now() - inactivityTimeoutMinutes * 60 * 1000).toISOString();
+    const timeoutInterval = `${inactivityTimeoutMinutes} minutes`; // For logging clarity if needed, or direct SQL.
 
-    // Fetch candidate conversations: status = 'open', resolution_status = 'pending', last_message_at < cutoffTime
+    console.log(`Querying conversations: status='open', resolution_status='pending', last_message_at < ${cutoffTime} (older than ${timeoutInterval}).`);
+
+    // Fetch candidate conversations
     const { data: candidates, error: fetchError } = await supabaseAdmin
       .from('conversations')
       .select('conversation_id, client_id, last_message_at')
-      .eq('status', 'open') // Or other relevant active statuses like 'bot_active'
+      .eq('status', 'open')
       .eq('resolution_status', 'pending')
       .lt('last_message_at', cutoffTime);
 
@@ -63,9 +72,9 @@ Deno.serve(async (req) => {
     console.log(`Found ${candidates.length} candidate conversations for potential resolution.`);
     let processedCount = 0;
     let resolvedCount = 0;
-    const errors: string[] = [];
+    const errors: { conversation_id?: string; message: string }[] = [];
 
-    for (const candidate of candidates as Conversation[]) {
+    for (const candidate of candidates as ConversationCandidate[]) {
       processedCount++;
       console.log(`Processing candidate CV_ID: ${candidate.conversation_id}, Client: ${candidate.client_id}, LastMsgAt: ${candidate.last_message_at}`);
 
@@ -81,33 +90,28 @@ Deno.serve(async (req) => {
       if (lastMessageError) {
         const errMsg = `Error fetching last message for CV_ID ${candidate.conversation_id}: ${lastMessageError.message}`;
         console.error(errMsg);
-        errors.push(errMsg);
-        continue; // Skip to next candidate
+        errors.push({ conversation_id: candidate.conversation_id, message: errMsg });
+        continue;
       }
 
       if (lastMessage && lastMessage.sender === 'bot') {
-        // If last message was from the bot, proceed to mark as resolved by IA due to inactivity
-        const currentBillingCycle = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
-        const resolutionDetails = {
-          resolution_method: `inactivity_timeout_${inactivityTimeoutMinutes}min`,
-          last_bot_message_at: candidate.last_message_at, // This is last_message_at from conversation, which should match bot's last message time
-        };
+        console.log(`Attempting to call RPC 'log_ia_resolution_by_inactivity' for CV_ID: ${candidate.conversation_id}.`);
 
-        console.log(`Attempting to log IA resolution for CV_ID: ${candidate.conversation_id} via RPC.`);
-        const { error: rpcError } = await supabaseAdmin.rpc('log_ia_resolution', {
+        // Call the RPC function assumed to be created by the project owner
+        // This RPC function handles setting resolution_status, updated_at, and logging to ia_resolutions_log.
+        const { error: rpcError } = await supabaseAdmin.rpc('log_ia_resolution_by_inactivity', {
           p_client_id: candidate.client_id,
           p_conversation_id: candidate.conversation_id,
-          p_billing_cycle_id: currentBillingCycle,
-          p_details: resolutionDetails,
+          // p_billing_cycle_id and p_details are handled by the RPC itself
         });
 
         if (rpcError) {
-          const errMsg = `Error calling log_ia_resolution for CV_ID ${candidate.conversation_id}: ${rpcError.message}`;
+          const errMsg = `Error calling RPC log_ia_resolution_by_inactivity for CV_ID ${candidate.conversation_id}: ${rpcError.message}`;
           console.error(errMsg);
-          errors.push(errMsg);
+          errors.push({ conversation_id: candidate.conversation_id, message: errMsg });
         } else {
           resolvedCount++;
-          console.log(`Successfully logged IA resolution for CV_ID: ${candidate.conversation_id}.`);
+          console.log(`Successfully called RPC for IA resolution for CV_ID: ${candidate.conversation_id}.`);
         }
       } else {
         console.log(`CV_ID ${candidate.conversation_id}: Last message not from bot (sender: ${lastMessage?.sender || 'unknown'}). Skipping resolution.`);
@@ -117,8 +121,8 @@ Deno.serve(async (req) => {
     const summary = {
       message: 'Inactive conversation processing complete.',
       totalCandidates: candidates.length,
-      processedCount,
-      resolvedByIaDueToInactivity: resolvedCount,
+      processedCandidates: processedCount,
+      resolvedByInactivityRpcCall: resolvedCount,
       errorsEncountered: errors.length,
       errorDetails: errors.length > 0 ? errors : undefined,
     };
@@ -131,7 +135,7 @@ Deno.serve(async (req) => {
 
   } catch (e) {
     console.error('Critical error in Edge Function:', e);
-    return new Response(JSON.stringify({ error: e.message }), {
+    return new Response(JSON.stringify({ error: e.message || 'Internal Server Error' }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500,
     });
@@ -139,15 +143,16 @@ Deno.serve(async (req) => {
 });
 
 /*
-Test with Deno CLI:
-supabase functions serve --no-verify-jwt --env-file ./supabase/.env.local
-
-Invoke (e.g., from another terminal or Postman, after serving):
-curl -X POST 'http://localhost:54321/functions/v1/process-inactive-resolutions' \
-  -H "Authorization: Bearer YOUR_SERVICE_ROLE_KEY_IF_NEEDED_FOR_DIRECT_INVOKE_TEST_BUT_USUALLY_ANON_KEY_FOR_CLIENTS" \
-  -H "Content-Type: application/json" \
-  --data '{}'
-
-Note: For scheduled execution, the Authorization header is typically handled by Supabase's internal mechanisms or a cron job service token.
-The Edge Function itself uses the service_role_key from env vars for its DB operations.
+To test locally (ensure Supabase stack is running and env vars are set):
+1. Save this as supabase/functions/process-inactive-resolutions/index.ts
+2. Create/update supabase/functions/_shared/cors.ts if not present:
+   export const corsHeaders = {
+     'Access-Control-Allow-Origin': '*',
+     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+   };
+3. Run: supabase functions serve --no-verify-jwt --env-file ./supabase/.env.local
+4. Invoke: curl -X POST 'http://localhost:54321/functions/v1/process-inactive-resolutions' \
+   -H "Content-Type: application/json" --data '{}'
+   (No specific Authorization header needed for invocation if function is called by scheduler,
+    as it uses service_role_key internally from env vars for DB ops)
 */

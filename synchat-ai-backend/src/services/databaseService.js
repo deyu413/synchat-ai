@@ -1136,23 +1136,23 @@ export const logAiResolution = async (clientId, conversationId, billingCycleId, 
 
         if (fetchError) {
             logger.error(`(DB Service) logAiResolution: Error fetching conversation ${conversationId}: ${fetchError.message}`);
-            return { error: `Error fetching conversation: ${fetchError.message}` };
+            return { error: `Conversation not found: ${fetchError.message}` }; // More specific error
         }
-        if (!convData) {
-            logger.warn(`(DB Service) logAiResolution: Conversation ${conversationId} not found.`);
+        if (!convData) { // Should be caught by fetchError with .single(), but as a safeguard
+            logger.warn(`(DB Service) logAiResolution: Conversation ${conversationId} not found (no data).`);
             return { error: 'Conversation not found.' };
         }
         if (convData.client_id !== clientId) {
             logger.warn(`(DB Service) logAiResolution: Access denied. Client ${clientId} does not own conversation ${conversationId}.`);
-            return { error: 'Access denied to this conversation.', message: 'Access denied' };
+            return { error: 'Access denied to this conversation.', message: 'Access denied' }; // Keep message for controller
         }
 
-        // Step 2: Check if conversation is already resolved or escalated
-        // These are considered final states for AI resolution logging purposes.
-        const terminalResolutionStates = ['resolved_by_ia', 'escalated'];
+        // Step 2: Check if conversation is already in a terminal resolution state
+        const terminalResolutionStates = ['resolved_by_ia', 'escalated']; // Add any other relevant terminal states
         if (convData.resolution_status && terminalResolutionStates.includes(convData.resolution_status)) {
-            logger.info(`(DB Service) logAiResolution: Conversation ${conversationId} already marked as ${convData.resolution_status}. No new log entry needed.`);
-            return { error: null, message: `Conversation already marked as ${convData.resolution_status}.`, status: convData.resolution_status };
+            logger.info(`(DB Service) logAiResolution: Conversation ${conversationId} already has a final status: ${convData.resolution_status}. No new log entry needed, status not changed.`);
+            // Return a specific message and the current status
+            return { error: null, message: `Conversation already has a final status: ${convData.resolution_status}.`, status: convData.resolution_status };
         }
 
         // Step 3: Update conversation's resolution_status to 'resolved_by_ia'
@@ -1179,7 +1179,7 @@ export const logAiResolution = async (clientId, conversationId, billingCycleId, 
             client_id: clientId,
             conversation_id: conversationId,
             billing_cycle_id: currentBillingCycle,
-            resolution_details: detailsJson || { resolution_method: 'implicit_or_backend_triggered' } // Default if no details given
+            resolution_details: detailsJson || { resolution_method: 'implicit_or_backend_triggered' }
         };
 
         const { error: logInsertError } = await supabase
@@ -1188,16 +1188,17 @@ export const logAiResolution = async (clientId, conversationId, billingCycleId, 
 
         if (logInsertError) {
             logger.error(`(DB Service) logAiResolution: Error inserting into ia_resolutions_log for CV_ID ${conversationId}: ${logInsertError.message}`);
-            // Potentially consider rolling back the status update or flagging for reconciliation
+            // Consider if the status update should be rolled back or flagged for reconciliation.
+            // For now, returning the error.
             return { error: `Error logging AI resolution event: ${logInsertError.message}` };
         }
 
         logger.info(`(DB Service) logAiResolution: AI resolution successfully logged for CV_ID ${conversationId}, ClientID ${clientId}, BillingCycle ${currentBillingCycle}.`);
-        return { error: null, message: 'AI resolution logged successfully.' };
+        return { error: null, message: 'AI resolution logged successfully.' }; // Consistent success response
 
     } catch (err) {
         logger.error(`(DB Service) logAiResolution: Unexpected exception for CV_ID ${conversationId}, ClientID ${clientId}:`, err);
-        return { error: 'An unexpected server error occurred.' };
+        return { error: 'An unexpected server error occurred during AI resolution logging.' };
     }
 };
 
@@ -1542,7 +1543,7 @@ export const getChunksForSource = async (clientId, sourceId, page = 1, pageSize 
 export const getClientConversations = async (clientId, statusFilters = [], page = 1, pageSize = 20) => {
     if (!clientId) {
         logger.error('(DB Service) getClientConversations: clientId is required.');
-        return { data: null, error: 'Client ID is required.', count: 0 }; // Ensure consistent return structure
+        return { data: null, error: 'Client ID is required.' };
     }
 
     const offset = (page - 1) * pageSize;
@@ -1550,7 +1551,14 @@ export const getClientConversations = async (clientId, statusFilters = [], page 
     try {
         let query = supabase
             .from('conversations')
-            .select('*', { count: 'exact' }) // Select all fields from the conversations table
+            .select(`
+                conversation_id,
+                client_id,
+                created_at,
+                last_message_at,
+                status,
+                messages ( content, created_at )
+            `, { count: 'exact' }) // Request total count
             .eq('client_id', clientId)
             .order('last_message_at', { ascending: false, nullsLast: true });
 
@@ -1558,18 +1566,34 @@ export const getClientConversations = async (clientId, statusFilters = [], page 
             query = query.in('status', statusFilters);
         }
 
-        const { data: conversationsData, error, count } = await query.range(offset, offset + pageSize - 1);
+        query = query.range(offset, offset + pageSize - 1);
+
+        const { data: conversationsData, error, count } = await query;
 
         if (error) {
             logger.error('(DB Service) Error fetching client conversations from Supabase:', error);
-            return { data: null, error: error.message, count: 0 }; // Ensure consistent return structure
+            return { data: null, error: error.message };
         }
 
-        logger.info(`(DB Service) Fetched ${conversationsData ? conversationsData.length : 0} conversations for client ${clientId}, page ${page}, totalCount ${count}`);
+        // Process data to include a last_message_preview
+        const processedConversations = conversationsData.map(conv => {
+            let last_message_preview = null;
+            if (conv.messages && conv.messages.length > 0) {
+                // Sort messages to find the most recent one, just in case they aren't ordered
+                conv.messages.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                last_message_preview = conv.messages[0].content;
+            }
+            // Remove the full messages array from the main conversation object if not needed for list view
+            // Or select only the latest message directly in the query if possible and more performant
+            delete conv.messages;
+            return { ...conv, last_message_preview };
+        });
+
+        logger.info(`(DB Service) Fetched ${processedConversations.length} conversations for client ${clientId}, page ${page}, totalCount ${count}`);
         return {
             data: {
-                conversations: conversationsData || [],
-                totalCount: count || 0,
+                conversations: processedConversations,
+                totalCount: count,
                 page: page,
                 pageSize: pageSize
             },
@@ -1578,7 +1602,7 @@ export const getClientConversations = async (clientId, statusFilters = [], page 
 
     } catch (err) {
         logger.error('(DB Service) Unexpected exception in getClientConversations:', err);
-        return { data: null, error: 'An unexpected server error occurred while fetching conversations.', count: 0 }; // Ensure consistent return structure
+        return { data: null, error: 'An unexpected server error occurred while fetching conversations.' };
     }
 };
 

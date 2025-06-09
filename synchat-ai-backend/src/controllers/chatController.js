@@ -120,6 +120,27 @@ export const handleChatMessage = async (req, res, next) => {
     logger.info(`(ChatCtrl) Mensaje (effectiveQuery) recibido C:${effectiveClientId}, CV:${conversationId}: "${effectiveQuery.substring(0, 100)}..."`);
 
     try {
+        // Subscription status check for handleChatMessage
+        const { data: clientStatusMsg, error: clientStatusErrorMsg } = await supabase
+            .from('synchat_clients')
+            .select('plan_status')
+            .eq('client_id', effectiveClientId)
+            .single();
+
+        if (clientStatusErrorMsg) {
+            logger.error(`(ChatCtrl) Error fetching client plan_status for ${effectiveClientId} in handleChatMessage: ${clientStatusErrorMsg.message}`);
+            return res.status(500).json({ reply: 'Error checking client status. Please try again later.' });
+        }
+        if (!clientStatusMsg) {
+            logger.warn(`(ChatCtrl) Client not found for status check: ${effectiveClientId} in handleChatMessage.`);
+            return res.status(404).json({ reply: 'Client configuration not found.' });
+        }
+        if (clientStatusMsg.plan_status !== 'active_paid') {
+            logger.warn(`(ChatCtrl) Service access denied for client ${effectiveClientId} due to plan_status: '${clientStatusMsg.plan_status}' in handleChatMessage.`);
+            return res.status(403).json({ reply: 'Your session has expired or your plan is not active. Please contact the site administrator.' });
+        }
+        // End of subscription status check
+
         const cacheKey = `${effectiveClientId}:${conversationId}:${effectiveQuery}`;
         const cachedReply = db.getCache(cacheKey);
         if (cachedReply) {
@@ -442,11 +463,35 @@ export const startConversation = async (req, res, next) => {
     }
     try {
         logger.info(`(ChatCtrl) startConversation: effectiveClientId recibido/derivado es: '${effectiveClientId}'`);
-        const clientExists = await db.getClientConfig(effectiveClientId);
-        if (!clientExists) {
-            logger.warn(`(ChatCtrl) Intento de iniciar conversación para cliente inexistente: ${effectiveClientId}`);
-            return res.status(404).json({ error: 'Cliente inválido o no encontrado.' });
+
+        // Subscription status check for startConversation
+        const { data: clientStatus, error: clientStatusError } = await supabase
+            .from('synchat_clients')
+            .select('plan_status')
+            .eq('client_id', effectiveClientId)
+            .single();
+
+        if (clientStatusError) {
+            logger.error(`(ChatCtrl) Error fetching client plan_status for ${effectiveClientId}: ${clientStatusError.message}`);
+            return res.status(500).json({ error: 'Error checking client status.' });
         }
+        if (!clientStatus) {
+            logger.warn(`(ChatCtrl) Client not found for status check: ${effectiveClientId}`);
+            return res.status(404).json({ error: 'Client configuration not found.' });
+        }
+        if (clientStatus.plan_status !== 'active_paid') {
+            logger.warn(`(ChatCtrl) Service access denied for client ${effectiveClientId} due to plan_status: '${clientStatus.plan_status}'`);
+            return res.status(403).json({ error: 'Service not active. A paid subscription is required.' });
+        }
+        // End of subscription status check
+
+        // Original logic for clientExists check (can be removed if plan_status check implies existence)
+        // const clientExists = await db.getClientConfig(effectiveClientId);
+        // if (!clientExists) { // This check might be redundant now if clientStatus fetch succeeds
+        //     logger.warn(`(ChatCtrl) Intento de iniciar conversación para cliente inexistente: ${effectiveClientId}`);
+        //     return res.status(404).json({ error: 'Cliente inválido o no encontrado.' });
+        // }
+
         const newConversationId = await db.createConversation(effectiveClientId);
         if (!newConversationId) {
             throw new Error("Failed to create conversation or retrieve its ID.");
@@ -484,22 +529,25 @@ export const markConversationResolved = async (req, res, next) => {
     }
 
     try {
-        // The db.logAiResolution function is now responsible for:
-        // 1. Verifying conversation ownership by clientId.
-        // 2. Checking if already resolved (e.g., 'resolved_by_ia' or 'escalated').
-        // 3. Updating resolution_status to 'resolved_by_ia'.
-        // 4. Logging the resolution event in ia_resolutions_log.
         const result = await db.logAiResolution(clientId, conversationId, null, { resolution_method: 'explicit_user_confirmation' });
 
         if (result.error) {
-            if (result.message && result.message.includes("already marked as resolved_by_ia or escalated")) {
+            // Check for the specific "already marked" message from the service function
+            if (result.message && result.message.startsWith("Conversation already has a final status:")) {
                 logger.info(`(ChatCtrl) Conversation ${conversationId} was already appropriately marked. Status: ${result.status}`);
-                return res.status(200).json({ message: 'Conversation was already resolved or escalated.', status: result.status });
+                return res.status(200).json({ message: result.message, status: result.status });
             }
-            if (result.message && result.message.includes("Access denied")) {
+            // Check for client ID mismatch / access denied
+            if (result.message && result.message.toLowerCase().includes("access denied")) {
                  logger.warn(`(ChatCtrl) Access denied for client ${clientId} on conversation ${conversationId}.`);
                 return res.status(403).json({ error: "Access denied to this conversation." });
             }
+            // Check for conversation not found
+            if (result.error.toLowerCase().includes("conversation not found")) {
+                logger.warn(`(ChatCtrl) Conversation ${conversationId} not found for client ${clientId}.`);
+                return res.status(404).json({ error: "Conversation not found." });
+            }
+            // Generic server error for other db issues
             logger.error(`(ChatCtrl) Error from logAiResolution for CV_ID ${conversationId}: ${result.error}`);
             return res.status(500).json({ error: result.error });
         }
