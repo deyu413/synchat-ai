@@ -112,12 +112,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const onboardingMessageSection = document.getElementById('onboardingMessageSection');
     const dismissOnboardingBtn = document.getElementById('dismissOnboardingBtn');
 
-    // Widget Tab elements
-    const widgetClientIdSpan = document.getElementById('widgetClientId');
-    const widgetCodeSnippetPre = document.getElementById('widgetCodeSnippet');
-    const copyWidgetCodeBtn = document.getElementById('copyWidgetCodeBtn');
-    const copyWidgetMessageDiv = document.getElementById('copyWidgetMessage');
-
     // 2. Define API_BASE_URL
     const API_BASE_URL = window.SYNCHAT_CONFIG?.API_BASE_URL || '';
 
@@ -1220,52 +1214,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     else if (targetSectionId === 'inboxSection') loadInboxConversations();
                     else if (targetSectionId === 'analyticsSection') loadAnalyticsData();
                     // RAG Playground does not auto-load data, it's on button click
-                    else if (targetSectionId === 'widget') { // Corrected 'widget'
-                        const userId = localStorage.getItem('synchat_user_id');
-                        if (userId) {
-                            if (widgetClientIdSpan) widgetClientIdSpan.textContent = userId;
-                            if (widgetCodeSnippetPre) {
-                                const codeElement = widgetCodeSnippetPre.querySelector('code');
-                                if (codeElement) { // Check if codeElement is found
-                                    let originalCode = `
-<script>
-  window.SYNCHAT_CONFIG = {
-    API_BASE_URL: "https://synchat-ai-s8cf.vercel.app"
-  };
-<\/script>
-<script src="https://synchat-ai.vercel.app/widget.js" data-client-id="TU_CLIENT_ID_AQUI" async defer><\/script>`;
-                                    codeElement.textContent = originalCode.replace('TU_CLIENT_ID_AQUI', userId);
-                                }
-                            }
-                        } else {
-                            if (widgetClientIdSpan) widgetClientIdSpan.textContent = 'Error: ID de usuario no encontrado.';
-                        }
-                    }
                 }
             });
         }
     });
-
-    // Add event listener for the copy button
-    if (copyWidgetCodeBtn) {
-        copyWidgetCodeBtn.addEventListener('click', () => {
-            if (widgetCodeSnippetPre) { // Check if pre element exists
-                const codeElement = widgetCodeSnippetPre.querySelector('code');
-                if (codeElement) { // Check if code element exists
-                    const codeToCopy = codeElement.textContent.trim();
-                    navigator.clipboard.writeText(codeToCopy).then(() => {
-                        if (copyWidgetMessageDiv) { // Check if message div exists
-                            copyWidgetMessageDiv.style.display = 'block';
-                            setTimeout(() => { copyWidgetMessageDiv.style.display = 'none'; }, 2000);
-                        }
-                    }).catch(err => {
-                        console.error('Failed to copy widget code: ', err);
-                        alert('Failed to copy code.');
-                    });
-                }
-            }
-        });
-    }
 
     // Determine and show the initial section, and load its data
     let initialSectionIdToShow = 'config';
@@ -1288,27 +1240,6 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (initialSectionIdToShow === 'usage') fetchClientUsageStats();
         else if (initialSectionIdToShow === 'inboxSection') loadInboxConversations();
         else if (initialSectionIdToShow === 'analyticsSection') loadAnalyticsData();
-        else if (initialSectionIdToShow === 'widget') { // Also handle for initial load
-            const userId = localStorage.getItem('synchat_user_id');
-            if (userId) {
-                if (widgetClientIdSpan) widgetClientIdSpan.textContent = userId;
-                if (widgetCodeSnippetPre) {
-                    const codeElement = widgetCodeSnippetPre.querySelector('code');
-                    if (codeElement) {
-                        let originalCode = `
-<script>
-  window.SYNCHAT_CONFIG = {
-    API_BASE_URL: "https://synchat-ai-s8cf.vercel.app"
-  };
-<\/script>
-<script src="https://synchat-ai.vercel.app/widget.js" data-client-id="TU_CLIENT_ID_AQUI" async defer><\/script>`;
-                        codeElement.textContent = originalCode.replace('TU_CLIENT_ID_AQUI', userId);
-                    }
-                }
-            } else {
-                if (widgetClientIdSpan) widgetClientIdSpan.textContent = 'Error: ID de usuario no encontrado.';
-            }
-        }
     } else if (allDashboardSections.length > 0) { // Fallback if hash section not found
         allDashboardSections[0].style.display = 'block';
         // And load data for this first section if applicable

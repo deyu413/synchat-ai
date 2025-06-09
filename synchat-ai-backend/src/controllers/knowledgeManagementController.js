@@ -56,7 +56,7 @@ export const uploadFile = [
         });
 
       if (uploadError) {
-        console.error('Supabase storage upload error:', uploadError); // Log the full object
+        console.error('Supabase storage upload error:', uploadError);
         return res.status(500).json({ message: 'Failed to upload file to storage.', error: uploadError.message });
       }
 
