@@ -235,33 +235,6 @@ async function loadI18nStrings() {
             font-size: 0.9em; transition: background-color 0.2s ease;
         }
         .synchat-quick-reply-btn:hover { background-color: var(--synchat-accent-hover); }
-
-        /* Added CSS for resolution button */
-        .synchat-resolution-btn-container {
-            text-align: center;
-            padding: 5px 15px 10px;
-            align-self: center; /* To center it if messagesContainer is flex */
-        }
-        .synchat-resolution-btn {
-            background-color: #f0f0f0;
-            color: #333;
-            border: 1px solid #ccc;
-            padding: 6px 12px;
-            border-radius: 15px; /* Pill shape */
-            font-size: 0.85em;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        .synchat-resolution-btn:hover {
-            background-color: #e0e0e0;
-            border-color: #bbb;
-        }
-        .synchat-resolution-btn.clicked {
-            background-color: #4cae4c; /* Green for success */
-            color: white;
-            border-color: #4cae4c;
-            cursor: default;
-        }
         /* Ensure box-sizing for all widget elements */
         #synchat-trigger *, #synchat-window * { box-sizing: border-box; }
     `;
@@ -291,71 +264,7 @@ async function loadI18nStrings() {
         contentDiv.textContent = text;
         messageDiv.appendChild(contentDiv);
         messagesContainer.appendChild(messageDiv);
-
-        // START MODIFICATION for resolution button
-        const existingBtnContainer = messagesContainer.querySelector('.synchat-resolution-btn-container');
-        if (existingBtnContainer) {
-            existingBtnContainer.remove();
-        }
-
-        if (sender === 'bot' && type !== 'clarification_question') { // Using the more precise condition
-            const btnContainer = document.createElement('div');
-            btnContainer.className = 'synchat-resolution-btn-container';
-
-            const resolutionButton = document.createElement('button');
-            resolutionButton.className = 'synchat-resolution-btn';
-            resolutionButton.textContent = '¿Consulta resuelta? 👍';
-            resolutionButton.addEventListener('click', handleResolutionConfirmation);
-
-            btnContainer.appendChild(resolutionButton);
-            messagesContainer.appendChild(btnContainer);
-        }
-        // END MODIFICATION
-
-        messagesContainer.scrollTop = messagesContainer.scrollHeight; // Crucial to scroll after adding new content
-    }
-
-    async function handleResolutionConfirmation(event) {
-        const button = event.target;
-        button.disabled = true;
-        button.textContent = '¡Gracias por tu feedback!';
-        button.classList.add('clicked');
-
-        if (!conversationId) {
-            widgetLogger.error("Cannot confirm resolution: conversationId is missing.");
-            // Task list doesn't specify reverting button on this error for this revision.
-            return;
-        }
-
-        if (!WIDGET_CONFIG || !WIDGET_CONFIG.backendUrl) {
-             widgetLogger.error("WIDGET_CONFIG.backendUrl is not defined. Cannot mark resolved.");
-             return; // Exit if config is missing
-        }
-
-        const markResolvedUrl = `${WIDGET_CONFIG.backendUrl}/conversations/${conversationId}/mark-resolved`;
-
-        try {
-            const response = await fetch(markResolvedUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ clientId: WIDGET_CONFIG.clientId })
-            });
-
-            if (!response.ok) {
-                // Try to parse error, default if parsing fails or no message
-                const errorData = await response.json().catch(() => ({ message: `Server error: ${response.status}` }));
-                widgetLogger.error("Failed to mark conversation as resolved:", errorData.message);
-                // Button remains "Gracias..." as per optimistic update
-            } else {
-                widgetLogger.log("Conversation resolution successfully sent to backend.");
-                // Input field disabling removed from this version of task instructions.
-            }
-        } catch (error) {
-            widgetLogger.error("Exception when marking conversation as resolved:", error.message);
-            // Button remains "Gracias..."
-        }
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
 
     function handleClarificationRequest(responseData) {
@@ -367,17 +276,20 @@ async function loadI18nStrings() {
             optionsContainer.id = 'synchat-quick-reply-container';
             optionsContainer.classList.add('synchat-quick-reply-options');
 
-            responseData.clarification_options.forEach(optionText => {
+            // Deduplicate the options array before rendering
+            const uniqueOptions = [...new Set(responseData.clarification_options)];
+
+            uniqueOptions.forEach(optionText => { // Use the deduplicated array
                 const optionButton = document.createElement('button');
                 optionButton.classList.add('synchat-quick-reply-btn');
                 optionButton.textContent = optionText;
                 optionButton.addEventListener('click', () => {
-                    currentClarificationDetails = { // Guardar detalles para el siguiente envío
+                    currentClarificationDetails = {
                         original_query: responseData.original_ambiguous_query,
                         original_chunks: responseData.original_retrieved_chunks
                     };
                     addMessageToChat("user", optionText);
-                    sendMessage(optionText); // El texto de la opción es la respuesta
+                    sendMessage(optionText);
                 });
                 optionsContainer.appendChild(optionButton);
             });

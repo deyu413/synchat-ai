@@ -18,7 +18,4 @@ router.post('/start', chatController.startConversation);
 // Body: { "clientId": "...", "conversationId": "...", "message": "..." }
 router.post('/message', chatController.handleChatMessage);
 
-// POST /api/public-chat/conversations/:conversationId/mark-resolved
-router.post('/conversations/:conversationId/mark-resolved', chatController.markConversationResolved);
-
 export default router;
