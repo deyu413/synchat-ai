@@ -1733,7 +1733,7 @@ export const logResolution = async (conversationId, resolutionType) => {
         const updated_at = new Date().toISOString();
         const { error: updateConvError } = await supabase
             .from('conversations')
-            .update({ status: 'resolved', updated_at })
+            .update({ status: 'resolved', last_message_at: new Date().toISOString() })
             .eq('conversation_id', conversationId);
 
         if (updateConvError) {
@@ -1781,7 +1781,7 @@ export const requestHumanHandover = async (conversationId) => {
         const updated_at = new Date().toISOString();
         const { error } = await supabase
             .from('conversations')
-            .update({ status: 'pending', updated_at })
+            .update({ status: 'pending', last_message_at: new Date().toISOString() })
             .eq('conversation_id', conversationId);
 
         if (error) {
