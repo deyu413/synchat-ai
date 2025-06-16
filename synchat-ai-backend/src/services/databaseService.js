@@ -1187,9 +1187,9 @@ export const logAiResolution = async (clientId, conversationId, billingCycleId, 
 
         // Step 3: Update conversation's resolution_status to 'resolved_by_ia'
         const { error: updateError } = await supabase
-    .from('conversations')
-    .update({ status: 'resolved_by_ia', last_message_at: new Date().toISOString() }) // <-- ETIQUETA CORREGIDA
-    .eq('id', conversationId);
+        .from('conversations')
+        .update({ status: 'resolved_by_ia', last_message_at: new Date().toISOString() })
+        .eq('conversation_id', conversationId); // Cambiar 'id' por 'conversation_id'
 
         if (updateError) {
             logger.error(`(DB Service) logAiResolution: Error updating conversation ${conversationId} to resolved_by_ia: ${updateError.message}`);
@@ -1780,9 +1780,9 @@ export const requestHumanHandover = async (conversationId) => {
     try {
         const updated_at = new Date().toISOString();
         const { error } = await supabase
-            .from('conversations')
-            .update({ status: 'pending', last_message_at: new Date().toISOString() })
-            .eq('conversation_id', conversationId);
+        .from('conversations')
+        .update({ status: 'escalated_to_human', last_message_at: new Date().toISOString() })
+        .eq('conversation_id', conversationId); // Cambiar 'id' por 'conversation_id'
 
         if (error) {
             logger.error(`(DB Service) requestHumanHandover: Error updating conversation ${conversationId} status to pending: ${error.message}`);
