@@ -116,6 +116,36 @@ export const getClientConfig = async (clientId) => {
     }
 };
 
+export const getResolutionsCount = async (clientId) => {
+    logger.debug(`(DB Service) getResolutionsCount: Counting resolutions for client ${clientId}`);
+
+    if (!clientId) {
+        logger.error('(DB Service) getResolutionsCount: clientId is required.');
+        throw new Error('clientId is required for getResolutionsCount.');
+    }
+
+    try {
+        const { count, error } = await supabase
+            .from('ia_resolutions_log')
+            .select('*', { count: 'exact', head: true }) // Select any column, count is what matters
+            .eq('client_id', clientId);
+
+        if (error) {
+            logger.error(`(DB Service) getResolutionsCount: Error counting resolutions for client ${clientId}: ${error.message}`, error);
+            throw new Error(`Failed to count resolutions: ${error.message}`);
+        }
+
+        logger.debug(`(DB Service) getResolutionsCount: Found ${count} resolutions for client ${clientId}.`);
+        return count === null ? 0 : count; // Supabase returns null for count if no rows match with head:true
+    } catch (err) {
+        // Errors from the try block or re-thrown Supabase errors
+        logger.error(`(DB Service) getResolutionsCount: Unexpected exception for client ${clientId}: ${err.message}`, err);
+        // Re-throw if it's not already a thrown error from above, or to ensure consistent error type if desired.
+        // For now, just rethrowing the caught error.
+        throw err;
+    }
+};
+
 // --- INICIO DE LA CORRECCIÓN #2: IMPLEMENTACIÓN DE getConversationHistory ---
 export const getConversationHistory = async (conversationId) => {
     if (!conversationId) {
@@ -1665,6 +1695,109 @@ export const updateConversationStatusByAgent = async (conversationId, clientId, 
 // getClientConversations, addAgentMessageToConversation, updateConversationStatusByAgent
 
 // (The actual overwrite will use the full existing file content with the hybridSearch modifications)
+
+// --- Custom Resolution and Handover Functions ---
+
+export const logResolution = async (conversationId, resolutionType) => {
+    logger.debug(`(DB Service) logResolution: Attempting to log resolution for conversation ${conversationId} with type ${resolutionType}`);
+
+    if (!conversationId || !resolutionType) {
+        logger.error('(DB Service) logResolution: conversationId and resolutionType are required.');
+        throw new Error('conversationId and resolutionType are required.');
+    }
+
+    try {
+        // Retrieve the conversation to check its current status and client_id
+        const { data: conversation, error: fetchError } = await supabase
+            .from('conversations')
+            .select('status, client_id')
+            .eq('conversation_id', conversationId)
+            .single();
+
+        if (fetchError) {
+            logger.error(`(DB Service) logResolution: Error fetching conversation ${conversationId}: ${fetchError.message}`);
+            throw new Error(`Error fetching conversation: ${fetchError.message}`);
+        }
+
+        if (!conversation) {
+            logger.warn(`(DB Service) logResolution: Conversation ${conversationId} not found.`);
+            throw new Error('Conversation not found.');
+        }
+
+        if (conversation.status !== 'open') {
+            logger.info(`(DB Service) logResolution: Conversation ${conversationId} was not open (status: ${conversation.status}). No update needed.`);
+            return { success: true, message: 'Conversation was not open.' };
+        }
+
+        // Update conversation status to 'resolved'
+        const updated_at = new Date().toISOString();
+        const { error: updateConvError } = await supabase
+            .from('conversations')
+            .update({ status: 'resolved', updated_at })
+            .eq('conversation_id', conversationId);
+
+        if (updateConvError) {
+            logger.error(`(DB Service) logResolution: Error updating conversation ${conversationId} status: ${updateConvError.message}`);
+            throw new Error(`Error updating conversation status: ${updateConvError.message}`);
+        }
+
+        // Insert into ia_resolutions_log
+        const resolutionLogEntry = {
+            conversation_id: conversationId,
+            client_id: conversation.client_id,
+            resolution_type: resolutionType,
+            resolved_at: updated_at, // Use the same timestamp
+        };
+
+        const { error: insertLogError } = await supabase
+            .from('ia_resolutions_log')
+            .insert(resolutionLogEntry);
+
+        if (insertLogError) {
+            logger.error(`(DB Service) logResolution: Error inserting into ia_resolutions_log for conversation ${conversationId}: ${insertLogError.message}`);
+            // Potentially consider rolling back conversation status update if critical
+            throw new Error(`Error inserting into resolution log: ${insertLogError.message}`);
+        }
+
+        logger.info(`(DB Service) logResolution: Successfully logged resolution for conversation ${conversationId}. Status set to resolved.`);
+        return { success: true };
+
+    } catch (err) {
+        logger.error(`(DB Service) logResolution: Unexpected error for conversation ${conversationId}: ${err.message}`, err);
+        // Re-throw the error so the caller can handle it
+        throw err;
+    }
+};
+
+export const requestHumanHandover = async (conversationId) => {
+    logger.debug(`(DB Service) requestHumanHandover: Attempting to set conversation ${conversationId} to pending for human handover.`);
+
+    if (!conversationId) {
+        logger.error('(DB Service) requestHumanHandover: conversationId is required.');
+        throw new Error('conversationId is required.');
+    }
+
+    try {
+        const updated_at = new Date().toISOString();
+        const { error } = await supabase
+            .from('conversations')
+            .update({ status: 'pending', updated_at })
+            .eq('conversation_id', conversationId);
+
+        if (error) {
+            logger.error(`(DB Service) requestHumanHandover: Error updating conversation ${conversationId} status to pending: ${error.message}`);
+            throw new Error(`Error updating conversation status to pending: ${error.message}`);
+        }
+
+        logger.info(`(DB Service) requestHumanHandover: Conversation ${conversationId} status successfully updated to 'pending'.`);
+        return { success: true };
+
+    } catch (err) {
+        logger.error(`(DB Service) requestHumanHandover: Unexpected error for conversation ${conversationId}: ${err.message}`, err);
+        // Re-throw the error so the caller can handle it
+        throw err;
+    }
+};
 
 
 // --- New Analytics Service Functions ---

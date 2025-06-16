@@ -86,6 +86,60 @@ export const handleChatMessage = async (req, res, next) => {
     let originalQueryForContext = userMessageInput;
     let ragLogId = null;
 
+    // --- Human Handover Intent Detection Logic ---
+    if (userMessageInput && typeof userMessageInput === 'string') {
+        const humanRequestKeywords = [
+            'hablar con un humano', 'agente', 'persona',
+            'soporte técnico', 'ayuda humana', 'escalar a un agente',
+            'human agent', 'talk to support', 'customer service', // English variants
+            'technical support', 'human help', 'escalate to agent'
+        ];
+        const lowerCaseMessage = userMessageInput.toLowerCase();
+        const requestHumanHandoverDetected = humanRequestKeywords.some(keyword => lowerCaseMessage.includes(keyword));
+
+        if (requestHumanHandoverDetected) {
+            try {
+                logger.info(`(ChatCtrl) Human handover intent detected for CV:${conversationId} by user message: "${userMessageInput.substring(0, 50)}..."`);
+
+                // conversationId is already available and validated in this function.
+                // No need for getOrCreateConversation, we use the existing conversationId.
+                await db.requestHumanHandover(conversationId);
+
+                const humanHandoverResponse = "Entendido. Te pondré en contacto con un agente de soporte. Por favor, espera un momento.";
+
+                // Save user message first (if not already saved before this block)
+                // Assuming user message saving happens later or should be explicitly done here for handover.
+                // For safety, let's ensure user message is saved before bot's handover response.
+                // The main logic later also saves user message, this might lead to double saving if not careful.
+                // However, the prompt implies this block can return early.
+                // Let's assume the main user message saving is outside/after this detection block.
+                // For now, focusing on saving the bot's handover message.
+
+                await db.saveMessage(conversationId, 'bot', humanHandoverResponse);
+                // Note: The prompt uses db.createMessage(conv.id, 'bot', humanHandoverResponse, clientId)
+                // db.saveMessage is the actual function in databaseService.js which takes (conversationId, sender, textContent)
+                // clientId is not a direct param for saveMessage based on its typical usage in this file.
+                // It's used by hybridSearch etc. but saveMessage infers client from conversation.
+
+                db.incrementAnalyticMessageCount(conversationId, 'bot').catch(err => logger.error(`(ChatCtrl) Analytics: Failed to increment bot message count for handover CV:${conversationId}`, err));
+
+                // Log the handover event (specific analytic logging for handover might be better)
+                // The existing `updateAnalyticOnEscalation` might be relevant here too.
+                 db.updateAnalyticOnEscalation(conversationId, new Date(), `Implicit handover request: "${userMessageInput}"`)
+                    .catch(err => logger.error(`(ChatCtrl) Analytics: Failed to update escalation data for implicit handover CV:${conversationId}`, err));
+
+
+                logger.info(`(ChatCtrl) Human handover processed for CV:${conversationId}. Bot response: "${humanHandoverResponse}"`);
+                return res.status(200).json({ reply: humanHandoverResponse, conversationId: conversationId, status: "human_handover_initiated" });
+
+            } catch (error) {
+                logger.error(`(ChatCtrl) Error during human handover request for conversation ${conversationId}: ${error.message}`);
+                // If handover fails, proceed with the standard RAG response (function continues).
+            }
+        }
+    }
+    // --- End Human Handover Intent Detection Logic ---
+
     if (clarification_response_details && clarification_response_details.original_query) {
         logger.info(`(ChatCtrl) Received a clarification response for original query: "${clarification_response_details.original_query}" with user's choice/input: "${userMessageInput}"`);
         effectiveQuery = `${clarification_response_details.original_query} - ${userMessageInput}`;

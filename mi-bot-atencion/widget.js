@@ -304,7 +304,7 @@ async function loadI18nStrings() {
 
             const resolutionButton = document.createElement('button');
             resolutionButton.className = 'synchat-resolution-btn';
-            resolutionButton.textContent = '¿Consulta resuelta? 👍';
+            resolutionButton.textContent = "✅ Consulta Resuelta"; // Updated text
             resolutionButton.addEventListener('click', handleResolutionConfirmation);
 
             btnContainer.appendChild(resolutionButton);
@@ -332,7 +332,8 @@ async function loadI18nStrings() {
              return; // Exit if config is missing
         }
 
-        const markResolvedUrl = `${WIDGET_CONFIG.backendUrl}/conversations/${conversationId}/mark-resolved`;
+        // Updated to use the new route: /api/public-chat/:conversationId/resolve
+        const markResolvedUrl = `${WIDGET_CONFIG.backendUrl}/${conversationId}/resolve`;
 
         try {
             const response = await fetch(markResolvedUrl, {
