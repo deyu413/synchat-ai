@@ -1187,9 +1187,9 @@ export const logAiResolution = async (clientId, conversationId, billingCycleId, 
 
         // Step 3: Update conversation's resolution_status to 'resolved_by_ia'
         const { error: updateError } = await supabase
-            .from('conversations')
-            .update({ resolution_status: 'resolved_by_ia', updated_at: new Date().toISOString() })
-            .eq('conversation_id', conversationId);
+    .from('conversations')
+    .update({ status: 'resolved_by_ia', last_message_at: new Date().toISOString() }) // <-- ETIQUETA CORREGIDA
+    .eq('id', conversationId);
 
         if (updateError) {
             logger.error(`(DB Service) logAiResolution: Error updating conversation ${conversationId} to resolved_by_ia: ${updateError.message}`);
