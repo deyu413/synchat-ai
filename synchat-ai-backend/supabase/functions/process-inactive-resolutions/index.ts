@@ -1,5 +1,5 @@
 // File: supabase/functions/process-inactive-resolutions/index.ts
-import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from '@supabase/supabase-js';
 import { corsHeaders } from '../_shared/cors.ts';
 
 const inactivityTimeoutMinutes = 15; // Configurable: e.g., 15 minutes
