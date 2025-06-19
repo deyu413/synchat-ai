@@ -206,6 +206,48 @@ document.addEventListener('DOMContentLoaded', () => {
         localStorage.setItem('synchat_onboarding_dismissed', 'true');
     }
 
+    function renderWidgetEmbedCode(clientId) {
+        if (typeof clientId !== 'string' || clientId.trim() === '') {
+            console.error('Invalid or missing Client ID for widget code generation.');
+            const codeElement = document.getElementById('widget-code-display');
+            if(codeElement) codeElement.textContent = 'No se pudo generar el código. Falta el ID de cliente.';
+            return;
+        }
+
+        const widgetCodeElement = document.getElementById('widget-code-display');
+        const copyButton = document.getElementById('copy-widget-code-btn');
+        const widgetScriptUrl = 'https://synchat-ai-s8cf.vercel.app/widget.js'; // Ensure this URL is correct
+
+        const embedCode =
+    `&lt;script>
+window.synchat_config = {
+    clientId: "${clientId}"
+};
+&lt;/script>
+
+&lt;script src="${widgetScriptUrl}" defer>&lt;/script>`;
+
+        if (widgetCodeElement) {
+            widgetCodeElement.textContent = embedCode;
+            // If using a syntax highlighter like Prism.js or Highlight.js, and it's loaded,
+            // you might need to re-trigger highlighting here if it doesn't auto-detect changes.
+            // For example, if Prism is used:
+            // Prism.highlightElement(widgetCodeElement);
+        }
+
+        if (copyButton) {
+            copyButton.addEventListener('click', () => {
+                navigator.clipboard.writeText(embedCode.replace(/&lt;/g, '<').replace(/&gt;/g, '>')).then(() => { // Decode HTML entities for clipboard
+                    copyButton.textContent = '¡Copiado!';
+                    setTimeout(() => { copyButton.textContent = 'Copiar'; }, 2000);
+                }).catch(err => {
+                    console.error('Failed to copy widget code: ', err);
+                    widgetCodeElement.textContent = 'Error al copiar el código. Inténtalo manualmente.';
+                });
+            });
+        }
+    }
+
     // 4. Define all main asynchronous functions
     async function fetchClientConfig() {
         const token = localStorage.getItem('synchat_session_token');
@@ -1154,18 +1196,209 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Define missing functions ---
     async function fetchClientUsageStats(billingCycleId = null) {
+        // This function might be deprecated or refactored if getDashboardStats provides aiResolutionsCount
         console.log('fetchClientUsageStats called with billingCycleId:', billingCycleId);
-        // TODO: Implement actual logic if/when available
-        if (usageMessageEl) displayMessage(usageMessageEl, 'Funcionalidad de estadísticas de uso aún no implementada.', false);
+        const token = localStorage.getItem('synchat_session_token');
+        if (!token) {
+            if (usageMessageEl) displayMessage(usageMessageEl, 'Error de autenticación.', false);
+            return;
+        }
+        if (usageMessageEl) usageMessageEl.textContent = 'Cargando recuento de resoluciones...';
+        try {
+            // Assuming the new endpoint getDashboardStats will provide this.
+            // For now, let's simulate fetching it or rely on the new main stats fetcher.
+            // This specific fetch might be removed if getDashboardStats is comprehensive.
+            // const response = await fetch(`${API_BASE_URL}/api/client/me/usage-stats?billing_cycle_id=${billingCycleId || ''}`, {
+            //     headers: { 'Authorization': `Bearer ${token}` }
+            // });
+            // if (!response.ok) throw new Error('Failed to fetch usage stats');
+            // const stats = await response.json();
+            // if (aiResolutionsCountEl) aiResolutionsCountEl.textContent = stats.ai_resolutions_count ?? '0';
+            // if (totalQueriesCountEl) totalQueriesCountEl.textContent = stats.total_queries_current_month ?? '0';
+            // if (statsLastUpdatedEl) statsLastUpdatedEl.textContent = new Date().toLocaleString();
+            if (usageMessageEl) displayMessage(usageMessageEl, 'Las estadísticas de uso ahora se muestran en la sección de Analíticas.', true);
+            if (aiResolutionsCountEl) aiResolutionsCountEl.textContent = 'Ver Analíticas'; // Redirect user
+            if (totalQueriesCountEl) totalQueriesCountEl.textContent = 'Ver Analíticas';
+
+
+        } catch (error) {
+            console.error('Error fetching client usage stats:', error);
+            if (usageMessageEl) displayMessage(usageMessageEl, `Error al cargar estadísticas: ${error.message}`, false);
+        }
     }
+
+    // Function to render the sentiment pie chart (assuming Chart.js is used)
+    function renderSentimentChart(canvasElement, sentimentData) {
+        if (sentimentPieChartInstance) {
+            sentimentPieChartInstance.destroy(); // Destroy existing chart if it exists
+        }
+        const chartData = {
+            labels: ['Positivo', 'Negativo', 'Neutral'],
+            datasets: [{
+                label: 'Distribución de Sentimiento',
+                data: [sentimentData.positive, sentimentData.negative, sentimentData.neutral],
+                backgroundColor: [
+                    'rgba(75, 192, 192, 0.7)', // Positive
+                    'rgba(255, 99, 132, 0.7)', // Negative
+                    'rgba(201, 203, 207, 0.7)'  // Neutral
+                ],
+                borderColor: [
+                    'rgba(75, 192, 192, 1)',
+                    'rgba(255, 99, 132, 1)',
+                    'rgba(201, 203, 207, 1)'
+                ],
+                borderWidth: 1
+            }]
+        };
+        sentimentPieChartInstance = new Chart(canvasElement, {
+            type: 'pie',
+            data: chartData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'top' },
+                    title: { display: true, text: 'Distribución de Sentimiento de Mensajes' }
+                }
+            }
+        });
+    }
+
+    // This function will fetch from the new /dashboard-stats endpoint
+    async function fetchAndDisplayDashboardOverviewStats() {
+        const token = localStorage.getItem('synchat_session_token');
+        if (!token) {
+            // Display error in relevant sections or a general dashboard error message
+            if (analyticsLoadingMessage) analyticsLoadingMessage.textContent = 'Error de autenticación.';
+            return;
+        }
+
+        if (analyticsLoadingMessage) analyticsLoadingMessage.style.display = 'block';
+        if (analyticsLoadingMessage) analyticsLoadingMessage.textContent = 'Cargando estadísticas principales...';
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/client/me/dashboard-stats`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: 'Error desconocido del servidor' }));
+                throw new Error(errorData.message || `Error del servidor: ${response.status}`);
+            }
+            const stats = await response.json();
+
+            // Update Resolutions Count KPI (formerly in "Usage" section, now part of general analytics)
+            // Assuming 'aiResolutionsCountEl' is the element for resolutions count.
+            // The prompt uses 'resolutions-kpi', so let's standardize or ensure correct ID.
+            // For now, using 'aiResolutionsCountEl' if it exists, or a new one.
+            const resolutionsElement = document.getElementById('aiResolutionsCount'); // Or 'resolutions-kpi'
+            if (resolutionsElement) {
+                resolutionsElement.textContent = stats.resolutionsCount !== undefined ? stats.resolutionsCount.toString() : '0';
+            } else {
+                console.warn('Element for AI resolutions count (e.g., "aiResolutionsCount" or "resolutions-kpi") not found.');
+            }
+
+            // Update Total Conversations KPI
+            if (totalConversationsSpan) { // This is 'totalConversations' ID from existing code
+                totalConversationsSpan.textContent = stats.totalConversations !== undefined ? stats.totalConversations.toString() : '0';
+            } else {
+                console.warn('Element with ID "totalConversations" not found.');
+            }
+
+            // Update Sentiment Chart
+            const sentimentChartCanvas = document.getElementById('sentimentPieChart'); // Canvas for the chart
+            if (sentimentChartCanvas) {
+                if (stats.sentiment && (stats.sentiment.positive > 0 || stats.sentiment.negative > 0 || stats.sentiment.neutral > 0)) {
+                    renderSentimentChart(sentimentChartCanvas, stats.sentiment);
+                } else {
+                    const chartContainer = sentimentChartCanvas.parentElement || document.getElementById('sentimentDistributionChartContainer');
+                    if (chartContainer) {
+                         chartContainer.innerHTML = '<p class="empty-state-message" style="text-align:center;">No hay suficientes datos de sentimiento para mostrar el gráfico.</p>';
+                    }
+                    if (sentimentPieChartInstance) { // Destroy instance if canvas content is replaced
+                        sentimentPieChartInstance.destroy();
+                        sentimentPieChartInstance = null;
+                    }
+                }
+            } else {
+                console.warn('Element with ID "sentimentPieChart" (canvas) not found.');
+            }
+
+            // Update Sentiment Table (optional, if it's still used with this simpler data)
+            if (sentimentDistributionTableBody) {
+                sentimentDistributionTableBody.innerHTML = ''; // Clear existing
+                if (stats.sentiment && (stats.sentiment.positive > 0 || stats.sentiment.negative > 0 || stats.sentiment.neutral > 0)) {
+                    const totalSentiments = stats.sentiment.positive + stats.sentiment.negative + stats.sentiment.neutral;
+                    ['positive', 'negative', 'neutral'].forEach(type => {
+                        const count = stats.sentiment[type];
+                        const percentage = totalSentiments > 0 ? ((count / totalSentiments) * 100).toFixed(1) : '0.0';
+                        const row = sentimentDistributionTableBody.insertRow();
+                        row.innerHTML = `
+                            <td style="border: 1px solid #ddd; padding: 8px;">${type.charAt(0).toUpperCase() + type.slice(1)}</td>
+                            <td style="border: 1px solid #ddd; padding: 8px;">${count}</td>
+                            <td style="border: 1px solid #ddd; padding: 8px;">${percentage}%</td>
+                        `;
+                    });
+                } else {
+                     sentimentDistributionTableBody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:10px;">No hay datos de sentimiento disponibles.</td></tr>';
+                }
+            }
+
+
+            if (analyticsLoadingMessage) analyticsLoadingMessage.style.display = 'none';
+
+        } catch (error) {
+            console.error('Error fetching or displaying dashboard overview stats:', error);
+            if (analyticsLoadingMessage) {
+                analyticsLoadingMessage.textContent = `Error al cargar estadísticas: ${error.message}`;
+                analyticsLoadingMessage.style.color = 'red';
+            }
+            // Display error messages in the specific stat areas too
+            if (document.getElementById('aiResolutionsCount')) document.getElementById('aiResolutionsCount').textContent = 'Error';
+            if (totalConversationsSpan) totalConversationsSpan.textContent = 'Error';
+            if (document.getElementById('sentimentPieChart')?.parentElement) document.getElementById('sentimentPieChart').parentElement.innerHTML = '<p class="empty-state-message" style="text-align:center; color:red;">Error al cargar datos de sentimiento.</p>';
+            if (sentimentDistributionTableBody) sentimentDistributionTableBody.innerHTML = '<tr><td colspan="3" style="text-align:center; color:red;">Error al cargar datos.</td></tr>';
+        }
+    }
+
 
     async function loadAnalyticsData() {
         console.log('loadAnalyticsData called');
-        // TODO: Implement actual logic if/when available
-        // Example: Ensure getPeriodDates is defined if used
+        // This function will now primarily call the new overview stats fetcher
+        // and potentially other more detailed analytics calls if they are still needed.
+
+        await fetchAndDisplayDashboardOverviewStats(); // Fetch and display the new overview stats
+
+        // TODO: Determine if other parts of the original loadAnalyticsData (like fetching detailed topic analytics,
+        // source performance, unanswered queries list) are still needed or if the dashboard
+        // is simplifying to only show the overview stats.
+        // For now, we assume the overview stats are the primary focus for this modification.
+
+        // Example: If other detailed fetches are still needed, they would go here.
         // const { startDate, endDate } = getPeriodDates(analyticsPeriodSelector.value);
-        if (analyticsLoadingMessage) analyticsLoadingMessage.textContent = 'Cargando datos analíticos...';
-        // ... more logic here
+        // if (analyticsLoadingMessage) analyticsLoadingMessage.textContent = 'Cargando datos analíticos detallados...';
+        // ... (calls to fetchTopicAnalytics, fetchSourcePerformance, etc.)
+        // ... (calls to renderTopicAnalyticsTable, renderSourcePerformanceTable, etc.)
+
+        // If the detailed sections are still there and just need empty states, this is where you'd add logic.
+        // For example, for unansweredQueriesList:
+        const unansweredQueriesListEl = document.getElementById('unansweredQueriesList');
+        if (unansweredQueriesListEl) {
+            if (!unansweredQueriesListEl.querySelector('li:not(.placeholder-item)')) { // Check if it's empty apart from placeholder
+                 unansweredQueriesListEl.innerHTML = '<li class="empty-state-message" style="text-align:center;">No hay sugerencias de consultas no respondidas por el momento.</li>';
+            }
+        }
+        // Similar checks for topicAnalyticsTableBody and sourcePerformanceTableBody if they are not populated by fetchAndDisplayDashboardOverviewStats
+        if (topicAnalyticsTableBody && topicAnalyticsTableBody.children.length === 0) {
+             topicAnalyticsTableBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:10px;">No hay datos de temas disponibles para el período seleccionado.</td></tr>';
+        }
+        if (sourcePerformanceTableBody && sourcePerformanceTableBody.children.length === 0) {
+             sourcePerformanceTableBody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:10px;">No hay datos de rendimiento de fuentes de conocimiento disponibles.</td></tr>';
+        }
+
+
+        if (analyticsLoadingMessage && analyticsLoadingMessage.textContent.includes('Cargando')) {
+             analyticsLoadingMessage.style.display = 'none'; // Hide if still showing generic loading
+        }
     }
 
     // 5. Place all initialization logic (e.g., event listener attachments)
@@ -1255,6 +1488,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (dashboardContent) dashboardContent.classList.remove('hidden');
     if (userEmailSpan && localStorage.getItem('synchat_user_email')) {
          userEmailSpan.textContent = localStorage.getItem('synchat_user_email');
+    }
+
+    // Attempt to get client_id from localStorage, similar to how email is retrieved
+    const clientId = localStorage.getItem('synchat_client_id'); // Assuming client_id is stored with this key
+    if (clientId) {
+        renderWidgetEmbedCode(clientId);
+    } else {
+        console.warn('Client ID not found in localStorage. Widget code cannot be generated.');
+        const codeElement = document.getElementById('widget-code-display');
+        if (codeElement) {
+            codeElement.textContent = 'No se pudo generar el código: ID de cliente no encontrado.';
+        }
     }
 
     // Logout button

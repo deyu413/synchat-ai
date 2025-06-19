@@ -10,6 +10,67 @@ import { encode } from 'gpt-tokenizer'; // For token counting if needed for summ
 
 // --- Existing Controller Functions ---
 
+// Assuming logger might be available or can be added. If not, console will be used.
+// import logger from '../utils/logger.js'; // Would be needed if using logger
+
+exports.getDashboardStats = async (req, res) => {
+    const clientId = req.user.id;
+    // Define a default period for stats that require it, e.g., last 90 days
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - 90);
+    const defaultPeriodOptions = {
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0]
+    };
+
+    try {
+        const metricPromises = [
+            db.getResolutionsCount(clientId), // Already returns a number
+            db.getSentimentDistribution(clientId, defaultPeriodOptions), // Returns {data: [{sentiment: 'positive', count: X}, ...]}
+            db.fetchAnalyticsSummary(clientId, defaultPeriodOptions) // Returns { total_conversations: Y, ... }
+        ];
+
+        const results = await Promise.allSettled(metricPromises);
+
+        const resolutionsCountResult = results[0];
+        const sentimentDistributionResult = results[1];
+        const analyticsSummaryResult = results[2];
+
+        let sentimentData = { positive: 0, negative: 0, neutral: 0 };
+        if (sentimentDistributionResult.status === 'fulfilled' && sentimentDistributionResult.value.data) {
+            sentimentDistributionResult.value.data.forEach(item => {
+                if (item.sentiment && typeof item.count === 'number') {
+                    sentimentData[item.sentiment.toLowerCase()] = item.count;
+                }
+            });
+        }
+
+        const stats = {
+            resolutionsCount: resolutionsCountResult.status === 'fulfilled' ? resolutionsCountResult.value : 0,
+            sentiment: sentimentData,
+            totalConversations: analyticsSummaryResult.status === 'fulfilled' && analyticsSummaryResult.value ? analyticsSummaryResult.value.total_conversations : 0,
+            // avgResponseTime: analyticsSummaryResult.status === 'fulfilled' && analyticsSummaryResult.value ? analyticsSummaryResult.value.avg_duration_seconds : null,
+            // escalatedConversations: analyticsSummaryResult.status === 'fulfilled' && analyticsSummaryResult.value ? analyticsSummaryResult.value.escalated_conversations_count : 0,
+        };
+
+        results.forEach((result, index) => {
+            if (result.status === 'rejected') {
+                const promiseNames = ['getResolutionsCount', 'getSentimentDistribution', 'fetchAnalyticsSummary'];
+                // logger.warn(`Dashboard metric ${promiseNames[index]} failed for client ${clientId}:`, result.reason);
+                console.warn(`Dashboard metric ${promiseNames[index]} (for client ${clientId}) failed to load:`, result.reason?.message || result.reason);
+            }
+        });
+
+        res.status(200).json(stats);
+    } catch (error) {
+        // logger.error(`Critical error in getDashboardStats for client ${clientId}:`, error);
+        console.error(`Critical error in getDashboardStats for client ${clientId}:`, error);
+        res.status(500).json({ error: 'Failed to fetch dashboard statistics.' });
+    }
+};
+
+
 export const getClientConfig = async (req, res) => {
     console.log('clientDashboardController.getClientConfig called');
     const clientId = req.user?.id;

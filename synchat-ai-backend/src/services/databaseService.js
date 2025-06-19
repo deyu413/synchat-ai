@@ -1590,7 +1590,7 @@ export const getClientConversations = async (clientId, statusFilters = [], page 
                 messages ( content, created_at )
             `, { count: 'exact' }) // Request total count
             .eq('client_id', clientId)
-            .order('last_message_at', { ascending: false, nullsLast: true });
+            .order('last_message_at', { ascending: false, nullsFirst: false });
 
         if (statusFilters && statusFilters.length > 0) {
             query = query.in('status', statusFilters);

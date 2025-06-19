@@ -59,17 +59,22 @@ export const listConversations = async (req, res) => {
 
     try {
         console.log(`(InboxCtrl) Listing conversations for client ${clientId}, page ${parsedPage}, size ${parsedPageSize}, statuses: ${statusFiltersArray.join(', ')}`);
+        // Ensure databaseService.getInboxConversations is the correct function name - it's getClientConversations from import
         const result = await getClientConversations(clientId, statusFiltersArray, parsedPage, parsedPageSize);
         
+        // This specific error handling for known errors from the service is good.
+        // The prompt's try/catch is more about the generic exception.
         if (result.error) {
-             console.error(`(InboxCtrl) Error from getClientConversations service:`, result.error);
-             return res.status(500).json({ message: "Error retrieving conversations.", error: result.error });
+             console.error(`(InboxCtrl) Service error from getClientConversations for client ${clientId}:`, result.error);
+             // Keep a more specific error message if the service provides one
+             return res.status(500).json({ error: `Error retrieving conversations: ${result.error}` });
         }
 
-        res.status(200).json(result);
+        res.status(200).json(result); // Assuming result is the { data: {conversations, totalCount, ...} } structure
     } catch (error) {
-        console.error(`(InboxCtrl) Exception in listConversations for client ${clientId}:`, error);
-        res.status(500).json({ message: 'Failed to retrieve conversations due to an unexpected error.', error: error.message });
+        // This is for unexpected errors during the execution of the try block.
+        console.error(`Failed to fetch inbox conversations for client ${clientId}:`, error);
+        res.status(500).json({ error: 'Internal server error while fetching conversations.' });
     }
 };
 
