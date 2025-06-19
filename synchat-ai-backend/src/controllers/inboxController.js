@@ -30,20 +30,25 @@ export const listConversations = async (req, res) => {
     let statusFiltersArray = [];
     const knownConversationStatuses = ['open', 'awaiting_agent_reply', 'agent_replied', 'closed_by_agent', 'escalated_to_human', 'bot_active', 'closed_by_user', 'resolved_by_ia'];
 
-    if (status && typeof status === 'string') {
-        statusFiltersArray = status.split(',').map(s => s.trim()).filter(s => s);
-    } else if (Array.isArray(status)) {
-        statusFiltersArray = status.map(s => String(s).trim()).filter(s => s);
+    // Check if status is provided and is a non-empty string
+    if (status && typeof status === 'string' && status.trim() !== '') {
+        const potentialStatuses = status.split(',').map(s => s.trim()).filter(s => s);
+        if (potentialStatuses.some(s => !knownConversationStatuses.includes(s))) {
+             // If any provided status is unknown after trimming and filtering empty ones
+            return res.status(400).json({ error: `Invalid status filter provided. Allowed statuses are: ${knownConversationStatuses.join(', ')}` });
+        }
+        statusFiltersArray = potentialStatuses.filter(s => knownConversationStatuses.includes(s)); // ensure only known are used
+    } else if (Array.isArray(status) && status.length > 0) { // Handles if status is passed as an array
+        const potentialStatuses = status.map(s => String(s).trim()).filter(s => s);
+        if (potentialStatuses.some(s => !knownConversationStatuses.includes(s))) {
+            return res.status(400).json({ error: `Invalid status filter provided in array. Allowed statuses are: ${knownConversationStatuses.join(', ')}` });
+        }
+        statusFiltersArray = potentialStatuses.filter(s => knownConversationStatuses.includes(s));
     }
 
-    if (statusFiltersArray.length > 0) {
-        for (const s of statusFiltersArray) {
-            if (!knownConversationStatuses.includes(s)) {
-                return res.status(400).json({ error: `Invalid status filter: '${s}'. Allowed statuses are: ${knownConversationStatuses.join(', ')}` });
-            }
-        }
-    } else {
-        // Default to a set of active statuses if no specific filters are provided
+    // If statusFiltersArray is still empty at this point (meaning status was not provided, was empty string, or contained only invalid/empty values),
+    // then apply default filters.
+    if (statusFiltersArray.length === 0) {
         statusFiltersArray = ['escalated_to_human', 'awaiting_agent_reply', 'agent_replied', 'open'];
     }
 

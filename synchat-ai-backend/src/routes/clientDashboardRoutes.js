@@ -16,7 +16,8 @@ import { // Assuming clientDashboardController.js uses named exports
     // New analytics controller functions
     getSentimentDistributionAnalytics,
     getTopicAnalyticsData,
-    getKnowledgeSourcePerformanceAnalytics
+    getKnowledgeSourcePerformanceAnalytics,
+    getDashboardStats // Added getDashboardStats
 } from '../controllers/clientDashboardController.js';
 
 const router = express.Router();
@@ -56,5 +57,8 @@ router.post(
 router.get('/me/analytics/sentiment', protectRoute, getSentimentDistributionAnalytics);
 router.get('/me/analytics/topics', protectRoute, getTopicAnalyticsData);
 router.get('/me/analytics/source-performance', protectRoute, getKnowledgeSourcePerformanceAnalytics);
+
+// Route for the new general dashboard stats
+router.get('/me/dashboard-stats', protectRoute, getDashboardStats);
 
 export default router;
