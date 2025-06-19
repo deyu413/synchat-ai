@@ -1,0 +1,3 @@
+# Le dice al CLI que para esta función, debe usar el fichero import_map.json
+[functions.process-inactive-resolutions]
+import_map = "./import_map.json"

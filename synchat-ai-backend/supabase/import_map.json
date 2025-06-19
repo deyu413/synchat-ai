@@ -1,5 +1,6 @@
 {
   "imports": {
-    "@supabase/supabase-js": "https://deno.land/x/supabase/mod.ts"
+    "supabase": "https://esm.sh/@supabase/supabase-js@2",
+    "cors": "./functions/_shared/cors.ts"
   }
 }
