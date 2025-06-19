@@ -38,71 +38,103 @@ const PORT = process.env.PORT || 3001;
 const frontendAppURL = (process.env.FRONTEND_URL || 'https://synchat-ai.vercel.app').replace(/\/$/, '');
 
 // Orígenes permitidos para el widget
-const widgetAllowedOriginsEnv = process.env.WIDGET_ALLOWED_ORIGINS || '';
-let widgetOriginsList = [];
-let allowAllForWidget = false;
+// const widgetAllowedOriginsEnv = process.env.WIDGET_ALLOWED_ORIGINS || '';
+// let widgetOriginsList = [];
+// let allowAllForWidget = false;
 
-if (widgetAllowedOriginsEnv === '*') {
-    allowAllForWidget = true;
-} else {
-    if (widgetAllowedOriginsEnv) {
-        widgetOriginsList = widgetAllowedOriginsEnv.split(',').map(origin => origin.trim().replace(/\/$/, '')).filter(Boolean);
-    }
-    // Ensure frontendAppURL is included if not allowing all and it's not already in the list
-    if (frontendAppURL && !widgetOriginsList.includes(frontendAppURL)) {
-        widgetOriginsList.push(frontendAppURL);
-    }
-}
+// if (widgetAllowedOriginsEnv === '*') {
+//     allowAllForWidget = true;
+// } else {
+//     if (widgetAllowedOriginsEnv) {
+//         widgetOriginsList = widgetAllowedOriginsEnv.split(',').map(origin => origin.trim().replace(/\/$/, '')).filter(Boolean);
+//     }
+//     // Ensure frontendAppURL is included if not allowing all and it's not already in the list
+//     if (frontendAppURL && !widgetOriginsList.includes(frontendAppURL)) {
+//         widgetOriginsList.push(frontendAppURL);
+//     }
+// }
 
-const corsOptionsDelegate = function (req, callback) {
-    let corsOptions;
-    const origin = req.header('Origin');
+// const corsOptionsDelegate = function (req, callback) {
+//     let corsOptions;
+//     const origin = req.header('Origin');
 
-    // Determinar si la petición es para la ruta raíz (health check)
-    const isHealthCheck = req.path === '/';
+//     // Determinar si la petición es para la ruta raíz (health check)
+//     const isHealthCheck = req.path === '/';
 
-    // Determinar si el origen es la aplicación frontend principal
-    const isFrontendApp = origin && frontendAppURL && origin === frontendAppURL;
+//     // Determinar si el origen es la aplicación frontend principal
+//     const isFrontendApp = origin && frontendAppURL && origin === frontendAppURL;
 
-    // Determinar si el origen está permitido para el widget
-    // Si allowAllForWidget es true, cualquier origen es permitido para rutas del widget.
-    // Si no, se verifica contra widgetOriginsList.
-    // Esto aplica específicamente a rutas que comienzan con /api/public-chat (rutas del widget)
-    let isWidgetAllowed = false;
-    if (req.path.startsWith('/api/public-chat')) {
-        if (allowAllForWidget) {
-            isWidgetAllowed = true;
-        } else if (origin && widgetOriginsList.includes(origin)) {
-            isWidgetAllowed = true;
-        }
-    }
+//     // Determinar si el origen está permitido para el widget
+//     // Si allowAllForWidget es true, cualquier origen es permitido para rutas del widget.
+//     // Si no, se verifica contra widgetOriginsList.
+//     // Esto aplica específicamente a rutas que comienzan con /api/public-chat (rutas del widget)
+//     let isWidgetAllowed = false;
+//     if (req.path.startsWith('/api/public-chat')) {
+//         if (allowAllForWidget) {
+//             isWidgetAllowed = true;
+//         } else if (origin && widgetOriginsList.includes(origin)) {
+//             isWidgetAllowed = true;
+//         }
+//     }
 
-    // Permite específicamente la ruta /api/auth/post-registration desde cualquier origen
-    // Esto es para manejar el caso donde el redirect desde el proveedor de auth (ej. Google)
-    // no tiene un Origin header o es null, o para simplificar la configuración inicial.
-    const isPostRegistration = req.path === '/api/auth/post-registration' && req.method === 'POST';
+//     // Permite específicamente la ruta /api/auth/post-registration desde cualquier origen
+//     // Esto es para manejar el caso donde el redirect desde el proveedor de auth (ej. Google)
+//     // no tiene un Origin header o es null, o para simplificar la configuración inicial.
+//     const isPostRegistration = req.path === '/api/auth/post-registration' && req.method === 'POST';
 
-    if (isFrontendApp || isWidgetAllowed || isHealthCheck || isPostRegistration) {
-        corsOptions = {
-            origin: true,
-            credentials: true,
-            methods: 'GET,POST,PUT,DELETE,OPTIONS', // Asegúrate que OPTIONS está aquí
-            allowedHeaders: 'Content-Type,Authorization,X-Requested-With,X-CSRF-Token,Device-ID,Auth-Token, Supabase-Auth-Token' // Cabeceras personalizadas
-        };
-        req.isCorsApproved = true;
-        // logger.info(`CORS check PASSED for origin: ${origin || 'Not specified'} (Path: ${req.path})`);
-    } else {
-        corsOptions = { origin: false }; // Rechazar otros orígenes
-        req.isCorsApproved = false;
-        logger.warn(`CORS check FAILED for origin: ${origin || 'Not specified'} (Path: ${req.path})`);
-    }
-    callback(null, corsOptions);
-};
+//     if (isFrontendApp || isWidgetAllowed || isHealthCheck || isPostRegistration) {
+//         corsOptions = {
+//             origin: true,
+//             credentials: true,
+//             methods: 'GET,POST,PUT,DELETE,OPTIONS', // Asegúrate que OPTIONS está aquí
+//             allowedHeaders: 'Content-Type,Authorization,X-Requested-With,X-CSRF-Token,Device-ID,Auth-Token, Supabase-Auth-Token' // Cabeceras personalizadas
+//         };
+//         req.isCorsApproved = true;
+//         // logger.info(`CORS check PASSED for origin: ${origin || 'Not specified'} (Path: ${req.path})`);
+//     } else {
+//         corsOptions = { origin: false }; // Rechazar otros orígenes
+//         req.isCorsApproved = false;
+//         logger.warn(`CORS check FAILED for origin: ${origin || 'Not specified'} (Path: ${req.path})`);
+//     }
+//     callback(null, corsOptions);
+// };
 
 // --- Middlewares ---
 
-// Aplicar CORS globalmente ANTES de cualquier otra ruta o middleware que procese la solicitud.
-app.use(cors(corsOptionsDelegate));
+// --- START: New CORS Configuration ---
+
+// Define the list of origins that are allowed to access this API
+const allowedOrigins = [
+  'https://synchat-ai.vercel.app', // Production Frontend
+  // Add other origins for local development if needed, for example:
+  // 'http://localhost:3000', // Example: Local React development server
+  // 'http://127.0.0.1:5500'  // Example: Live Server for static HTML/JS
+];
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests that don't have an origin (e.g., server-to-server, Postman)
+    // These are typically non-browser requests or requests made from the same origin in some setups.
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      callback(new Error(msg), false);
+    }
+  }
+  // You might also want to include other CORS options here if needed, for example:
+  // methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  // allowedHeaders: ['Content-Type', 'Authorization'],
+  // credentials: true // If you need to support cookies or authorization headers
+};
+
+// Use the CORS middleware with these specific options
+app.use(cors(corsOptions));
+
+// --- END: New CORS Configuration ---
+
 
 // Stripe webhook specific middleware (ANTES de express.json global)
 app.post('/api/payments/webhook', express.raw({type: 'application/json'}), (req, res, next) => {
