@@ -13,7 +13,7 @@ import { encode } from 'gpt-tokenizer'; // For token counting if needed for summ
 // Assuming logger might be available or can be added. If not, console will be used.
 // import logger from '../utils/logger.js'; // Would be needed if using logger
 
-exports.getDashboardStats = async (req, res) => {
+export const getDashboardStats = async (req, res) => {
     const clientId = req.user.id;
     // Define a default period for stats that require it, e.g., last 90 days
     const endDate = new Date();
