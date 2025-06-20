@@ -483,6 +483,27 @@ export const handleChatMessage = async (req, res, next) => {
                     db.setCache(cacheKey, botReplyText_for_log);
                 }
                 res.status(200).json({ reply: botReplyText_for_log });
+
+                // BEGIN IMPLEMENTATION
+                try {
+                  // Log the successful AI interaction for usage tracking.
+                  // Note: Variable names adapted from the issue snippet to match available variables in this function scope.
+                  await db.logIaResolution(
+                    effectiveClientId, // client_id
+                    conversationId,    // conversation_id
+                    null, // billingCycleId (can be null, service will determine)
+                    { // detailsJson
+                        prompt: userMessageInput, // User's original message
+                        answer: botReplyText_for_log, // Bot's answer
+                        sources: finalChunksForLLMContext.map(s => s.metadata?.source_name || 'Unknown Source'), // Source documents
+                        resolution_method: 'ia_response_provided' // Indicate it was an AI response
+                    }
+                  );
+                  logger.info(`(ChatCtrl) AI resolution successfully logged for client_id: ${effectiveClientId}, CV_ID: ${conversationId}`);
+                } catch (logError) {
+                  logger.error(`(ChatCtrl) Failed to log AI resolution for client_id: ${effectiveClientId}, CV_ID: ${conversationId}`, logError);
+                }
+                // END IMPLEMENTATION
             } else {
                 logger.error(`(ChatCtrl) No se pudo generar una respuesta válida del bot para CV:${conversationId}. Respuesta del LLM fue: ${botReplyText_for_log}`);
                 res.status(503).json({ reply: 'Lo siento, estoy teniendo problemas para procesar tu solicitud en este momento.' });

@@ -1,6 +1,7 @@
 // synchat-ai-backend/src/controllers/clientDashboardController.js
 import { supabase } from '../services/supabaseClient.js';
 import { ingestWebsite } from '../services/ingestionService.js';
+import logger from '../utils/logger.js'; // Added logger
 
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const POSITIVE_INT_REGEX = /^[1-9]\d*$/;
@@ -167,7 +168,27 @@ export const getChatbotAnalyticsSummary = async (req, res) => {
     console.log(`(ClientDashboardCtrl) Fetching analytics summary for client ${clientId}, options:`, periodOptions);
     try {
         const summaryData = await db.fetchAnalyticsSummary(clientId, periodOptions);
-        if (!summaryData) { return res.status(404).json({ message: 'Analytics summary data not found.' }); }
+        if (!summaryData) {
+            // This case implies the service function itself returned null/undefined,
+            // which might indicate an issue beyond just "no data found" (e.g., DB error handled within service).
+            // However, if it's meant to represent "no records found to summarize", that's different.
+            // Assuming for now !summaryData means a more significant issue or truly no data structure returned.
+            logger.warn(`(ClientDashboardCtrl) 'fetchAnalyticsSummary' returned no data structure for client_id: ${clientId}, period: ${JSON.stringify(periodOptions)}`);
+            return res.status(404).json({ message: 'Analytics summary data not found or service error.' });
+        }
+
+        // Example check for totalConversations, if it's a field in summaryData
+        // Adjust based on actual structure of summaryData
+        if (summaryData.hasOwnProperty('total_conversations') && summaryData.total_conversations === 0) {
+            logger.warn(`(ClientDashboardCtrl) 'fetchAnalyticsSummary' result indicates 0 total_conversations for client_id: ${clientId}, period: ${JSON.stringify(periodOptions)}`);
+        }
+        // Add similar checks for other key metrics within summaryData if needed
+        // For example, if summaryData itself could be an empty object/array for "no results"
+        if (typeof summaryData === 'object' && Object.keys(summaryData).length === 0) {
+             logger.warn(`(ClientDashboardCtrl) 'fetchAnalyticsSummary' returned an empty object for client_id: ${clientId}, period: ${JSON.stringify(periodOptions)}`);
+        }
+
+
         res.status(200).json(summaryData);
     } catch (error) {
         console.error(`(ClientDashboardCtrl) Error fetching analytics summary for client ${clientId}:`, error);
@@ -342,6 +363,10 @@ export const getClientUsageResolutions = async (req, res) => {
             return res.status(500).json({ message: 'Error fetching client usage data.', error: error.message });
         }
         const resolutionCount = count === null ? 0 : count;
+
+        if (resolutionCount === 0) {
+            logger.warn(`(ClientDashboardCtrl) 'getClientUsageResolutions' (ia_resolutions_log count) returned 0 for client_id: ${clientId}, billing_cycle_id: ${billing_cycle_id || 'all'}`);
+        }
 
         const responseJson = {
             client_id: clientId,
@@ -660,9 +685,18 @@ export const getSentimentDistributionAnalytics = async (req, res) => {
         const result = await db.getSentimentDistribution(clientId, { startDate, endDate });
 
         if (result.error) {
-            // db.getSentimentDistribution already logs detailed error
+            // db.getSentimentDistribution might already log detailed error,
+            // but we add a controller-level log too for context.
+            logger.error(`(ClientDashboardCtrl) Error from 'getSentimentDistribution' for client_id: ${clientId}, period: ${startDate}-${endDate}. Error: ${result.error}`);
             return res.status(500).json({ error: result.error });
         }
+
+        if (!result.data || (Array.isArray(result.data) && result.data.length === 0)) {
+            logger.warn(`(ClientDashboardCtrl) 'getSentimentDistribution' returned empty data for client_id: ${clientId}, period: ${startDate}-${endDate}`);
+        }
+        // If result.data is an object with specific fields that could be zero, check them:
+        // Example: if (result.data && result.data.total_sentiments_analyzed === 0) { ... }
+
         res.status(200).json(result.data);
     } catch (error) {
         console.error('(ClientDashboardCtrl) Exception in getSentimentDistributionAnalytics:', error);
@@ -698,8 +732,17 @@ export const getTopicAnalyticsData = async (req, res) => {
 
         // Since it's a placeholder, it might return a specific structure including a message
         if (result.error) {
+            logger.error(`(ClientDashboardCtrl) Error from 'getTopicAnalytics' for client_id: ${clientId}, period: ${startDate}-${endDate}. Error: ${result.error}`);
             return res.status(500).json({ error: result.error });
         }
+
+        if (!result.data || (Array.isArray(result.data) && result.data.length === 0)) {
+            logger.warn(`(ClientDashboardCtrl) 'getTopicAnalytics' returned empty data for client_id: ${clientId}, period: ${startDate}-${endDate}`);
+        }
+        // If result.data is an object with specific fields that could be zero, check them:
+        // Example: if (result.data && result.data.total_topics_found === 0) { ... }
+
+
         res.status(200).json(result); // Send the whole result including data and message
     } catch (error) {
         console.error('(ClientDashboardCtrl) Exception in getTopicAnalyticsData:', error);
@@ -734,8 +777,14 @@ export const getKnowledgeSourcePerformanceAnalytics = async (req, res) => {
         const result = await db.getKnowledgeSourcePerformance(clientId, { startDate, endDate });
 
         if (result.error) {
+            logger.error(`(ClientDashboardCtrl) Error from 'getKnowledgeSourcePerformance' for client_id: ${clientId}, period: ${startDate}-${endDate}. Error: ${result.error}`);
             return res.status(500).json({ error: result.error });
         }
+
+        if (!result.data || (Array.isArray(result.data) && result.data.length === 0)) {
+            logger.warn(`(ClientDashboardCtrl) 'getKnowledgeSourcePerformance' returned empty data for client_id: ${clientId}, period: ${startDate}-${endDate}`);
+        }
+
         res.status(200).json(result); // Send the whole result including data and message
     } catch (error) {
         console.error('(ClientDashboardCtrl) Exception in getKnowledgeSourcePerformanceAnalytics:', error);
