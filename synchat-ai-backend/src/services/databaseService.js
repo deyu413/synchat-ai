@@ -1589,12 +1589,17 @@ export const getClientConversations = async (clientId, statusFilters = [], page 
                 status,
                 messages ( content, created_at )
             `, { count: 'exact' }) // Request total count
-            .eq('client_id', clientId)
-            .order('last_message_at', { ascending: false, nullsLast: true });
+            .eq('client_id', clientId);
 
         if (statusFilters && statusFilters.length > 0) {
             query = query.in('status', statusFilters);
         }
+
+        // BEGIN MODIFICATION
+        // The original ordering clause is faulty.
+        // Replace it with the following line to sort by the 'last_message_at' column on the 'conversations' table.
+        query = query.order('last_message_at', { ascending: false, nulls: 'last' });
+        // END MODIFICATION
 
         query = query.range(offset, offset + pageSize - 1);
 
@@ -1798,6 +1803,32 @@ export const requestHumanHandover = async (conversationId) => {
         throw err;
     }
 };
+
+// BEGIN IMPLEMENTATION
+/**
+ * Logs a successful AI resolution for usage tracking.
+ * @param {object} resolutionData - The data to insert into ia_resolutions_log.
+ * @returns {Promise<object>} The inserted data.
+ */
+export const logIaResolution = async (resolutionData) => {
+  const { data, error } = await supabase
+    .from('ia_resolutions_log')
+    .insert([resolutionData])
+    .select();
+
+  if (error) {
+    logger.error('(DB Service) Error logging IA resolution:', error);
+    throw new Error('Could not log IA resolution.');
+  }
+
+  if (!data || data.length === 0) {
+    logger.error('(DB Service) IA resolution logged but no data returned.');
+    throw new Error('IA resolution logged but no data returned.');
+  }
+
+  return data[0];
+};
+// END IMPLEMENTATION
 
 
 // --- New Analytics Service Functions ---

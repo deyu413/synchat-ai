@@ -1152,7 +1152,127 @@ document.addEventListener('DOMContentLoaded', () => {
     // THIS BRACE WAS REMOVED: }
 
 
+    // --- Placeholder/Dummy functions for displayWidgetAndCode ---
+    async function getApiKey() {
+        console.warn("getApiKey: Using placeholder API key. Implement actual logic.");
+        // Simulate fetching an API key. Replace with actual API call if available.
+        // For now, let's return a dummy key for testing, or null to test the error path.
+        // return "dummy-api-key-12345";
+        return null; // To test the error handling path in displayWidgetAndCode
+    }
+
+    function showSpinner(elementId) {
+        console.log(`showSpinner called for element: ${elementId}`);
+        const element = document.getElementById(elementId);
+        if (element) {
+            // Basic spinner: you can replace this with a more sophisticated one
+            element.innerHTML = '<div class="spinner" style="border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: auto;"></div> @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+        }
+    }
+
+    function hideSpinner(elementId) {
+        console.log(`hideSpinner called for element: ${elementId}`);
+        const element = document.getElementById(elementId);
+        // If the spinner was the only content, clearing might be enough.
+        // If it was an overlay, it would need to be specifically removed.
+        // For this basic example, if showSpinner replaced content, we might not need to do anything
+        // or we might want to restore previous content if we had saved it.
+        // For now, let's assume the content that replaces the spinner will handle this.
+        // Or, if the spinner is just an added child, remove it.
+        if (element && element.querySelector('.spinner')) {
+            // If the spinner was added as a child, remove it.
+            // This is a simple assumption; actual implementation might vary.
+            // element.innerHTML = ''; // Or find and remove the spinner element specifically
+        }
+    }
+
+    // --- Widget Display Function (as per issue description) ---
+    async function displayWidgetAndCode() {
+      try {
+        showSpinner('widget-preview-container');
+        const apiKey = await getApiKey();
+        const widgetContainer = document.getElementById('widget-preview-container');
+        const codeSnippetEl = document.getElementById('widget-code-snippet');
+
+        // BEGIN MODIFICATION (already included in the snippet from description)
+        // Log the retrieved key for debugging purposes.
+        console.log('Widget Preview: Attempting to render with API Key:', apiKey);
+
+        if (!apiKey) {
+          console.error('Widget Preview Error: API Key is null or undefined. Cannot render widget.');
+          // Display a user-friendly error message in the UI.
+          if (widgetContainer) {
+            widgetContainer.innerHTML = `
+              <div class="error-container">
+                <p><strong>Error:</strong> No se pudo cargar la vista previa del widget.</p>
+                <p>No se encontró una clave de API para su cuenta. Por favor, contacte con soporte.</p>
+              </div>
+            `;
+          }
+          if (codeSnippetEl) {
+            codeSnippetEl.textContent = 'Error: API Key no disponible.';
+          }
+          // Hide spinner needs to be called before returning if an error occurs after showing it.
+          hideSpinner('widget-preview-container');
+          return; // Stop execution if no key is found
+        }
+        // END MODIFICATION
+
+        // If key exists, proceed with rendering
+        if (widgetContainer) widgetContainer.innerHTML = ''; // Clear previous state (like spinner or old error)
+
+        const snippet = `<script src="${window.location.origin}/widget.js" data-synchat-api-key="${apiKey}"><\/script>`;
+
+        if (codeSnippetEl) codeSnippetEl.textContent = snippet;
+
+        if (widgetContainer) {
+            const iframe = document.createElement('iframe');
+            iframe.style.width = '100%';
+            iframe.style.height = '600px'; // Adjusted for better preview
+            iframe.style.border = '1px solid #ccc';
+            iframe.style.borderRadius = '4px';
+            iframe.srcdoc = `
+              <html>
+                <head>
+                  <style>
+                    body {
+                      margin: 0;
+                      display: flex;
+                      justify-content: flex-end; /* Aligns widget to the right */
+                      align-items: flex-end;    /* Aligns widget to the bottom */
+                      height: 100vh;
+                      padding: 20px; /* Add some padding so widget isn't flush against iframe edge */
+                      box-sizing: border-box;
+                    }
+                  </style>
+                </head>
+                <body>
+                  ${snippet}
+                </body>
+              </html>
+            `;
+            widgetContainer.appendChild(iframe);
+        }
+      } catch (error) {
+        console.error('Error displaying widget and code:', error);
+        const widgetContainer = document.getElementById('widget-preview-container');
+        if (widgetContainer) {
+          widgetContainer.innerHTML = '<p class="error-message">Ocurrió un error inesperado al cargar el widget.</p>';
+        }
+      } finally {
+        // Ensure spinner is hidden, but only if it wasn't already hidden due to an early return for missing API key.
+        // The check for apiKey handles the error case's hideSpinner.
+        if (document.getElementById('widget-preview-container')?.querySelector('.spinner')) {
+             hideSpinner('widget-preview-container');
+        }
+      }
+    }
+
     // --- Define missing functions ---
+    // Note: displayWidgetAndCode is now added above.
+    // It would typically be called when the 'Widget' section is displayed.
+    // Example: if (targetSectionId === 'widget') displayWidgetAndCode(); in nav logic.
+
     async function fetchClientUsageStats(billingCycleId = null) {
         console.log('fetchClientUsageStats called with billingCycleId:', billingCycleId);
         // TODO: Implement actual logic if/when available
@@ -1205,7 +1325,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (targetSectionId) {
                     allDashboardSections.forEach(section => {
                         // This needs to map 'ingest' to 'knowledgeManagement' for display
-                        section.style.display = (section.id === (targetSectionId === 'ingest' ? 'knowledgeManagement' : targetSectionId)) ? 'block' : 'none';
+                        // And potentially 'widget' to 'widgetSection' if the ID is different
+                        let sectionIdToDisplay = targetSectionId;
+                        if (targetSectionId === 'ingest') sectionIdToDisplay = 'knowledgeManagement';
+                        if (targetSectionId === 'widget') sectionIdToDisplay = 'widgetSection'; // Assuming 'widgetSection' is the ID in HTML
+
+                        section.style.display = (section.id === sectionIdToDisplay) ? 'block' : 'none';
                     });
                     // Load data for the activated section
                     if (targetSectionId === 'config') fetchClientConfig();
@@ -1213,6 +1338,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     else if (targetSectionId === 'usage') fetchClientUsageStats();
                     else if (targetSectionId === 'inboxSection') loadInboxConversations();
                     else if (targetSectionId === 'analyticsSection') loadAnalyticsData();
+                    else if (targetSectionId === 'widget') displayWidgetAndCode(); // Call the new function
                     // RAG Playground does not auto-load data, it's on button click
                 }
             });
@@ -1220,31 +1346,43 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Determine and show the initial section, and load its data
-    let initialSectionIdToShow = 'config';
+    let initialSectionIdToShow = 'config'; // Default section
+    let actualSectionElementId = 'config'; // ID of the actual HTML element
+
     if (window.location.hash) {
         const hash = window.location.hash.substring(1);
-        if (document.getElementById(hash)) { // This is true if hash is 'config', 'widget', 'usage' etc.
+        if (document.getElementById(hash)) {
             initialSectionIdToShow = hash;
-        } else if (hash === 'ingest') { // <<< ADD THIS CASE
-            initialSectionIdToShow = 'knowledgeManagement';
+            actualSectionElementId = hash;
+        } else if (hash === 'ingest') {
+            initialSectionIdToShow = 'ingest';
+            actualSectionElementId = 'knowledgeManagement';
+        } else if (hash === 'widget') {
+            initialSectionIdToShow = 'widget';
+            actualSectionElementId = 'widgetSection'; // Assuming the HTML section has id="widgetSection"
         }
     }
 
     allDashboardSections.forEach(s => s.style.display = 'none'); // Hide all first
-    const initialSectionElement = document.getElementById(initialSectionIdToShow);
+    const initialSectionElement = document.getElementById(actualSectionElementId);
+
     if (initialSectionElement) {
         initialSectionElement.style.display = 'block';
+        // Load data based on the logical section name (initialSectionIdToShow)
         if (initialSectionIdToShow === 'config') fetchClientConfig();
-        // Ensure this condition correctly triggers data loading for the ingest section
-        else if (initialSectionIdToShow === 'knowledgeManagement') loadKnowledgeSources(); // <<< CHANGE 'ingest' to 'knowledgeManagement' here
+        else if (initialSectionIdToShow === 'ingest') loadKnowledgeSources();
         else if (initialSectionIdToShow === 'usage') fetchClientUsageStats();
         else if (initialSectionIdToShow === 'inboxSection') loadInboxConversations();
         else if (initialSectionIdToShow === 'analyticsSection') loadAnalyticsData();
+        else if (initialSectionIdToShow === 'widget') displayWidgetAndCode(); // Call for widget section
     } else if (allDashboardSections.length > 0) { // Fallback if hash section not found
-        allDashboardSections[0].style.display = 'block';
+        const firstSection = allDashboardSections[0];
+        firstSection.style.display = 'block';
         // And load data for this first section if applicable
-        if (allDashboardSections[0].id === 'config') fetchClientConfig();
-        // Add other initial loads as necessary
+        if (firstSection.id === 'config') fetchClientConfig();
+        else if (firstSection.id === 'knowledgeManagement') loadKnowledgeSources();
+        else if (firstSection.id === 'widgetSection') displayWidgetAndCode();
+        // Add other initial loads as necessary for other potential first sections
     }
 
 
